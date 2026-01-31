@@ -46,7 +46,8 @@ class LocalSearchMCPServer:
     
     PROTOCOL_VERSION = "2025-11-25"
     SERVER_NAME = "deckard"
-    SERVER_VERSION = "1.0.3"  # DB Isolation & Pagination
+    # Version is injected via environment variable by the bootstrapper
+    SERVER_VERSION = os.environ.get("DECKARD_VERSION", "dev")
     
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
