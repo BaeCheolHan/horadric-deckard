@@ -98,9 +98,6 @@ class Indexer:
     def _scan_once(self) -> None:
         root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
         
-        if self.logger:
-            self.logger.log_info(f"Starting scan of {root}")
-
         if not root.exists() or not root.is_dir():
             self.status.errors += 1
             if self.logger:
@@ -119,9 +116,6 @@ class Indexer:
                 if self.logger:
                     self.logger.log_error(f"Error accessing file {file_path}: {e}")
                 continue
-        
-        if self.logger:
-            self.logger.log_info(f"Scan found {len(file_entries)} candidates")
         
         # 2. Prioritize: Recent files first + Core files (v2.5.0)
         now = time.time()
@@ -164,12 +158,6 @@ class Indexer:
                         # AI Safety Net: If modified within last 3 seconds, force re-index
                         if now - st.st_mtime > 3.0:
                             is_changed = False
-                            # DEBUG: Log skipped file
-                            # if self.logger and scanned % 100 == 0:
-                            #     self.logger.log_info(f"Skipping unchanged file: {rel}")
-                else:
-                    if self.logger:
-                        self.logger.log_info(f"New file detected: {rel}")
                 
                 if not is_changed:
                     continue
@@ -208,22 +196,10 @@ class Indexer:
                 if self.logger:
                     self.logger.log_error(f"Error flushing batch: {e}")
 
-        # DEBUG: Log DB Stats
-        try:
-            db_status = self.db.get_index_status()
-            if self.logger:
-                self.logger.log_info(f"DB Stats after scan - Total Files: {db_status.get('total_files')}")
-        except Exception as e:
-            if self.logger:
-                self.logger.log_error(f"Failed to get DB stats: {e}")
-
         self.db.clear_stats_cache()
         self.status.last_scan_ts = time.time()
         self.status.scanned_files = scanned
         self.status.indexed_files = indexed
-        
-        if self.logger:
-            self.logger.log_info(f"Scan complete. Scanned: {scanned}, Indexed: {indexed}, Errors: {self.status.errors}")
 
     def _process_meta_file(self, file_path: Path, repo: str) -> None:
         """Extract metadata from config files (v2.4.3)."""
