@@ -69,6 +69,7 @@ class LocalSearchDB:
         self._read.row_factory = sqlite3.Row
 
         self._lock = threading.Lock()
+        self._read_lock = threading.Lock()
 
         self._apply_pragmas(self._write)
         self._apply_pragmas(self._read)
@@ -204,14 +205,16 @@ class LocalSearchDB:
         return len(paths_list)
 
     def get_file_meta(self, path: str) -> Optional[tuple[int, int]]:
-        row = self._read.execute("SELECT mtime, size FROM files WHERE path=?", (path,)).fetchone()
+        with self._read_lock:
+            row = self._read.execute("SELECT mtime, size FROM files WHERE path=?", (path,)).fetchone()
         if not row:
             return None
         return int(row["mtime"]), int(row["size"])
 
     def get_index_status(self) -> dict[str, Any]:
         """Get index metadata for debugging/UI (v2.4.2)."""
-        row = self._read.execute("SELECT COUNT(1) AS c, MAX(mtime) AS last_mtime FROM files").fetchone()
+        with self._read_lock:
+            row = self._read.execute("SELECT COUNT(1) AS c, MAX(mtime) AS last_mtime FROM files").fetchone()
         count = int(row["c"]) if row and row["c"] else 0
         last_mtime = int(row["last_mtime"]) if row and row["last_mtime"] else 0
         
@@ -222,7 +225,8 @@ class LocalSearchDB:
         }
 
     def count_files(self) -> int:
-        row = self._read.execute("SELECT COUNT(1) AS c FROM files").fetchone()
+        with self._read_lock:
+            row = self._read.execute("SELECT COUNT(1) AS c FROM files").fetchone()
         return int(row["c"]) if row else 0
 
     def clear_stats_cache(self) -> None:
@@ -239,7 +243,8 @@ class LocalSearchDB:
                 return cached
 
         try:
-            rows = self._read.execute("SELECT repo, COUNT(1) as c FROM files GROUP BY repo").fetchall()
+            with self._read_lock:
+                rows = self._read.execute("SELECT repo, COUNT(1) as c FROM files GROUP BY repo").fetchall()
             stats = {r["repo"]: r["c"] for r in rows}
             self._stats_cache["repo_stats"] = stats
             self._stats_cache_ts = now
@@ -261,12 +266,14 @@ class LocalSearchDB:
 
     def get_repo_meta(self, repo_name: str) -> Optional[dict[str, Any]]:
         """Get metadata for a specific repo."""
-        row = self._read.execute("SELECT * FROM repo_meta WHERE repo_name = ?", (repo_name,)).fetchone()
+        with self._read_lock:
+            row = self._read.execute("SELECT * FROM repo_meta WHERE repo_name = ?", (repo_name,)).fetchone()
         return dict(row) if row else None
 
     def get_all_repo_meta(self) -> dict[str, dict[str, Any]]:
         """Get all repo metadata as a map."""
-        rows = self._read.execute("SELECT * FROM repo_meta").fetchall()
+        with self._read_lock:
+            rows = self._read.execute("SELECT * FROM repo_meta").fetchall()
         return {row["repo_name"]: dict(row) for row in rows}
 
     def list_files(
@@ -307,7 +314,8 @@ class LocalSearchDB:
         """
         params.extend([limit, offset])
         
-        rows = self._read.execute(sql, params).fetchall()
+        with self._read_lock:
+            rows = self._read.execute(sql, params).fetchall()
         
         files: list[dict[str, Any]] = []
         for r in rows:
@@ -327,7 +335,6 @@ class LocalSearchDB:
         
         count_sql = f"SELECT COUNT(1) AS c FROM files f WHERE {where}"
         count_params = params[:-2]
-        total = self._read.execute(count_sql, count_params).fetchone()["c"]
         
         repo_sql = """
             SELECT repo, COUNT(1) AS file_count
@@ -335,7 +342,10 @@ class LocalSearchDB:
             GROUP BY repo
             ORDER BY file_count DESC;
         """
-        repo_rows = self._read.execute(repo_sql).fetchall()
+        with self._read_lock:
+            total = self._read.execute(count_sql, count_params).fetchone()["c"]
+            repo_rows = self._read.execute(repo_sql).fetchall()
+            
         repos = [{"repo": r["repo"], "file_count": r["file_count"]} for r in repo_rows]
         
         meta = {
@@ -523,7 +533,8 @@ class LocalSearchDB:
         # Total count
         try:
             count_sql = f"SELECT COUNT(*) as c FROM files_fts JOIN files f ON f.rowid = files_fts.rowid WHERE {where}"
-            count_row = self._read.execute(count_sql, params).fetchone()
+            with self._read_lock:
+                count_row = self._read.execute(count_sql, params).fetchone()
             total_hits = int(count_row["c"]) if count_row else 0
         except sqlite3.OperationalError:
             return None # FTS failed
@@ -550,7 +561,8 @@ class LocalSearchDB:
         """
         params.append(int(fetch_limit))
         
-        rows = self._read.execute(sql, params).fetchall()
+        with self._read_lock:
+            rows = self._read.execute(sql, params).fetchall()
         
         hits = self._process_rows(rows, opts, terms)
         meta["total_scanned"] = len(rows)
@@ -576,10 +588,7 @@ class LocalSearchDB:
         
         # Total count
         count_sql = f"SELECT COUNT(*) as c FROM files f WHERE {where}"
-        count_row = self._read.execute(count_sql, params).fetchone()
-        meta["total"] = int(count_row["c"]) if count_row else 0
-        meta["total_mode"] = opts.total_mode
-
+        
         fetch_limit = (opts.offset + opts.limit) * 2
         if fetch_limit < 100: fetch_limit = 100
         
@@ -596,7 +605,13 @@ class LocalSearchDB:
             LIMIT ?;
         """
         params.append(int(fetch_limit))
-        rows = self._read.execute(sql, params).fetchall()
+
+        with self._read_lock:
+            count_row = self._read.execute(count_sql, params[:-1]).fetchone()
+            rows = self._read.execute(sql, params).fetchall()
+
+        meta["total"] = int(count_row["c"]) if count_row else 0
+        meta["total_mode"] = opts.total_mode
         
         hits = self._process_rows(rows, opts, terms)
         meta["total_scanned"] = len(rows)
@@ -637,7 +652,8 @@ class LocalSearchDB:
             ORDER BY {"f.mtime DESC" if opts.recency_boost else "f.path"}
             LIMIT 5000;
         """
-        rows = self._read.execute(sql, params).fetchall()
+        with self._read_lock:
+            rows = self._read.execute(sql, params).fetchall()
         meta["total_scanned"] = len(rows)
         
         hits: list[SearchHit] = []
@@ -814,7 +830,8 @@ class LocalSearchDB:
                 LIMIT ?;
             """
             try:
-                rows = self._read.execute(sql, (q, limit)).fetchall()
+                with self._read_lock:
+                    rows = self._read.execute(sql, (q, limit)).fetchall()
                 out: list[dict[str, Any]] = []
                 for r in rows:
                     repo = str(r["repo"])
@@ -835,7 +852,8 @@ class LocalSearchDB:
             ORDER BY c DESC
             LIMIT ?;
         """
-        rows = self._read.execute(sql, (f"%{like_q}%", limit)).fetchall()
+        with self._read_lock:
+            rows = self._read.execute(sql, (f"%{like_q}%", limit)).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
             repo = str(r["repo"])

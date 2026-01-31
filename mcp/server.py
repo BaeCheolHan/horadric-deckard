@@ -27,6 +27,7 @@ from datetime import datetime
 SCRIPT_DIR = Path(__file__).parent
 APP_DIR = SCRIPT_DIR.parent / "app"
 sys.path.insert(0, str(APP_DIR))
+sys.path.insert(0, str(SCRIPT_DIR))
 
 from config import Config
 from db import LocalSearchDB, SearchOptions
@@ -56,6 +57,7 @@ class LocalSearchMCPServer:
         self.indexer: Optional[Indexer] = None
         self._indexer_thread: Optional[threading.Thread] = None
         self._initialized = False
+        self._init_lock = threading.Lock()
         
         # Initialize telemetry logger
         self.logger = TelemetryLogger(WorkspaceManager.get_global_log_dir())
@@ -65,57 +67,60 @@ class LocalSearchMCPServer:
         if self._initialized:
             return
         
-        try:
-            os.environ["LOCAL_SEARCH_WORKSPACE_ROOT"] = self.workspace_root
-            
-            config_path = Path(self.workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
-            if config_path.exists():
-                self.cfg = Config.load(str(config_path))
-            else:
-                self.cfg = Config(
-                    workspace_root=self.workspace_root,
-                    server_host="127.0.0.1",
-                    server_port=47777,
-                    scan_interval_seconds=180,
-                    snippet_max_lines=5,
-                    max_file_bytes=800000,
-                    db_path=str(WorkspaceManager.get_local_db_path(self.workspace_root)),
-                    include_ext=[".py", ".js", ".ts", ".java", ".kt", ".go", ".rs", ".md", ".json", ".yaml", ".yml", ".sh"],
-                    include_files=["pom.xml", "package.json", "Dockerfile", "Makefile", "build.gradle", "settings.gradle"],
-                    exclude_dirs=[".git", "node_modules", "__pycache__", ".venv", "venv", "target", "build", "dist", "coverage", "vendor"],
-                    exclude_globs=["*.min.js", "*.min.css", "*.map", "*.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
-                    redact_enabled=True,
-                    commit_batch_size=500,
-                )
-            
-            debug_db_path = os.environ.get("LOCAL_SEARCH_DB_PATH", "").strip()
-            if debug_db_path:
-                self.logger.log_info(f"Using debug DB path override: {debug_db_path}")
-                db_path = Path(os.path.expanduser(debug_db_path))
-            else:
-                db_path = WorkspaceManager.get_local_db_path(self.workspace_root)
-            
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.db = LocalSearchDB(str(db_path))
-            self.logger.log_info(f"DB path: {db_path}")
-            
-            self.indexer = Indexer(self.cfg, self.db, self.logger)
-            
-            self._indexer_thread = threading.Thread(target=self.indexer.run_forever, daemon=True)
-            self._indexer_thread.start()
-            
-            init_timeout = float(os.environ.get("LOCAL_SEARCH_INIT_TIMEOUT", "5"))
-            if init_timeout > 0:
-                wait_iterations = int(init_timeout * 10)
-                for _ in range(wait_iterations):
-                    if self.indexer.status.index_ready:
-                        break
-                    time.sleep(0.1)
-            
-            self._initialized = True
-        except Exception as e:
-            self.logger.log_error(f"Initialization failed: {e}")
-            raise
+        with self._init_lock:
+            # Double-check after acquiring lock
+            if self._initialized:
+                return
+
+            try:
+                config_path = Path(self.workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
+                if config_path.exists():
+                    self.cfg = Config.load(str(config_path), workspace_root_override=self.workspace_root)
+                else:
+                    self.cfg = Config(
+                        workspace_root=self.workspace_root,
+                        server_host="127.0.0.1",
+                        server_port=47777,
+                        scan_interval_seconds=180,
+                        snippet_max_lines=5,
+                        max_file_bytes=800000,
+                        db_path=str(WorkspaceManager.get_local_db_path(self.workspace_root)),
+                        include_ext=[".py", ".js", ".ts", ".java", ".kt", ".go", ".rs", ".md", ".json", ".yaml", ".yml", ".sh"],
+                        include_files=["pom.xml", "package.json", "Dockerfile", "Makefile", "build.gradle", "settings.gradle"],
+                        exclude_dirs=[".git", "node_modules", "__pycache__", ".venv", "venv", "target", "build", "dist", "coverage", "vendor"],
+                        exclude_globs=["*.min.js", "*.min.css", "*.map", "*.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
+                        redact_enabled=True,
+                        commit_batch_size=500,
+                    )
+                
+                debug_db_path = os.environ.get("LOCAL_SEARCH_DB_PATH", "").strip()
+                if debug_db_path:
+                    self.logger.log_info(f"Using debug DB path override: {debug_db_path}")
+                    db_path = Path(os.path.expanduser(debug_db_path))
+                else:
+                    db_path = WorkspaceManager.get_local_db_path(self.workspace_root)
+                
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                self.db = LocalSearchDB(str(db_path))
+                self.logger.log_info(f"DB path: {db_path}")
+                
+                self.indexer = Indexer(self.cfg, self.db, self.logger)
+                
+                self._indexer_thread = threading.Thread(target=self.indexer.run_forever, daemon=True)
+                self._indexer_thread.start()
+                
+                init_timeout = float(os.environ.get("LOCAL_SEARCH_INIT_TIMEOUT", "5"))
+                if init_timeout > 0:
+                    wait_iterations = int(init_timeout * 10)
+                    for _ in range(wait_iterations):
+                        if self.indexer.status.index_ready:
+                            break
+                        time.sleep(0.1)
+                
+                self._initialized = True
+            except Exception as e:
+                self.logger.log_error(f"Initialization failed: {e}")
+                raise
     
     
     def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -377,6 +382,14 @@ class LocalSearchMCPServer:
                 },
             }
     
+    def shutdown(self) -> None:
+        """Stops the indexer and closes the database."""
+        self.logger.log_info(f"Shutting down server for workspace: {self.workspace_root}")
+        if self.indexer:
+            self.indexer.stop()
+        if self.db:
+            self.db.close()
+            
     def run(self) -> None:
         self.logger.log_info(f"Starting MCP server (workspace: {self.workspace_root})")
         

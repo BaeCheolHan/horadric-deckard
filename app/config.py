@@ -25,14 +25,17 @@ class Config:
     commit_batch_size: int
 
     @staticmethod
-    def load(path: str) -> "Config":
+    def load(path: str, workspace_root_override: str = None) -> "Config":
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
 
         # Portability: allow runtime overrides for workspace root.
         # This helps when the packaged config is used in different locations.
         env_workspace_root = os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT")
-        if env_workspace_root:
+        if workspace_root_override:
+            raw = dict(raw)
+            raw["workspace_root"] = workspace_root_override
+        elif env_workspace_root:
             raw = dict(raw)
             raw["workspace_root"] = env_workspace_root
         # Support port override for automatic port selection on conflict
