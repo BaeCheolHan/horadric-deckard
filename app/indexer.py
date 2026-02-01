@@ -13,9 +13,19 @@ from typing import Iterable, List, Tuple, Optional, Any
 try:
     from .config import Config  # type: ignore
     from .db import LocalSearchDB  # type: ignore
+    from .watcher import FileWatcher
+    from .queue import DedupQueue
 except ImportError:
     from config import Config  # type: ignore
     from db import LocalSearchDB  # type: ignore
+    try:
+        from watcher import FileWatcher
+    except ImportError:
+        FileWatcher = None
+    try:
+        from queue import DedupQueue
+    except ImportError:
+        DedupQueue = None
 
 # === Constants ===
 CORE_FILE_BOOST = 10**9  # Priority boost for core metadata files
@@ -76,7 +86,58 @@ def _extract_symbols(path: str, content: str) -> List[Tuple[str, str, str, int, 
     total_lines = len(lines)
     
     # 1. Indentation-based languages (Python)
-    if ext in (".py",):
+    if ext == ".py":
+        try:
+            import ast
+            tree = ast.parse(content)
+            
+            # Helper for recursive traversal to track parents
+            def _visit_ast(node, parent=""):
+                for child in ast.iter_child_nodes(node):
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        name = child.name
+                        kind = "class" if isinstance(child, ast.ClassDef) else "function"
+                        if parent and isinstance(node, ast.ClassDef):
+                             kind = "method"
+                        
+                        start = child.lineno
+                        end = getattr(child, "end_lineno", start) # py3.8+
+                        
+                        # Extract first line content safely
+                        line_content = lines[start-1].strip() if 0 <= start-1 < len(lines) else name
+                        
+                        symbols.append({
+                            "path": path,
+                            "name": name,
+                            "kind": kind,
+                            "line": start,
+                            "end_line": end,
+                            "content": line_content,
+                            "parent_name": parent
+                        })
+                        
+                        # Recurse
+                        new_parent = name if isinstance(child, ast.ClassDef) else parent
+                        _visit_ast(child, new_parent)
+                    else:
+                        _visit_ast(child, parent)
+
+            _visit_ast(tree)
+            
+            # Convert to result format immediately if successful
+            result_tuples = []
+            for s in symbols:
+                result_tuples.append((
+                    s["path"], s["name"], s["kind"], s["line"], s["end_line"], s["content"], s.get("parent_name", "")
+                ))
+            return result_tuples
+            
+        except (SyntaxError, Exception):
+            # Fallback to Regex if AST fails (syntax error or import error)
+            symbols = [] # Reset for fallback
+            pass
+
+        # === Legacy Regex Fallback (kept for resilience) ===
         # Regex for Python definitions
         pat = re.compile(r"^(\s*)(class|def|async\s+def)\s+([a-zA-Z_][a-zA-Z0-9_]*)")
         
@@ -84,19 +145,13 @@ def _extract_symbols(path: str, content: str) -> List[Tuple[str, str, str, int, 
         
         for i, line in enumerate(lines):
             stripped = line.strip()
-            # Skip empty lines or comments for indent calculation if needed
-            if not stripped: 
-                continue
+            if not stripped: continue
             
-            # Simple indent check
             indent = len(line) - len(line.lstrip())
             
-            # Check for block ends: if current indent <= stack's indent, those blocks finished
             while stack and indent <= stack[-1][0]:
                 lvl, info = stack.pop()
-                info["end_line"] = i # The line BEFORE this current line was the end. 
-                # (Actually if i is start of new block, previous block ended at i-1. 
-                # But let's say it covers until start of next sibling)
+                info["end_line"] = i
                 symbols.append(info)
             
             match = pat.match(line)
@@ -106,29 +161,23 @@ def _extract_symbols(path: str, content: str) -> List[Tuple[str, str, str, int, 
                 s_name = match.group(3)
                 indent_len = len(s_indent)
                 
-                # Determine parent
-                parent = ""
-                if stack:
-                    parent = stack[-1][1]["name"]
+                parent = stack[-1][1]["name"] if stack else ""
                 
                 info = {
                     "path": path,
                     "name": s_name,
                     "kind": "method" if parent and s_type == "def" else s_type,
                     "line": i + 1,
-                    "end_line": i + 1, # Default if no children or EOF
+                    "end_line": i + 1,
                     "content": stripped,
                     "parent_name": parent
                 }
                 stack.append((indent_len, info))
                 
-        # Close remaining stack at EOF
         while stack:
             lvl, info = stack.pop()
             info["end_line"] = total_lines
             symbols.append(info)
-            
-    # 2. Brace-based languages (JS, TS, Java, Go, Rust, C++)
     elif ext in (".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".cpp", ".c"):
         # Simplified parser: track curly braces
         patterns = []
@@ -210,12 +259,19 @@ class Indexer:
         self._stop = threading.Event()
         self._rescan = threading.Event()
         self._root_repo_name = "__root__"
-        # v2.6.0: Thread pool for parallel processing
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 4) * 4))
+        # v2.6.0: Thread pool for parallel processing (Tuned for memory usage v2.8.2)
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(12, (os.cpu_count() or 4) * 2))
+        self.watcher = None
+        self.queue = DedupQueue() if DedupQueue else None
+        self._worker_thread = None
 
     def stop(self) -> None:
         self._stop.set()
         self._rescan.set()
+        if self.watcher:
+            self.watcher.stop()
+        if self._worker_thread:
+            self._worker_thread.join(timeout=1.0)
         self._executor.shutdown(wait=False)
 
     def request_rescan(self) -> None:
@@ -223,6 +279,20 @@ class Indexer:
         self._rescan.set()
 
     def run_forever(self) -> None:
+        if self.queue:
+            self._worker_thread = threading.Thread(target=self._ingestion_loop, daemon=True)
+            self._worker_thread.start()
+
+        # Start Watcher if available (v2.7.2)
+        if FileWatcher:
+             try:
+                 root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
+                 self.watcher = FileWatcher([str(root)], self._process_watcher_event, logger=self.logger)
+                 self.watcher.start()
+             except Exception as e:
+                 if self.logger:
+                    self.logger.log_error(f"Failed to start file watcher: {e}")
+
         # first scan ASAP
         self._scan_once()
         self.status.index_ready = True
@@ -520,3 +590,135 @@ class Indexer:
         self.status.last_scan_ts = time.time()
         self.status.scanned_files = scanned
         self.status.indexed_files = indexed
+
+    def _process_watcher_event(self, path: str) -> None:
+        """Handle real-time file change event (v2.7.2)."""
+        try:
+            p = Path(path).resolve()
+            # Resolve root every time or use cached? cached in run_forever but here we are in callback.
+            # self.cfg should be valid.
+            root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
+            
+            try:
+                if not p.is_relative_to(root):
+                    return
+            except ValueError:
+                return # Different drive or invalid
+                
+            rel = str(p.relative_to(root))
+
+            # Case 1: Deletion
+            if not p.exists():
+                self.db.delete_file(rel)
+                if self.logger:
+                    self.logger.log_info(f"Watcher detected deletion: {rel}")
+                return
+
+            # Case 2: Modification
+            # Check excludes
+            exclude_globs = list((getattr(self.cfg, "exclude_globs", []) or []))
+            exclude_dirs = set((self.cfg.exclude_dirs or []))
+            
+            # Check path parts for excluded dirs
+            # Note: rel.split(os.sep) might be safer
+            for part in rel.split(os.sep):
+                if part in exclude_dirs:
+                    return
+
+            if exclude_globs:
+                if any(fnmatch.fnmatch(p.name, g) for g in exclude_globs):
+                    return
+                if any(fnmatch.fnmatch(rel, g) for g in exclude_globs):
+                    return
+
+            try:
+                st = p.stat()
+            except FileNotFoundError:
+                return 
+
+            if st.st_size > self.cfg.max_file_bytes:
+                return
+
+            # Async Enqueue (v2.8.0)
+            if self.queue:
+                added = self.queue.put(str(p))
+                if added and self.logger:
+                    self.logger.log_info(f"Queued async task: {rel}")
+                return
+
+            # Fallback Sync Processing
+            now = time.time()
+            scan_ts = int(now)
+            
+            # _process_file_task returns dict or None
+            result = self._process_file_task(root, p, st, scan_ts, now)
+            
+            if result and result["type"] == "changed":
+                 batch = [(result["rel"], result["repo"], result["mtime"], result["size"], result["content"], result["scan_ts"])]
+                 self.db.upsert_files(batch)
+                 if result.get("symbols"):
+                    self.db.upsert_symbols(result["symbols"])
+                 
+                 # Update validation stats lightly
+                 if self.logger:
+                     self.logger.log_info(f"Watcher indexed: {rel}")
+                     
+        except Exception as e:
+            if self.logger:
+                self.logger.log_error(f"Watcher process failed for {path}: {e}")
+
+    def _ingestion_loop(self) -> None:
+        """Background worker to consume file events (v2.8.0)."""
+        if not self.queue:
+            return
+            
+        while not self._stop.is_set():
+            items = self.queue.get_batch(max_size=getattr(self.cfg, "commit_batch_size", 100))
+            if not items:
+                continue
+                
+            # Process batch
+            files_to_upsert = []
+            symbols_to_upsert = []
+            
+            futures = []
+            now = time.time()
+            scan_ts = int(now)
+            root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
+            
+            for path in items:
+                try:
+                    p = Path(path) # Already resolved or string? Queue stores what we put.
+                    # We will put resolved abs path string or Path obj.
+                    # Let's assume absolute path string.
+                    p = Path(path)
+                    try:
+                        st = p.stat()
+                    except FileNotFoundError:
+                        continue # Deleted meanwhile?
+                        
+                    futures.append(self._executor.submit(self._process_file_task, root, p, st, scan_ts, now))
+                except Exception:
+                    pass
+            
+            for f in concurrent.futures.as_completed(futures):
+                try:
+                    res = f.result()
+                    if res and res["type"] == "changed":
+                        files_to_upsert.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
+                        if res.get("symbols"):
+                            symbols_to_upsert.extend(res["symbols"])
+                except Exception:
+                    pass
+                    
+            if files_to_upsert:
+                count = self.db.upsert_files(files_to_upsert)
+                if self.logger and count > 0:
+                    self.logger.log_info(f"Async indexed {count} files")
+                    
+            if symbols_to_upsert:
+                self.db.upsert_symbols(symbols_to_upsert)
+                
+            # Update stats
+            if files_to_upsert:
+                self.status.indexed_files += len(files_to_upsert)

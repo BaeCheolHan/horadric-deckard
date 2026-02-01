@@ -325,6 +325,20 @@ def do_install(args):
         except Exception as e:
             print_warn(f"Failed to patch bootstrap uninstall shim: {e}")
 
+    # 4a. Install Dependencies
+    print_step("Installing dependencies...")
+    try:
+        req = INSTALL_DIR / "requirements.txt"
+        if req.exists():
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req)])
+        else:
+            # Fallback if requirements.txt missing in cloned repo (e.g. strict version match)
+            # But normally we expect it.
+            # Explicitly install watchdog for now if missing
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "watchdog"])
+    except Exception as e:
+        print_warn(f"Dependency install failed (watchdog might be missing): {e}")
+
     # 4. Generate VERSION file
     version = "dev"
     try:

@@ -421,6 +421,15 @@ class LocalSearchDB:
             rows = self._read.execute("SELECT * FROM repo_meta").fetchall()
         return {row["repo_name"]: dict(row) for row in rows}
 
+    def delete_file(self, path: str) -> None:
+        """Delete a file and its symbols by path (v2.7.2)."""
+        with self._lock:
+            cur = self._write.cursor()
+            cur.execute("BEGIN")
+            cur.execute("DELETE FROM symbols WHERE path = ?", (path,))
+            cur.execute("DELETE FROM files WHERE path = ?", (path,))
+            self._write.commit()
+
     def list_files(
         self,
         repo: Optional[str] = None,
