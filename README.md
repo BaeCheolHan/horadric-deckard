@@ -95,10 +95,13 @@ Deckard가 백그라운드에서 프로젝트를 스캔하고 정확한 파일�
 
 ```bash
 # 데몬 상태 확인
-~/.local/share/horadric-deckard/bootstrap.sh status
+~/.local/share/horadric-deckard/bootstrap.sh daemon status
 
-# 직접 검색 (디버깅용)
-python3 -m mcp.cli search "AuthService"
+# 데몬 백그라운드 실행
+~/.local/share/horadric-deckard/bootstrap.sh daemon start -d
+
+# 데몬 중지
+~/.local/share/horadric-deckard/bootstrap.sh daemon stop
 ```
 
 ---

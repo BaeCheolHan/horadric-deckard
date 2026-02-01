@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 try:
     from ..app.db import LocalSearchDB
-    from ..app.telemetry import TelemetryLogger
+    from ..telemetry import TelemetryLogger
 except ImportError:
     from db import LocalSearchDB
     from telemetry import TelemetryLogger

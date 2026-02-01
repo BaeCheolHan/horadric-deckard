@@ -10,7 +10,7 @@ try:
     from ..app.db import LocalSearchDB
     from ..app.indexer import Indexer
     from ..app.config import Config
-    from ..app.telemetry import TelemetryLogger
+    from ..telemetry import TelemetryLogger
 except ImportError:
     from db import LocalSearchDB
     from indexer import Indexer

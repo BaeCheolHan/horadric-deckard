@@ -92,7 +92,7 @@ def main():
         with open(CLAUDE_CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
             
-        print_success("Added 'deckard' to cluade_desktop_config.json")
+        print_success("Added 'deckard' to claude_desktop_config.json")
     else:
         print_step("Claude Desktop not found. Skipping auto-config.")
         print("Manual Config Required:")

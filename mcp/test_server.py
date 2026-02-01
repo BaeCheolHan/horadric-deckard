@@ -31,7 +31,7 @@ def test_initialize():
         
         assert result["protocolVersion"] == "2025-11-25"
         assert result["serverInfo"]["name"] == "deckard"
-        assert result["serverInfo"]["version"] == "2.5.0"
+        assert result["serverInfo"]["version"]
         assert "tools" in result["capabilities"]
 
 

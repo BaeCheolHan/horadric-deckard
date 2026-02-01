@@ -9,19 +9,27 @@ Usage:
     deckard proxy               Run in proxy mode (stdio ↔ daemon)
 """
 import argparse
+import json
 import os
 import signal
 import socket
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
+import ipaddress
 from pathlib import Path
 from typing import Optional
+
+from .workspace import WorkspaceManager
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 47779
 PID_FILE = Path.home() / ".local" / "share" / "deckard" / "daemon.pid"
+DEFAULT_HTTP_HOST = "127.0.0.1"
+DEFAULT_HTTP_PORT = 47777
 
 
 def get_daemon_address():
@@ -29,6 +37,67 @@ def get_daemon_address():
     host = os.environ.get("DECKARD_DAEMON_HOST", DEFAULT_HOST)
     port = int(os.environ.get("DECKARD_DAEMON_PORT", DEFAULT_PORT))
     return host, port
+
+
+def _load_server_info(workspace_root: str) -> Optional[dict]:
+    server_json = Path(workspace_root) / ".codex" / "tools" / "deckard" / "data" / "server.json"
+    if not server_json.exists():
+        return None
+    try:
+        return json.loads(server_json.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _load_http_config(workspace_root: str) -> Optional[dict]:
+    cfg_path = Path(workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
+    if not cfg_path.exists():
+        return None
+    try:
+        return json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _is_loopback(host: str) -> bool:
+    h = (host or "").strip().lower()
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def _enforce_loopback(host: str) -> None:
+    if os.environ.get("DECKARD_ALLOW_NON_LOOPBACK") == "1" or os.environ.get("LOCAL_SEARCH_ALLOW_NON_LOOPBACK") == "1":
+        return
+    if not _is_loopback(host):
+        raise RuntimeError(
+            f"deckard loopback-only: server_host must be 127.0.0.1/localhost/::1 (got={host}). "
+            "Set DECKARD_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
+        )
+
+
+def _get_http_host_port() -> tuple[str, int]:
+    workspace_root = WorkspaceManager.detect_workspace()
+    server_info = _load_server_info(workspace_root)
+    if server_info:
+        return str(server_info.get("host", DEFAULT_HTTP_HOST)), int(server_info.get("port", DEFAULT_HTTP_PORT))
+
+    cfg = _load_http_config(workspace_root) or {}
+    host = str(cfg.get("server_host", DEFAULT_HTTP_HOST))
+    port = int(cfg.get("server_port", DEFAULT_HTTP_PORT))
+    return host, port
+
+
+def _request_http(path: str, params: dict) -> dict:
+    host, port = _get_http_host_port()
+    _enforce_loopback(host)
+    qs = urllib.parse.urlencode(params)
+    url = f"http://{host}:{port}{path}?{qs}"
+    with urllib.request.urlopen(url, timeout=3.0) as r:
+        return json.loads(r.read().decode("utf-8"))
 
 
 def is_daemon_running(host: str, port: int) -> bool:
@@ -184,6 +253,23 @@ def cmd_proxy(args):
     proxy_main()
 
 
+def cmd_status(args):
+    """Query HTTP status endpoint."""
+    data = _request_http("/status", {})
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_search(args):
+    """Query HTTP search endpoint."""
+    params = {"q": args.query, "limit": args.limit}
+    if args.repo:
+        params["repo"] = args.repo
+    data = _request_http("/search", params)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="deckard",
@@ -213,6 +299,17 @@ def main():
     # proxy subcommand
     proxy_parser = subparsers.add_parser("proxy", help="Run in proxy mode")
     proxy_parser.set_defaults(func=cmd_proxy)
+
+    # status subcommand (HTTP)
+    status_parser = subparsers.add_parser("status", help="Query HTTP status")
+    status_parser.set_defaults(func=cmd_status)
+
+    # search subcommand (HTTP)
+    search_parser = subparsers.add_parser("search", help="Search via HTTP server")
+    search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument("--repo", default="", help="Limit search to repo")
+    search_parser.add_argument("--limit", type=int, default=10, help="Max results (default: 10)")
+    search_parser.set_defaults(func=cmd_search)
     
     args = parser.parse_args()
     

@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 # Use relative imports within mcp package, with fallback for direct execution
 try:
     from ..app.db import LocalSearchDB, SearchOptions
-    from ..app.telemetry import TelemetryLogger
+    from ..telemetry import TelemetryLogger
 except ImportError:
     # Fallback for when run via sys.path manipulation in server.py
     from db import LocalSearchDB, SearchOptions

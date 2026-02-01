@@ -2,6 +2,7 @@ import asyncio
 import os
 import signal
 import logging
+import ipaddress
 from .session import Session
 
 from pathlib import Path
@@ -50,6 +51,19 @@ class DeckardDaemon:
             logger.error(f"Failed to remove PID file: {e}")
 
     async def start(self):
+        allow_non_loopback = os.environ.get("DECKARD_ALLOW_NON_LOOPBACK") == "1" or os.environ.get("LOCAL_SEARCH_ALLOW_NON_LOOPBACK") == "1"
+        host = (self.host or "127.0.0.1").strip()
+        try:
+            is_loopback = host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = host.lower() == "localhost"
+
+        if (not is_loopback) and (not allow_non_loopback):
+            raise SystemExit(
+                f"deckard daemon refused to start: host must be loopback only (127.0.0.1/localhost/::1). got={host}. "
+                "Set DECKARD_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
+            )
+
         self._write_pid()
         
         self.server = await asyncio.start_server(
