@@ -344,7 +344,7 @@ curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/i
 
 ## 📜 라이선스 (License)
 
-이 프로젝트는 **MIT License**를 따르고 있어요. 누구나 자유롭게 사용하고, 고치고, 공유할 수 있답니다! 😄
+이 프로젝트는 [MIT License](LICENSE)를 따르고 있어요. 누구나 자유롭게 사용하고, 고치고, 공유할 수 있답니다! 😄
 
 ---
 
