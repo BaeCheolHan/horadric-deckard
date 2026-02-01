@@ -6,6 +6,9 @@ import time
 import subprocess
 import logging
 import fcntl
+from pathlib import Path
+from .telemetry import TelemetryLogger
+from .workspace import WorkspaceManager
 
 # Configure logging to stderr so it doesn't interfere with MCP STDIO
 logging.basicConfig(
@@ -14,6 +17,23 @@ logging.basicConfig(
     stream=sys.stderr
 )
 logger = logging.getLogger("mcp-proxy")
+telemetry = TelemetryLogger(WorkspaceManager.get_global_log_dir())
+
+
+def _log_info(message: str) -> None:
+    logger.info(message)
+    try:
+        telemetry.log_info(message)
+    except Exception:
+        pass
+
+
+def _log_error(message: str) -> None:
+    logger.error(message)
+    try:
+        telemetry.log_error(message)
+    except Exception:
+        pass
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 47779
@@ -42,15 +62,30 @@ def start_daemon_if_needed(host, port):
             except (ConnectionRefusedError, OSError):
                 pass
 
-            logger.info("Daemon not running, starting...")
+            _log_info("Daemon not running, starting...")
             
             # Assume we are in mcp/proxy.py, so parent of parent is repo root
             repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+            def _detect_workspace_root_from_cwd():
+                cwd = Path.cwd()
+                for parent in [cwd] + list(cwd.parents):
+                    if (parent / ".codex-root").exists():
+                        return str(parent)
+                return None
+
+            env = os.environ.copy()
+            if not env.get("DECKARD_WORKSPACE_ROOT") and not env.get("LOCAL_SEARCH_WORKSPACE_ROOT"):
+                detected = _detect_workspace_root_from_cwd()
+                if detected:
+                    env["DECKARD_WORKSPACE_ROOT"] = detected
+                    _log_info(f"Using workspace root from cwd marker: {detected}")
             
             # Detach process
             subprocess.Popen(
                 [sys.executable, "-m", "mcp.daemon"],
                 cwd=repo_root,
+                env=env,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
@@ -60,12 +95,12 @@ def start_daemon_if_needed(host, port):
             for _ in range(20):
                 try:
                     with socket.create_connection((host, port), timeout=0.1):
-                        logger.info("Daemon started successfully.")
+                        _log_info("Daemon started successfully.")
                         return True
                 except (ConnectionRefusedError, OSError):
                     time.sleep(0.1)
             
-            logger.error("Failed to start daemon.")
+            _log_error("Failed to start daemon.")
             return False
             
         finally:
@@ -90,7 +125,7 @@ def forward_socket_to_stdout(sock, mode_holder):
                 sys.stdout.buffer.write(header + body)
                 sys.stdout.buffer.flush()
     except Exception as e:
-        logger.error(f"Error forwarding socket to stdout: {e}")
+        _log_error(f"Error forwarding socket to stdout: {e}")
     finally:
         # If socket closes, we should probably exit
         os._exit(0)
@@ -151,11 +186,21 @@ def forward_stdin_to_socket(sock, mode_holder):
                 mode_holder["mode"] = mode
             sock.sendall(msg + b"\n")
     except Exception as e:
-        logger.error(f"Error forwarding stdin to socket: {e}")
+        _log_error(f"Error forwarding stdin to socket: {e}")
         sock.close()
         sys.exit(1)
 
 def main():
+    # Log startup context for diagnostics
+    _log_info(
+        "Proxy startup: cwd=%s argv=%s env.DECKARD_WORKSPACE_ROOT=%s env.LOCAL_SEARCH_WORKSPACE_ROOT=%s"
+        % (
+            os.getcwd(),
+            sys.argv,
+            os.environ.get("DECKARD_WORKSPACE_ROOT"),
+            os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT"),
+        )
+    )
     host = os.environ.get("DECKARD_DAEMON_HOST", DEFAULT_HOST)
     port = int(os.environ.get("DECKARD_DAEMON_PORT", DEFAULT_PORT))
 
@@ -165,7 +210,7 @@ def main():
     try:
         sock = socket.create_connection((host, port))
     except Exception as e:
-        logger.error(f"Could not connect to daemon: {e}")
+        _log_error(f"Could not connect to daemon: {e}")
         sys.exit(1)
 
     # Start threads for bidirectional forwarding

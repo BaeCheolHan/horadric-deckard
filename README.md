@@ -80,6 +80,9 @@ command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
 args = ["--workspace-root", "/Users/YOUR_USERNAME/Documents/repositories"]
 ```
 
+> 참고: 일부 클라이언트는 MCP initialize에 rootUri/workspaceFolders를 전달하지 않을 수 있습니다.
+> 이 경우 Deckard는 현재 작업 디렉토리의 `.codex-root`를 기준으로 workspace를 추론합니다.
+
 ### 초기화 (권장)
 워크스페이스에 `.codex-root`와 Deckard 설정을 생성합니다.
 
