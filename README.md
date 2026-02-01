@@ -72,6 +72,14 @@ command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
 # args = []  # 필요한 경우 추가
 ```
 
+workspace 루트를 고정하고 싶다면 args로 전달할 수 있습니다:
+
+```toml
+[mcp_servers.deckard]
+command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
+args = ["--workspace-root", "/Users/YOUR_USERNAME/Documents/repositories"]
+```
+
 ### 초기화 (권장)
 워크스페이스에 `.codex-root`와 Deckard 설정을 생성합니다.
 
