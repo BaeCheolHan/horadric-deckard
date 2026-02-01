@@ -62,13 +62,15 @@ curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/i
     - **Type**: `stdio`
     - **Command**: `/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh` (절대 경로 입력)
 
-### Codex / Gemini CLI
+### Codex / Gemini CLI (1‑Step 권장)
 `~/.codex/config.toml` 또는 프로젝트 루트의 `.codex/config.toml`
 (또는 `.gemini/config.toml`)에 아래 내용을 추가하세요.
 
+> **1‑Step 모드**: repo 경로의 `bootstrap.sh`를 등록하면 실행 시 자동 설치/업데이트가 수행됩니다.
+
 ```toml
 [mcp_servers.deckard]
-command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
+command = "/Users/YOUR_USERNAME/Documents/repositories/horadric-deckard/bootstrap.sh"
 # args = []  # 필요한 경우 추가
 ```
 
@@ -76,9 +78,32 @@ workspace 루트를 고정하고 싶다면 args로 전달할 수 있습니다:
 
 ```toml
 [mcp_servers.deckard]
-command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
-args = ["--workspace-root", "/Users/YOUR_USERNAME/Documents/repositories"]
+command = "/Users/YOUR_USERNAME/path/to/horadric-deckard/bootstrap.sh"
+args = ["--workspace-root", "/Users/YOUR_USERNAME/path/to/workspace"]
 ```
+
+**args 설명**
+- `--workspace-root` : 인덱싱할 워크스페이스 루트를 고정합니다.
+- 값을 지정하지 않으면, Deckard는 **현재 작업 디렉토리 → 상위 .codex-root 탐색** 순서로 자동 추론합니다.
+  - 즉, **args를 넣지 않으면 실행한 위치 기준으로 인덱싱 대상이 결정**됩니다.
+
+**예시 (1‑Step + 루트 고정)**  
+```toml
+[mcp_servers.deckard]
+command = "/Users/YOUR_USERNAME/path/to/horadric-deckard/bootstrap.sh"
+args = ["--workspace-root", "/Users/YOUR_USERNAME/path/to/workspace"]
+```
+
+**여러 루트?**  
+- 현재 `--workspace-root`는 **단일 경로만 지원**합니다.  
+- 여러 워크스페이스를 쓰려면 각 워크스페이스마다 별도 설정을 사용하는 것을 권장합니다.
+
+> **배포 경로 고정(수동 설치)**: 이미 설치본이 있다면 아래처럼 설치본 경로를 직접 지정해도 됩니다.
+> ```toml
+> [mcp_servers.deckard]
+> command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
+> args = ["--workspace-root", "/Users/YOUR_USERNAME/Documents/repositories"]
+> ```
 
 > 참고: 일부 클라이언트는 MCP initialize에 rootUri/workspaceFolders를 전달하지 않을 수 있습니다.
 > 이 경우 Deckard는 현재 작업 디렉토리의 `.codex-root`를 기준으로 workspace를 추론합니다.
