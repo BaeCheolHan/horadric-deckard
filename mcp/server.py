@@ -124,6 +124,22 @@ class LocalSearchMCPServer:
     
     
     def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        # Trace client initialize payload to verify rootUri/workspaceFolders delivery.
+        try:
+            self.logger.log_info(
+                "Initialize params: "
+                + json.dumps(
+                    {
+                        "rootUri": params.get("rootUri"),
+                        "rootPath": params.get("rootPath"),
+                        "workspaceFolders": params.get("workspaceFolders"),
+                        "clientInfo": params.get("clientInfo"),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        except Exception as e:
+            self.logger.log_error(f"Initialize params log failed: {e}")
         # Parse rootUri from client (LSP/MCP standard)
         root_uri = params.get("rootUri") or params.get("rootPath")
         if root_uri:
