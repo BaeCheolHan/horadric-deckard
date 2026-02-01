@@ -93,7 +93,9 @@ class WorkspaceManager:
     
     @staticmethod
     def get_global_data_dir() -> Path:
-        """Get global data directory: ~/.local/share/deckard/"""
+        """Get global data directory: ~/.local/share/deckard/ (or AppData/Local on Win)"""
+        if os.name == 'nt':
+            return Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "horadric-deckard"
         return Path.home() / ".local" / "share" / "deckard"
     
     @staticmethod

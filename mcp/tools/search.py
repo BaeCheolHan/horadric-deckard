@@ -102,6 +102,8 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
             result["match_count"] = hit.match_count
         if hit.file_type:
             result["file_type"] = hit.file_type
+        if hit.context_symbol:
+            result["context_symbol"] = hit.context_symbol
         results.append(result)
     
     # Result Grouping

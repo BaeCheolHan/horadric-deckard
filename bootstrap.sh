@@ -7,6 +7,48 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$DIR"
 INSTALL_DIR="$HOME/.local/share/horadric-deckard"
 
+# Uninstall helper (explicit command)
+if [ "$1" = "uninstall" ]; then
+    echo "[deckard] uninstall: stopping daemon and removing install dir" >&2
+    if [ -x "$INSTALL_DIR/bootstrap.sh" ]; then
+        "$INSTALL_DIR/bootstrap.sh" daemon stop >/dev/null 2>&1 || true
+    fi
+    # Remove install dir
+    if [ -d "$INSTALL_DIR" ]; then
+        rm -rf "$INSTALL_DIR"
+    fi
+    # Remove deckard block from codex configs (project/global)
+    python3 - <<'PY'
+from pathlib import Path
+def strip_deckard(cfg: Path):
+    if not cfg.exists():
+        return
+    lines = cfg.read_text(encoding="utf-8").splitlines()
+    new_lines = []
+    in_deckard = False
+    for line in lines:
+        if line.strip() == "[mcp_servers.deckard]":
+            in_deckard = True
+            continue
+        if in_deckard and line.startswith("[") and line.strip() != "[mcp_servers.deckard]":
+            in_deckard = False
+            new_lines.append(line)
+            continue
+        if not in_deckard:
+            new_lines.append(line)
+    cfg.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+home = Path.home()
+global_cfg = home / ".codex" / "config.toml"
+strip_deckard(global_cfg)
+cwd = Path.cwd()
+proj_cfg = cwd / ".codex" / "config.toml"
+strip_deckard(proj_cfg)
+PY
+    echo "[deckard] uninstall: done" >&2
+    exit 0
+fi
+
 # Self-install/update: if running from repo (not install dir), bootstrap install dir first
 if [ "${DECKARD_BOOTSTRAP_DONE:-}" != "1" ] && [ "$ROOT_DIR" != "$INSTALL_DIR" ]; then
     # Determine repo version (if available)
@@ -30,7 +72,13 @@ if [ "${DECKARD_BOOTSTRAP_DONE:-}" != "1" ] && [ "$ROOT_DIR" != "$INSTALL_DIR" ]
 
     if [ "$NEED_INSTALL" = "1" ] && [ -f "$ROOT_DIR/install.py" ]; then
         echo "[deckard] bootstrap: installing to $INSTALL_DIR" >&2
-        DECKARD_BOOTSTRAP_DONE=1 python3 "$ROOT_DIR/install.py" >/dev/null 2>&1 || true
+        # Redirect stdout to stderr to protect MCP protocol, but show errors
+        DECKARD_BOOTSTRAP_DONE=1 python3 "$ROOT_DIR/install.py" --no-interactive 1>&2
+        if [ $? -ne 0 ]; then
+             echo "[deckard] bootstrap: installation failed. Check install.log." >&2
+             # Don't swallow error, exit
+             exit 1
+        fi
     fi
 
     if [ -x "$INSTALL_DIR/bootstrap.sh" ]; then

@@ -89,16 +89,26 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": False, "error": "not found"}, status=404)
 
 
-def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, version: str = "dev") -> tuple:
-    """Start HTTP server with automatic port fallback on conflict (v2.3.2).
+def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, version: str = "dev", workspace_root: str = "") -> tuple:
+    """Start HTTP server with Registry-based port allocation (v2.7.0).
     
     Returns:
-        tuple: (HTTPServer, actual_port) - actual_port may differ from requested port on fallback
+        tuple: (HTTPServer, actual_port)
     """
     import socket
     import sys
+    import os
     
-    # Bind dependencies as class attributes so they're available during __init__.
+    # Try importing registry, fallback if missing
+    try:
+        from .registry import ServerRegistry  # type: ignore
+        registry = ServerRegistry()
+        has_registry = True
+    except ImportError:
+        registry = None
+        has_registry = False
+
+    # Bind dependencies as class attributes
     class BoundHandler(Handler):
         pass
 
@@ -107,30 +117,53 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     BoundHandler.server_host = host  # type: ignore
     BoundHandler.server_version = version  # type: ignore
 
-    # v2.3.2: Try up to 10 ports on EADDRINUSE
-    max_retries = 10
+    # Allocation Strategy
     actual_port = port
-    httpd = None
-    
-    for attempt in range(max_retries):
+    if has_registry:
         try:
-            BoundHandler.server_port = actual_port  # type: ignore
-            httpd = HTTPServer((host, actual_port), BoundHandler)
-            break
-        except socket.error as e:
-            # EADDRINUSE or similar
-            if attempt < max_retries - 1:
-                print(f"[deckard] Port {actual_port} in use, trying {actual_port + 1}...", file=sys.stderr)
-                actual_port += 1
-            else:
-                raise RuntimeError(f"Could not bind to any port ({port}-{actual_port}): {e}")
+            # Find a truly free port (checking OS & Registry)
+            actual_port = registry.find_free_port(start_port=port)
+        except RuntimeError:
+            print("[deckard] Warning: No free ports found via registry, trying fallback.", file=sys.stderr)
+            pass
+
+    httpd = None
+    try:
+        BoundHandler.server_port = actual_port  # type: ignore
+        httpd = HTTPServer((host, actual_port), BoundHandler)
+    except OSError as e:
+        # Fallback to simple retry if exact binding failed (race condition?)
+        print(f"[deckard] Port {actual_port} binding failed: {e}. Retrying...", file=sys.stderr)
+        for i in range(10):
+            p = actual_port + 1 + i
+            try:
+                BoundHandler.server_port = p
+                httpd = HTTPServer((host, p), BoundHandler)
+                actual_port = p
+                break
+            except OSError:
+                continue
     
     if httpd is None:
         raise RuntimeError("Failed to create HTTP server")
     
-    if actual_port != port:
-        print(f"[deckard] Started on fallback port {actual_port} (original: {port})", file=sys.stderr)
+    # Register in server.json
+    if has_registry and workspace_root:
+        try:
+            registry.register(workspace_root, actual_port, os.getpid())
+        except Exception as e:
+            print(f"[deckard] Registry update failed: {e}", file=sys.stderr)
 
+    if actual_port != port:
+        print(f"[deckard] Started on port {actual_port} (requested: {port})", file=sys.stderr)
+
+    # Clean shutdown hook?
+    # HTTP Server runs in thread, so unregistering is tricky if main thread dies hard.
+    # But serve_forever is called in thread usually.
+    # The caller (mcp.server) is responsible for unregistering OR we trust 'pid' check.
+    # Let's rely on PID check for now (lazy cleanup), but try to unregister if possible.
+    
     th = threading.Thread(target=httpd.serve_forever, daemon=True)
     th.start()
     return (httpd, actual_port)
+

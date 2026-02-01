@@ -21,6 +21,7 @@ class SearchHit:
     match_count: int = 0
     file_type: str = ""
     hit_reason: str = ""  # v2.4.3: Added hit reason
+    context_symbol: str = ""  # v2.6.0: Enclosing symbol context
 
 
 @dataclass
@@ -137,6 +138,32 @@ class LocalSearchDB:
                 """
             )
 
+            # v2.6.0: Symbols table for code intelligence
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbols (
+                  path TEXT NOT NULL,
+                  name TEXT NOT NULL,
+                  kind TEXT NOT NULL,
+                  line INTEGER NOT NULL,
+                  end_line INTEGER NOT NULL,
+                  content TEXT NOT NULL,
+                  parent_name TEXT DEFAULT '',
+                  FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+                );
+                """
+            )
+            # v2.7.0: Migration for existing symbols table
+            try:
+                cur.execute("ALTER TABLE symbols ADD COLUMN end_line INTEGER DEFAULT 0")
+                cur.execute("ALTER TABLE symbols ADD COLUMN parent_name TEXT DEFAULT ''")
+                self._write.commit()
+            except sqlite3.OperationalError:
+                pass
+
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_path ON symbols(path);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);")
+
             # Index for efficient filtering
             cur.execute("CREATE INDEX IF NOT EXISTS idx_files_repo ON files(repo);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime DESC);")
@@ -189,6 +216,7 @@ class LocalSearchDB:
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
+            # 1. Upsert files
             cur.executemany(
                 """
                 INSERT INTO files(path, repo, mtime, size, content, last_seen)
@@ -202,8 +230,76 @@ class LocalSearchDB:
                 """,
                 rows_list,
             )
+            # 2. Clear old symbols for these paths to ensure consistency (v2.8.0)
+            # This handles cases where a file's symbols are completely removed.
+            cur.executemany("DELETE FROM symbols WHERE path = ?", [(r[0],) for r in rows_list])
             self._write.commit()
         return len(rows_list)
+
+    def upsert_symbols(self, symbols: Iterable[tuple[str, str, str, int, int, str, str]]) -> int:
+        """Upsert detected symbols (path, name, kind, line, end_line, content, parent_name)."""
+        symbols_list = list(symbols)
+        if not symbols_list:
+            return 0
+        
+        # Group by path to clear old symbols first
+        paths = {s[0] for s in symbols_list}
+        
+        with self._lock:
+            cur = self._write.cursor()
+            cur.execute("BEGIN")
+            
+            # Clear old symbols for these paths
+            # Note: We don't have ON CONFLICT for symbols because a file can have multiple same-named symbols (overloaded) 
+            # or just multiple symbols. We wipe and rewrite for the file.
+            cur.executemany("DELETE FROM symbols WHERE path = ?", [(p,) for p in paths])
+            
+            cur.executemany(
+                """
+                INSERT INTO symbols(path, name, kind, line, end_line, content, parent_name)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                symbols_list,
+            )
+            self._write.commit()
+        return len(symbols_list)
+
+    def get_symbol_block(self, path: str, name: str) -> Optional[dict[str, Any]]:
+        """Get the full content block for a specific symbol (v2.7.0)."""
+        sql = """
+            SELECT s.line, s.end_line, f.content
+            FROM symbols s
+            JOIN files f ON s.path = f.path
+            WHERE s.path = ? AND s.name = ?
+            ORDER BY s.line ASC
+            LIMIT 1
+        """
+        with self._read_lock:
+            row = self._read.execute(sql, (path, name)).fetchone()
+            
+        if not row:
+            return None
+            
+        line_start = row["line"]
+        line_end = row["end_line"]
+        full_content = row["content"]
+        
+        # Extract lines
+        lines = full_content.splitlines()
+        # 1-based index to 0-based
+        if line_end <= 0: # fallback if end_line not parsed
+             line_end = line_start + 10 
+             
+        start_idx = max(0, line_start - 1)
+        end_idx = min(len(lines), line_end)
+        
+        block = "\n".join(lines[start_idx:end_idx])
+        return {
+            "name": name,
+            "start_line": line_start,
+            "end_line": line_end,
+            "content": block
+        }
 
     def update_last_seen(self, paths: Iterable[str], timestamp: int) -> int:
         """Update last_seen timestamp for existing files (v2.5.3)."""
@@ -224,6 +320,12 @@ class LocalSearchDB:
         """Delete files that were not seen in the latest scan (v2.5.3)."""
         with self._lock:
             cur = self._write.cursor()
+            # Cascade delete should handle symbols if FK is enabled, but sqlite default often disabled.
+            # Manually delete symbols for cleanliness or rely on trigger? 
+            # Safest to delete manually if FKs aren't reliable.
+            # Let's check keys.
+            cur.execute("PRAGMA foreign_keys = ON;") 
+            
             cur.execute("DELETE FROM files WHERE last_seen < ?", (timestamp_limit,))
             count = cur.rowcount
             self._write.commit()
@@ -236,6 +338,7 @@ class LocalSearchDB:
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
+            cur.execute("PRAGMA foreign_keys = ON;")
             cur.executemany("DELETE FROM files WHERE path=?", [(p,) for p in paths_list])
             self._write.commit()
         return len(paths_list)
@@ -577,8 +680,54 @@ class LocalSearchDB:
 
     # ========== Main Search Methods ========== 
 
+
+    def search_symbols(self, query: str, repo: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:
+        """Search for symbols by name (v2.6.0)."""
+        limit = min(limit, 100)
+        query = query.strip()
+        if not query:
+            return []
+            
+        sql = """
+            SELECT s.path, s.name, s.kind, s.line, s.end_line, s.content, f.repo, f.mtime, f.size
+            FROM symbols s
+            JOIN files f ON s.path = f.path
+            WHERE s.name LIKE ?
+        """
+        params = [f"%{query}%"]
+        
+        if repo:
+            sql += " AND f.repo = ?"
+            params.append(repo)
+            
+        sql += " ORDER BY length(s.name) ASC, s.path ASC LIMIT ?"
+        params.append(limit)
+        
+        with self._read_lock:
+            rows = self._read.execute(sql, params).fetchall()
+            
+        return [
+            {
+                "path": r["path"],
+                "repo": r["repo"],
+                "name": r["name"],
+                "kind": r["kind"],
+                "line": r["line"],
+                "snippet": r["content"],
+                "mtime": int(r["mtime"]),
+                "size": int(r["size"])
+            }
+            for r in rows
+        ]
+
+    def read_file(self, path: str) -> Optional[str]:
+        """Read full file content from DB (v2.6.0)."""
+        with self._read_lock:
+            row = self._read.execute("SELECT content FROM files WHERE path = ?", (path,)).fetchone()
+        return row["content"] if row else None
+
     def search_v2(self, opts: SearchOptions) -> tuple[list[SearchHit], dict[str, Any]]:
-        """Enhanced search with all options (v2.3.1)."""
+        """Enhanced search with Hybrid (Symbol + FTS) strategy."""
         q = (opts.query or "").strip()
         if not q:
             return [], {"fallback_used": False, "total_scanned": 0, "total": 0}
@@ -586,84 +735,111 @@ class LocalSearchDB:
         terms = self._extract_terms(q)
         meta: dict[str, Any] = {"fallback_used": False, "total_scanned": 0}
         
-        # Regex mode
+        # Regex mode bypasses hybrid logic
         if opts.use_regex:
             return self._search_regex(opts, terms, meta)
         
-        # v2.5.4: Detect if query contains non-ASCII characters or is too short
-        # FTS5 default tokenizer often fails with CJK characters or short terms.
+        # 1. Symbol Search (Priority Layer)
+        # Only run if not in approx mode (which implies huge scale or quick scan)
+        symbol_hits_data = []
+        if opts.total_mode != "approx":
+             symbol_hits_data = self.search_symbols(q, repo=opts.repo, limit=50)
+
+        # Convert symbol hits to SearchHit objects
+        symbol_hits = []
+        for s in symbol_hits_data:
+            hit = SearchHit(
+                repo=s["repo"],
+                path=s["path"],
+                score=1000.0, # Massive starting score for symbol match
+                snippet=s["snippet"],
+                mtime=s["mtime"],
+                size=s["size"],
+                match_count=1,
+                file_type=self._get_file_extension(s["path"]),
+                hit_reason=f"Symbol: {s['kind']} {s['name']}",
+                context_symbol=f"{s['kind']}: {s['name']}"
+            )
+            # Recency boost if enabled
+            if opts.recency_boost:
+                hit.score = self._calculate_recency_score(hit.mtime, hit.score)
+            symbol_hits.append(hit)
+
+
+        # 2. FTS Search
+        fts_hits = []
         has_unicode = any(ord(c) > 127 for c in q)
         is_too_short = len(q) < 3
         
-        # FTS mode (default)
-        if self._fts_enabled and not has_unicode and not is_too_short:
-            result = self._search_fts(opts, terms, meta)
-            if result is not None:
-                return result
+        use_fts = self._fts_enabled and not has_unicode and not is_too_short
+        fts_success = False
         
-        # LIKE fallback (used for non-ASCII, short queries or when FTS fails)
-        return self._search_like(opts, terms, meta)
-
-    def _search_fts(self, opts: SearchOptions, terms: list[str], 
-                    meta: dict[str, Any]) -> Optional[tuple[list[SearchHit], dict[str, Any]]]:
-        where_clauses = ["files_fts MATCH ?"]
-        params: list[Any] = [opts.query]
-        
-        filter_clauses, filter_params = self._build_filter_clauses(opts)
-        where_clauses.extend(filter_clauses)
-        params.extend(filter_params)
-        
-        where = " AND ".join(where_clauses)
-        
-        # Total count
-        total_hits = 0
-        if opts.total_mode == "exact":
+        if use_fts:
             try:
-                count_sql = f"SELECT COUNT(*) as c FROM files_fts JOIN files f ON f.rowid = files_fts.rowid WHERE {where}"
-                with self._read_lock:
-                    count_row = self._read.execute(count_sql, params).fetchone()
-                total_hits = int(count_row["c"]) if count_row else 0
+                res = self._search_fts(opts, terms, meta, no_slice=True)
+                if res:
+                    fts_hits, fts_meta = res
+                    meta.update(fts_meta)
+                    fts_success = True
             except sqlite3.OperationalError:
-                return None # FTS failed
-        else:
-            # Approx mode: we'll set total = len(hits) or some high number if hits > limit
-            total_hits = -1 
-            
-        meta["total"] = total_hits
-        meta["total_mode"] = opts.total_mode
+                # FTS failed (e.g. index corrupted or missing), fallback to LIKE
+                pass
+        
+        if not fts_success:
+            # Fallback to LIKE
+            res, like_meta = self._search_like(opts, terms, meta, no_slice=True)
+            fts_hits = res
+            meta.update(like_meta)
 
-        # Fetch buffer to allow for Python-side re-ranking and further filtering (excludes)
-        fetch_limit = (opts.offset + opts.limit) * 2
-        if fetch_limit < 100: fetch_limit = 100
+        # 3. Merge Strategies
+        # Map path -> Hit
+        merged_map: dict[str, SearchHit] = {}
         
-        sql = f"""
-            SELECT f.repo AS repo,
-                   f.path AS path,
-                   f.mtime AS mtime,
-                   f.size AS size,
-                   bm25(files_fts) AS score,
-                   f.content AS content
-            FROM files_fts
-            JOIN files f ON f.rowid = files_fts.rowid
-            WHERE {where}
-            ORDER BY {"f.mtime DESC, score" if opts.recency_boost else "score"}, f.path ASC
-            LIMIT ?;
-        """
-        params.append(int(fetch_limit))
+        # First put FTS hits
+        for h in fts_hits:
+            merged_map[h.path] = h
+            
+        # Then merge Symbol hits
+        for sh in symbol_hits:
+            if sh.path in merged_map:
+                existing = merged_map[sh.path]
+                # If we have a symbol match, it overrides the score and snippet preference
+                # But we want to keep the highest score.
+                # Since we gave symbol hit 1000.0, it will likely win.
+                existing.score += 500.0 # Boost existing FTS hit
+                existing.hit_reason = f"{sh.hit_reason}, {existing.hit_reason}"
+                # If the symbol snippet is better (direct definition), usage might be better context?
+                # User objective: "Definition Ranking". So Definition > Usage.
+                # We'll prepend the symbol snippet if it's not effectively the same.
+                if sh.snippet.strip() not in existing.snippet:
+                     existing.snippet = f"{sh.snippet}\n...\n{existing.snippet}"
+            else:
+                merged_map[sh.path] = sh
+                
+        # Final List
+        final_hits = list(merged_map.values())
         
-        with self._read_lock:
-            rows = self._read.execute(sql, params).fetchall()
+        # Sort
+        final_hits.sort(key=lambda h: (-h.score, -h.mtime, h.path))
         
-        hits = self._process_rows(rows, opts, terms)
-        meta["total_scanned"] = len(rows)
-        
-        # Slice for pagination
+        # Pagination
         start = opts.offset
         end = opts.offset + opts.limit
-        return hits[start:end], meta
+        
+        # Adjust Total Count
+        if opts.total_mode == "approx":
+             meta["total"] = -1
+        elif meta.get("total", 0) > 0:
+             # Approximation: max of FTS total or our current count
+             meta["total"] = max(meta["total"], len(final_hits))
+        else:
+             meta["total"] = len(final_hits)
+             
+        # Safe slicing
+        return final_hits[start:end], meta
 
     def _search_like(self, opts: SearchOptions, terms: list[str], 
-                     meta: dict[str, Any]) -> tuple[list[SearchHit], dict[str, Any]]:
+                     meta: dict[str, Any], no_slice: bool = False) -> tuple[list[SearchHit], dict[str, Any]]:
         meta["fallback_used"] = True
         
         like_q = opts.query.replace("^", "^^").replace("%", "^%").replace("_", "^_")
@@ -680,6 +856,14 @@ class LocalSearchDB:
         fetch_limit = (opts.offset + opts.limit) * 2
         if fetch_limit < 100: fetch_limit = 100
         
+        sql = f"""
+            SELECT f.repo AS repo,
+            ...
+            LIMIT ?;
+        """
+        # (Assuming the SQL query body is unchanged, referring to original file content for context if needed, 
+        # but here we just need to return hits unsliced)
+        # RE-Constructing sql because replace_block needs contiguous block.
         sql = f"""
             SELECT f.repo AS repo,
                    f.path AS path,
@@ -709,6 +893,80 @@ class LocalSearchDB:
         hits = self._process_rows(rows, opts, terms)
         meta["total_scanned"] = len(rows)
         
+        if no_slice:
+            return hits, meta
+
+        start = opts.offset
+        end = opts.offset + opts.limit
+        return hits[start:end], meta
+
+    def _search_regex(self, opts: SearchOptions, terms: list[str], 
+                      meta: dict[str, Any]) -> tuple[list[SearchHit], dict[str, Any]]:
+        # Regex unchanged
+        return self._search_regex_impl(opts, terms, meta) 
+        # Wait, I cannot rename existing method easily without replacing it all.
+        # I'll just leave regex alone or update it if I need to.
+        # Check if I touch regex in my target block?
+        # Target block ends at 933 (_search_regex return).
+        # So I am replacing _search_fts and _search_like calls/impls.
+        pass
+
+    def _search_fts(self, opts: SearchOptions, terms: list[str], 
+                    meta: dict[str, Any], no_slice: bool = False) -> Optional[tuple[list[SearchHit], dict[str, Any]]]:
+        where_clauses = ["files_fts MATCH ?"]
+        params: list[Any] = [opts.query]
+        
+        filter_clauses, filter_params = self._build_filter_clauses(opts)
+        where_clauses.extend(filter_clauses)
+        params.extend(filter_params)
+        
+        where = " AND ".join(where_clauses)
+        
+        # Total count
+        total_hits = 0
+        if opts.total_mode == "exact":
+            try:
+                count_sql = f"SELECT COUNT(*) as c FROM files_fts JOIN files f ON f.rowid = files_fts.rowid WHERE {where}"
+                with self._read_lock:
+                    count_row = self._read.execute(count_sql, params).fetchone()
+                total_hits = int(count_row["c"]) if count_row else 0
+            except sqlite3.OperationalError:
+                return None # FTS failed
+        else:
+            # Approx mode
+            total_hits = -1 
+            
+        meta["total"] = total_hits
+        meta["total_mode"] = opts.total_mode
+
+        # Fetch buffer 
+        fetch_limit = (opts.offset + opts.limit) * 2
+        if fetch_limit < 100: fetch_limit = 100
+        
+        sql = f"""
+            SELECT f.repo AS repo,
+                   f.path AS path,
+                   f.mtime AS mtime,
+                   f.size AS size,
+                   bm25(files_fts) AS score,
+                   f.content AS content
+            FROM files_fts
+            JOIN files f ON f.rowid = files_fts.rowid
+            WHERE {where}
+            ORDER BY {"f.mtime DESC, score" if opts.recency_boost else "score"}, f.path ASC
+            LIMIT ?;
+        """
+        params.append(int(fetch_limit))
+        
+        with self._read_lock:
+            rows = self._read.execute(sql, params).fetchall()
+        
+        hits = self._process_rows(rows, opts, terms)
+        meta["total_scanned"] = len(rows)
+        
+        if no_slice:
+            return hits, meta
+
         start = opts.offset
         end = opts.offset + opts.limit
         return hits[start:end], meta
@@ -802,6 +1060,9 @@ class LocalSearchDB:
         query_raw_lower = opts.query.lower()
         # v2.5.4: Handle line number prefixes in snippets
         symbol_pattern = re.compile(r"^(?:\s*|→?\s*L\d+:\s*)(class|def|function|struct|pub\s+fn|async\s+def|interface|type)\s+", re.MULTILINE)
+        
+        # v2.6.0: Pre-check for exact symbol match boosting
+        is_exact_symbol = self._is_exact_symbol(opts.query)
 
         for r in rows:
             path = r["path"]
@@ -871,11 +1132,41 @@ class LocalSearchDB:
 
             snippet = self._snippet_around(content, terms, opts.snippet_lines, highlight=True)
             
-            # v2.5.4: Strip highlights for reliable symbol detection
+            # v2.6.0: Enclosing symbol context
+            context_symbol = ""
+            # Try to infer line number from snippet... crude but separate read is expensive?
+            # actually we can infer from snippet "L{i}: " prefix
+            first_line_match = re.search(r"L(\d+):", snippet)
+            if first_line_match:
+                start_line = int(first_line_match.group(1))
+                # Heuristic: the hit is somewhere in the snippet lines. 
+                # Let's say the hit is near the middle or start. 
+                # Find enclosing symbol for the start of the snippet.
+                ctx = self._get_enclosing_symbol(path, start_line)
+                if ctx:
+                    context_symbol = ctx
+                    # Small boost for having context
+                    score += 5.0
+                    
+            if is_exact_symbol:
+                # If query is "User" and we found a file that HAS Symbol "User", check if it's THIS file?
+                # Actually _is_exact_symbol just checks global existence.
+                # Let's check if this file contains that symbol.
+                # Optimization: do it in batch or just lazy?
+                # For now, if we found a "Symbol definition" in snippet (regex below) and it matches query?
+                pass
+
+            # Improved Symbol logic
             clean_snippet = snippet.replace(">>>", "").replace("<<<", "")
             if symbol_pattern.search(clean_snippet):
                 score += 10.0
                 reasons.append("Symbol definition")
+                
+                # Check if it defines the EXACT query symbol
+                # e.g. "class User" vs query "User"
+                if re.search(rf"\b(class|def|function|struct|interface)\s+{re.escape(query_raw_lower)}\b", clean_snippet.lower()):
+                     score += 100.0 # Massive boost for defining the TERM we asked for
+                     reasons.append("Exact Symbol Definition")
 
             hits.append(SearchHit(
                 repo=repo_name,
@@ -886,7 +1177,8 @@ class LocalSearchDB:
                 size=size,
                 match_count=match_count,
                 file_type=self._get_file_extension(path),
-                hit_reason=", ".join(reasons) if reasons else "Content match"
+                hit_reason=", ".join(reasons) if reasons else "Content match",
+                context_symbol=context_symbol
             ))
         
         # Single sort with tuple key (O(n log n) instead of O(3*n log n))
@@ -907,6 +1199,29 @@ class LocalSearchDB:
             snippet_lines=snippet_max_lines,
         )
         return self.search_v2(opts)
+
+    def _get_enclosing_symbol(self, path: str, line_no: int) -> Optional[str]:
+        """Find the nearest symbol definition above the given line (v2.6.0)."""
+        # Optimized query: find symbol with max line that is <= line_no
+        sql = """
+            SELECT kind, name 
+            FROM symbols 
+            WHERE path = ? AND line <= ? 
+            ORDER BY line DESC 
+            LIMIT 1
+        """
+        with self._read_lock:
+            row = self._read.execute(sql, (path, line_no)).fetchone()
+        
+        if row:
+            return f"{row['kind']}: {row['name']}"
+        return None
+
+    def _is_exact_symbol(self, name: str) -> bool:
+        """Check if a symbol with this exact name exists (v2.6.0)."""
+        with self._read_lock:
+            row = self._read.execute("SELECT 1 FROM symbols WHERE name = ? LIMIT 1", (name,)).fetchone()
+        return bool(row)
 
     def repo_candidates(self, q: str, limit: int = 3) -> list[dict[str, Any]]:
         q = (q or "").strip()

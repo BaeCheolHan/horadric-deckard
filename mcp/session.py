@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+import inspect
 from typing import Dict, Any, Optional
 from .registry import Registry, SharedState
 from app.workspace import WorkspaceManager
@@ -115,7 +116,12 @@ class Session:
             logger.info("Connection closed by client")
         finally:
             self.cleanup()
-            self.writer.close()
+            try:
+                res = self.writer.close()
+                if inspect.isawaitable(res):
+                    await res
+            except Exception:
+                pass
             try:
                 await self.writer.wait_closed()
             except Exception:
@@ -205,7 +211,9 @@ class Session:
     async def send_json(self, data: Dict[str, Any]):
         body = json.dumps(data).encode("utf-8")
         header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-        self.writer.write(header + body)
+        res = self.writer.write(header + body)
+        if inspect.isawaitable(res):
+            await res
         await self.writer.drain()
 
     async def send_error(self, msg_id: Any, code: int, message: str):

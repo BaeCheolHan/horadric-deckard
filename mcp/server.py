@@ -39,6 +39,9 @@ import mcp.tools.search as search_tool
 import mcp.tools.status as status_tool
 import mcp.tools.repo_candidates as repo_candidates_tool
 import mcp.tools.list_files as list_files_tool
+import mcp.tools.read_file as read_file_tool
+import mcp.tools.search_symbols as search_symbols_tool
+import mcp.tools.read_symbol as read_symbol_tool
 
 
 class LocalSearchMCPServer:
@@ -295,6 +298,57 @@ class LocalSearchMCPServer:
                         },
                     },
                 },
+                {
+                    "name": "read_file",
+                    "description": "Read file content from the index.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Absolute path or relative path (if unique) to the file",
+                            }
+                        },
+                        "required": ["path"],
+                    },
+                },
+                {
+                    "name": "search_symbols",
+                    "description": "Search for code symbols (classes, functions, etc.).",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Symbol name to search for (supports fuzzy matching)",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum results (default: 20)",
+                                "default": 20,
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "read_symbol",
+                    "description": "Read specific symbol definition (function/class) to save tokens.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "File path containing the symbol",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Name of the symbol (function/class name)",
+                            },
+                        },
+                        "required": ["path", "name"],
+                    },
+                },
             ],
         }
     
@@ -312,6 +366,12 @@ class LocalSearchMCPServer:
             return self._tool_repo_candidates(args)
         elif tool_name == "list_files":
             return self._tool_list_files(args)
+        elif tool_name == "read_file":
+            return self._tool_read_file(args)
+        elif tool_name == "search_symbols":
+            return self._tool_search_symbols(args)
+        elif tool_name == "read_symbol":
+            return self._tool_read_symbol(args)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
     
@@ -327,6 +387,15 @@ class LocalSearchMCPServer:
     
     def _tool_list_files(self, args: Dict[str, Any]) -> Dict[str, Any]:
         return list_files_tool.execute_list_files(args, self.db, self.logger)
+
+    def _tool_read_file(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        return read_file_tool.execute_read_file(args, self.db)
+
+    def _tool_search_symbols(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        return search_symbols_tool.execute_search_symbols(args, self.db)
+        
+    def _tool_read_symbol(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        return read_symbol_tool.execute_read_symbol(args, self.db, self.logger)
     
     def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         method = request.get("method")

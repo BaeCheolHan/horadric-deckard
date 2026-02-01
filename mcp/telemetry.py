@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-
+try:
+    from app.indexer import _redact
+except ImportError:
+    # Fallback if imports fail (e.g. running script standalone without path)
+    # But usually app is in path.
+    def _redact(t): return t
 
 class TelemetryLogger:
     """Handles logging and telemetry for MCP server."""
@@ -43,6 +48,9 @@ class TelemetryLogger:
         """Helper to write message with timestamp to log file."""
         if not self.log_dir:
             return
+        
+        # Redact secrets before writing to disk
+        message = _redact(message)
         
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)

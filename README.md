@@ -1,182 +1,351 @@
-# 🧙‍♂️ Horadric Deckard
+# 🧙‍♂️ Deckard (데커드)
 
-> **"Stay awhile and listen..."** — to your codebase.
+> **"잠시 내 말 좀 들어보게나... 자네의 소스코드가 지옥의 비명을 지르는 소리를!"** (Stay awhile and listen...)
 
-**Horadric Deckard**는 LLM(Large Language Models)을 위해 설계된 **초고속 오프라인 코드 검색 엔진**입니다.
-Model Context Protocol (MCP)를 완벽하게 지원하여, Claude Desktop, Cursor, Gemini 등의 AI 에이전트에게 **전체 코드베이스에 대한 문맥(Context)**을 즉시 제공합니다.
+**데커드(Deckard)**는 인공지능(AI) 친구들이 여러분의 복잡하고 거대한 코드를 아주 쉽고 빠르게 이해할 수 있도록 도와주는 **'호라드림의 수석 기록관'**이에요.
 
-## 🌟 Why Deckard?
-
-LLM은 코드를 이해하는 능력은 뛰어나지만, 수만 라인의 프로젝트 전체를 한 번에 볼 수는 없습니다.
-Deckard는 이 문제를 해결합니다:
-
-- **⚡ 초고속 인덱싱**: SQLite + FTS5 기반의 강력한 로컬 검색으로 수천 개의 파일을 순식간에 인덱싱합니다.
-- **🧠 스마트 컨텍스트**: 단순 키워드 검색을 넘어, 코드 구조(함수, 클래스)와 연관성을 고려하여 가장 관련성 높은 코드를 LLM에게 전달합니다.
-- **🔒 완벽한 보안**: 모든 데이터는 **로컬(Local)**에만 저장됩니다. 코드가 외부 서버로 전송되지 않습니다.
-- **🔌 MCP Native**: 차세대 표준인 **Model Context Protocol**을 지원하여, 도구 하나로 모든 AI 에이전트와 연동됩니다.
-- **👻 Daemon Mode**: 백그라운드에서 실행되며 파일 변경사항을 실시간으로 감지하고 인덱스를 최신 상태로 유지합니다.
+데커드 선생님만 계시면 아무리 얽히고설킨 코드라도 AI가 길을 잃지 않고 필요한 클래스를 0.1초 만에 찾아낼 수 있답니다.  
+호라드림의 촛불이 꺼지지 않는 한, 인덱싱 누락이라는 혼돈의 비명은 들리지 않게 될 거예요. 🚀 (선생님이 지팡이로 길을 아주 상세히 안내해주신답니다.)
 
 ---
 
-## 🚀 시작하기 (Getting Started)
+## 🧐 데커드 선생님은 누구인가요? (쉽게 이해하기)
 
-터미널에 아래 명령어 한 줄만 입력하세요. 다운로드부터 설정까지 자동으로 완료됩니다.
-기본 설치 경로는 `~/.local/share/horadric-deckard` 입니다.
+여러분의 컴퓨터에는 아주 많은 코드 파일이 있어요. 똑똑한 **AI 친구(Codex, Claude, Cursor, Gemini 등)**에게 코드를 짜달라고 하면 가끔 이런 말을 할 거예요.
+*"미안해, 파일이 너무 많아서 어디에 뭐가 있는지 모르겠어!"*
+
+그때 바로 **데커드 선생님**이 트리스트럼 어딘가에서 마법처럼 나타납니다!
+
+1.  **지독한 사서**: 데커드 선생님은 여러분의 모든 코드를 미리 다 읽어두고, 누가 어느 지옥 구석에 사는지(어떤 함수가 어떤 파일에 있는지) 아주 상세한 **'호라드림 장부'**를 만들어둬요. (눈이 침침하셔도 정규식은 기가 막히게 보십니다.)
+2.  **AI의 길잡이**: AI 친구가 "이 프로젝트에서 회원가입은 어떻게 해?"라고 물어보면, 데커드 선생님이 지팡이를 짚고 장부를 슥 보고는 "3번 선반 아래, 디아블로의 꼬리 옆에 있는 `user.py` 파일을 보게나! 주석 좀 똑바로 달지 그랬나..."라고 꾸짖으며 알려줍니다.
+3.  **MCP(Model Context Protocol)**: 이건 AI 친구와 데커드 선생님이 서로 대화할 때 쓰는 **'호라드림 통역기'** 같은 거예요. 이 통역기 덕분에 데커드 선생님은 세상의 모든 최신 AI와 대화할 수 있답니다! (고대어는 몰라도 Python은 꿰고 계시죠.) 🤝
+
+---
+
+## 🌟 데커드 선생님의 특별한 능력
+
+- **⚡ 차원문 검색**: 수만 줄의 코드도 순식간에 읽어서 필요한 부분만 골라내요. (TP 타는 속도보다 빠릅니다.)
+- **🧠 코드 심령술**: 단순히 글자만 찾는 게 아니라, 이게 '함수'인지 '클래스'인지 코드의 영혼(AST)을 읽어냅니다.
+- **🔒 철통 보안**: 모든 공부는 여러분의 컴퓨터 안에서만 해요. 코드가 성역(인터넷) 밖으로 절대 나가지 않으니 안심하세요! 지옥의 악마도 여러분의 소스코드는 못 훔쳐갑니다. 🛡️
+- **👻 투명 망토**: 백그라운드에서 조용히 일하며 여러분이 코드를 고칠 때마다 장부를 알아서 업데이트해요. (가끔 계신지 확인하지 않으면 섭섭해하십니다.)
+
+---
+
+## 🚀 성역 소환 주문 (설치 방법 - Installation)
+
+터미널(Terminal)을 열고 아래 마법 주문을 딱 한 줄만 복사해서 붙여넣고 엔터(Enter)를 누르세요!  
+실패하면 **차원문(네트워크)** 상태가 개판이거나 악마의 방해가 있는 것이니 확인해보세요.
 
 ```bash
+# macOS / Linux (유닉스의 축복을 받은 자들)
 curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/install.py | python3
+
+# Windows (파워쉘의 마법사들)
+irm https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/install.py | python
 ```
 
-> **수동 설치**: [릴리즈 페이지](https://github.com/BaeCheolHan/horadric-deckard/releases)에서 코드를 다운로드한 뒤 `python3 install.py`를 실행하셔도 됩니다.
-> 또는 아래처럼 파일로 받아 실행할 수 있습니다.
->
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/install.py -o install.py
-> python3 install.py
-> ```
+### 📖 호라드림의 계시 (TL;DR)
+```text
+마법 주문(install.py) 영창
+  ├─ 성역의 거처 마련: ~/.local/share/horadric-deckard (윈도우는 창문 달린 감옥 %LOCALAPPDATA%)
+  ├─ 쌍둥이 축복 부여: <workspace>/.codex/config.toml & .gemini/config.toml 에 장부 등록
+  └─ 질서 정비: 홈 디렉토리의 낡은 장부들은 불태워버림 (Global config 정리)
+
+첫 번째 소환
+  ├─ 1‑Step 모드: "무지한 자여, 내가 대신 설치해주겠네." (자동 설치/업데이트)
+  └─ 데몬 강림 → 인덱싱 → MCP 차원문 연결 완료!
+```
+
+### 설치하면 어떤 마법이 일어나나요?
+1.  **지혜 전수**: 데커드 선생님이 일할 때 필요한 최소한의 도구(Python 엔진 등)를 자동으로 준비합니다.
+2.  **비밀 거처 마련**: 도서관 주소를 만듭니다. (이사 비용은 무료입니다.)
+    - **macOS/Linux**: `~/.local/share/horadric-deckard` (사과 마크가 찍힌 비밀 창고)
+    - **Windows**: `%LOCALAPPDATA%\horadric-deckard` (창문이 달린 비밀 창고)
+3.  **통역기 연결**: AI 에이전트들이 데커드 선생님께 "헬프!"를 외칠 수 있도록 MCP 통역기를 연결합니다.
+
+### 설정은 어디에 숨겨지나요? (쌍둥이 CLI 지원)
+설치 스크립트(`install.py`)는 **설정이 지옥의 촉수처럼 흩어져 충돌**나는 것을 막기 위해 다음처럼 엄격하게 동작합니다.
+
+- **쌍둥이의 축복**: 현재 작업 폴더의 `.codex/config.toml`과 `.gemini/config.toml` 양쪽에 데커드 선생님의 영혼 인장을 동시에 찍습니다. (하나만 하면 섭섭하니까요.)
+- **부정한 유산 정화**: `~/.codex/config.toml`과 `~/.gemini/config.toml`에 남아있던 케케묵은 설정들은 자비 없이 불태워 소멸시킵니다. (오직 깨끗한 것만이 살아남으리!)
+- **성역의 예절**: Claude/Cursor 설정은 **함부로 발을 들이지 않습니다.** (남의 집 안방 가구는 집주인이 직접 옮기는 게 도리죠.) 필요하면 아래 비급 예시를 보고 직접 수련하여 옮기시게나.
+
+### 여러 워크스페이스를 동시에? (분신술의 대가)
+- **설정은 워크스페이스별로 각자의 운명**을 가집니다.  
+  예: A에서 실행 → `A/.codex/config.toml` 생성 (A의 기록)  
+  B에서 실행 → `B/.codex/config.toml` 생성 (B의 밀서)
+- **몸은 하나, 지혜는 여러 곳에**: 데커드 선생님은 하나의 데몬(Daemon)으로 동작하지만, 성역 곳곳에 분신을 보내어 **A와 B 워크스페이스를 동시에** 관리할 수 있습니다! (선생님이 워커홀릭이라 AB 둘 다 켜두면 둘 다 샅샅이 수집하신다네.)
+- **철저한 기록 분리**: A의 장부와 B의 장부는 서로 섞이지 않도록 엄격히 분리된 서랍(Data Directory)에 보관됩니다. A에서 디아블로를 검색했는데 B의 바알이 튀어나오는 일은 없으니 안심하시게나.
 
 ---
 
-## 🎮 사용법 (Usage)
+## 🪄 1‑Step 모드 vs 설치본 고정 모드
 
-### Claude Desktop
-설정 파일(`claude_desktop_config.json` 등)에 아래 내용을 추가합니다.
-경로의 `YOUR_USERNAME`을 실제 사용자명으로 변경해주세요.
+**1‑Step 모드(권장)**  
+레포의 `bootstrap.sh`를 config에 등록하면, 첫 실행 시 자동 설치/업데이트 후 **설치본으로 전환**됩니다.
+
+**설치본 고정 모드**  
+설치본 경로 `~/.local/share/horadric-deckard/bootstrap.sh`를 등록하면 **자동 업데이트 없이** 고정된 버전을 사용합니다. (변화를 거부하는 보수적인 사서 모드입니다.)
+
+**자동 업데이트 기준**  
+레포 tag와 설치본 `VERSION`이 다르면, 레포의 `bootstrap.sh`가 `install.py`를 자동 실행합니다.
+
+**bootstrap 스크립트 위치**
+- **macOS/Linux (레포)**: `/path/to/horadric-deckard/bootstrap.sh`
+- **macOS/Linux (설치본)**: `~/.local/share/horadric-deckard/bootstrap.sh`
+- **Windows (설치본)**: `%LOCALAPPDATA%\horadric-deckard\bootstrap.bat`
+
+---
+
+## 🧭 차원문 연결 위치와 동작 (실행 위치 요약)
+| 실행 위치 (차원문 주소) | workspace-root가 없을 때 운명 |
+|---|---|
+| 레포 내부 | 레포 또는 상위 `.codex-root`를 고향으로 인식 |
+| 워크스페이스 루트 | "여기가 내 집이구나!" 하고 바로 정착 |
+| 홈 디렉토리 (`~`) | 여러분의 온 집안 살림을 다 뒤집어 봄 (강력히 비추천!) |
+
+---
+
+## ⚠️ "성스러운 혼용" 금지 경고
+`command`에 **설치본과 레포 경로를 섞어 쓰면** 지옥문이 열릴 수 있습니다:
+- 업데이트 규칙이 뒤엉켜서 고대 버전이 튀어나오거나,
+- 서로 다른 데몬이 나타나 포트 47779를 두고 '성전'을 벌이거나,
+- "어느 설정이 진짜인가" 하고 자아 분열이 일어납니다.
+
+따라서 **config에는 항상 한 경로만 유지**하세요. (1‑Step 또는 고정 모드 중 하나!)
+
+---
+
+## 🔁 성역의 변화와 기록 (업데이트 및 보안)
+
+### 🔁 업데이트 시나리오: "세상은 변하지만 기록은 영원하리"
+- **1‑Step 모드 (신의 한 수)**: 레포 tag와 설치본 `VERSION`이 다르면 자동으로 성스러운 의식을 치러 업데이트합니다. (가만히 있어도 강해집니다.)
+- **설치본 고정 모드 (고지식한 학자)**: `install.py`를 다시 실행해야만 업데이트됩니다. (변화를 거부하는 보수적인 사서 모드입니다.)
+
+### ✅ 수석 기록관의 최종 점검 (체크리스트)
+- [ ] `command` 경로가 실제 존재하는가? (투명 벽에 부딪히지 마시게나.)
+- [ ] `args`와 `env`가 같은 워크스페이스를 가르는가? (동쪽으로 가라면서 서쪽을 가리키면 곤란하네.)
+- [ ] `--workspace-root` 경로가 실제 폴더인가? (허상에 인덱싱을 할 순 없지.)
+- [ ] 데몬 상태 확인: `~/.local/share/horadric-deckard/bootstrap.sh daemon status` (선생님이 졸고 계신지 확인해보게.)
+
+### 🧹 도서관 대청소 및 보안 (Caution!)
+- **장부의 소멸**: 삭제 시 공들여 만든 기록(DB)도 함께 가루가 됩니다 → 재설치 후 **재인덱싱이라는 전설급 노가다**가 필요합니다.
+- **수행의 시간**: 첫 실행 시 시간이 오래 걸릴 수 있습니다. (호라드림 도서관 20,000평을 혼자 빗질하신다고 생각해보시게나, 지극히 정상이라네.)
+
+### 🔒 천상의 보안/프라이버시
+- 모든 공부와 검색은 **여러분의 안방(로컬)**에서만 수행됩니다.
+- 코드가 지옥(외부 서버)으로 전송되는 불상사는 결코 일어나지 않습니다.
+- 로그와 캐시는 오직 여러분의 하드디스크 깊숙한 곳에만 봉인됩니다. (디아블로도 못 훔쳐가네.)
+
+---
+
+## 🧭 다중 워크스페이스를 똑똑하게 쓰는 방법
+“A도 보고 싶고 B도 보고 싶어!” 하시는 분들을 위한 **현실적인 추천 패턴**이에요.
+
+- **방법 1: 워크스페이스별로 설정을 나눠두기 (권장)**  
+  A, B 각각에 `.codex/config.toml`을 만들어 두고, 필요할 때 그 폴더에서 실행하세요.  
+  데커드 선생님은 **현재 위치 기준**으로 움직이는 성격이라, 그게 제일 명확합니다.
+
+- **방법 2: 하나의 워크스페이스만 집중 관리**  
+  “지금은 A만 봐야 해!”라면 B는 과감하게 잊으세요.  
+데커드는 **한 번에 하나에 집중하는 선생님**이에요. (멀티태스킹은 다음 학기에…)
+
+---
+
+## 🧯 문제 해결 (Troubleshooting)
+
+### Q. MCP 연결이 안 돼요
+- `command` 경로가 실제 존재하는지 확인하세요.  
+  (레포 경로인지 설치본 경로인지 헷갈리기 쉬워요!)
+- 데몬 상태 확인:
+  ```bash
+  # macOS/Linux
+  ~/.local/share/horadric-deckard/bootstrap.sh daemon status
+  
+  # Windows
+  %LOCALAPPDATA%\horadric-deckard\bootstrap.bat daemon status
+  ```
+- 기동이 느리면 `startup_timeout_sec`를 120~180으로 올려보세요.
+
+### Q. 첫 실행이 너무 느려요
+- 첫 인덱싱은 원래 시간이 좀 걸립니다. (호라드림 도서관 20,000평을 혼자 청소하신다고 생각해보세요.)
+- `--workspace-root`로 범위를 줄이면 훨씬 빨라집니다. (선생님께 청소 범위를 좁게 알려드리는 매너!)
+
+### Q. 업데이트가 안 되는 것 같아요
+- **1‑Step 모드인지 확인**하세요 (레포 `bootstrap.sh` 사용).
+- 설치본 `VERSION`을 확인하세요:
+  ```bash
+  cat ~/.local/share/horadric-deckard/VERSION
+  ```
+
+### Q. 설정 파일이 여기저기 생겼어요
+- 데커드 선생님은 **글로벌 설정과 프로젝트 설정이 뒤섞여 혼돈이 오는 걸 극도로 혐오합니다.**  
+  그래서 글로벌 `~/.codex/config.toml`은 평화롭게 정리하고, **프로젝트별 서랍(설정)**만 사용하도록 유도합니다.  
+  설정의 질서가 곧 코드의 평화입니다.
+
+---
+
+## 🧩 왜 설정을 자동으로 다 안 고쳐주나요?
+Codex, Gemini, Claude, Cursor… 이 녀석들은 성격도 다르고 사는 곳(설정 경로)도 제각각이에요.  
+데커드 선생님은 **“남의 집 안방 가구 배치를 함부로 바꾸지 않겠다”**는 엄격한 도덕적 철학이 있습니다. 😄  
+(사실 잘못 건드리면 지옥문이 열릴 수 있어서 그렇습니다.) 대신 참고할 수 있는 **비급서(설정 예시)**는 아래에 적어두었으니 직접 옮겨 적어보시게나!
+
+---
+
+## 🎮 데커드 선생님 부려먹기 (Usage)
+
+### 1단계: 내 프로젝트 공부시키기
+여러분 개발 실력의 결정체(혹은 지옥에서 온 스파게티 코드)인 폴더로 이동해서 아래 명령어를 입력하세요. 그럼 데커드 선생님이 지팡이를 짚고 그 폴더를 샅샅이 뒤지기 시작합니다!
+
+```bash
+# macOS/Linux
+~/.local/share/horadric-deckard/bootstrap.sh init
+
+# Windows
+%LOCALAPPDATA%\horadric-deckard\bootstrap.bat init
+```
+
+> **참고**: `--workspace-root`를 사용하면 선생님의 이동 범위를 제한할 수 있습니다.  
+> 예) `.../bootstrap.sh init --workspace-root /path/to/my_precious_code`
+
+### 2단계: AI에게 물어보기
+이제 AI 친구(Codex, Claude, Cursor 등)를 열고 평소처럼 질문해보세요.
+
+> "데커드 선생님의 장부를 뒤져서 **로그인 로직**이 어느 지옥 구석에 있는지 찾아줘."  
+> "이 프로젝트의 **데이터베이스 구조**를 설명해주게나. 사서 선생님이 아는 대로 말이야."
+
+그럼 AI가 데커드 선생님에게 달려가 장부를 확인하고, 아주 정확한 답변을 여러분께 알려줄 거예요! (가끔 답변 끝에 "Stay awhile and listen"이라고 붙여도 놀라지 마세요.) ✨
+
+---
+
+## 🛠️ 내가 쓰는 앱에 연결하기 (상세 가이드)
+
+### 🤖 Claude Desktop 앱 연동
+설정 파일(`claude_desktop_config.json`)을 찾아서 아래 내용을 쏙 넣어주세요.  
+이건 마치 선생님 이름표를 달아주는 작업입니다.
 
 ```json
 {
   "mcpServers": {
     "deckard": {
-      "command": "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh",
-      "args": [],
-      "env": {}
+      "command": "/Users/[사용자명]/.local/share/horadric-deckard/bootstrap.sh",
+      "args": []
     }
   }
 }
 ```
 
-### Cursor (AI Editor)
-1. `Cmd + Shift + J` (또는 설정) > **MCP** 패널 이동
-2. **Add New MCP Server** 클릭
-    - **Name**: `deckard`
-    - **Type**: `stdio`
-    - **Command**: `/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh` (절대 경로 입력)
-
-### Codex / Gemini CLI (1‑Step 권장)
-`~/.codex/config.toml` 또는 프로젝트 루트의 `.codex/config.toml`
-(또는 `.gemini/config.toml`)에 아래 내용을 추가하세요.
-
-> **1‑Step 모드**: repo 경로의 `bootstrap.sh`를 등록하면 실행 시 자동 설치/업데이트가 수행됩니다.
+### 🧩 Codex / Gemini 설정 예시 (config.toml)
+> 아래는 **설치본 고정 모드** 예시입니다. 1‑Step 모드를 쓰려면 `command`를 레포 경로로 바꾸세요.
 
 ```toml
 [mcp_servers.deckard]
-command = "/Users/YOUR_USERNAME/Documents/repositories/horadric-deckard/bootstrap.sh"
-# args = []  # 필요한 경우 추가
+command = "/Users/[사용자명]/.local/share/horadric-deckard/bootstrap.sh"
+args = ["--workspace-root", "/Users/[사용자명]/path/to/workspace"]
+env = { DECKARD_WORKSPACE_ROOT = "/Users/[사용자명]/path/to/workspace" }
+startup_timeout_sec = 60
 ```
 
-workspace 루트를 고정하고 싶다면 args로 전달할 수 있습니다:
-
+**1‑Step 모드 예시 (레포 bootstrap 사용)**
 ```toml
 [mcp_servers.deckard]
-command = "/Users/YOUR_USERNAME/path/to/horadric-deckard/bootstrap.sh"
-args = ["--workspace-root", "/Users/YOUR_USERNAME/path/to/workspace"]
+command = "/Users/[사용자명]/path/to/horadric-deckard/bootstrap.sh"
+args = ["--workspace-root", "/Users/[사용자명]/path/to/workspace"]
+env = { DECKARD_WORKSPACE_ROOT = "/Users/[사용자명]/path/to/workspace" }
+startup_timeout_sec = 60
 ```
 
-**args 설명**
-- `--workspace-root` : 인덱싱할 워크스페이스 루트를 고정합니다.
-- 값을 지정하지 않으면, Deckard는 **현재 작업 디렉토리 → 상위 .codex-root 탐색** 순서로 자동 추론합니다.
-  - 즉, **args를 넣지 않으면 실행한 위치 기준으로 인덱싱 대상이 결정**됩니다.
+**필드별 상세 설명**
+- `command`: 데커드를 실행할 경로입니다.  
+  - **1‑Step 모드**: 레포의 `bootstrap.sh` 경로  
+    예) `/path/to/horadric-deckard/bootstrap.sh`
+  - **설치본 고정 모드**: 설치본의 `bootstrap.sh` 경로  
+    예) `~/.local/share/horadric-deckard/bootstrap.sh`
+- `args`: 실행 옵션을 리스트로 전달합니다.  
+  - `--workspace-root <path>`: 인덱싱할 워크스페이스 루트 경로  
+  - **생략 시**: 현재 실행 위치를 기준으로 동작하거나, `.codex-root`가 있는 상위 폴더를 기준으로 동작합니다.
+- `env`: 환경 변수를 강제로 주입합니다.  
+  - `DECKARD_WORKSPACE_ROOT`는 **workspace-root를 고정**하려고 넣습니다.  
+  - `args`와 **동일한 값**을 넣는 것이 권장됩니다. (둘 중 하나만 있어도 동작합니다)
+- `startup_timeout_sec`: 데몬 기동 대기 시간(초).  
+  초기 인덱싱이 길다면 120~180으로 늘려보세요.
 
-**예시 (1‑Step + 루트 고정)**  
-```toml
-[mcp_servers.deckard]
-command = "/Users/YOUR_USERNAME/path/to/horadric-deckard/bootstrap.sh"
-args = ["--workspace-root", "/Users/YOUR_USERNAME/path/to/workspace"]
-```
+**여러 워크스페이스를 넣을 수 있나요?**
+- 현재는 `--workspace-root` **단일 경로만 지원**합니다.
+- 여러 워크스페이스를 쓰려면 각 워크스페이스마다 별도 설정을 권장합니다.
 
-**여러 루트?**  
-- 현재 `--workspace-root`는 **단일 경로만 지원**합니다.  
-- 여러 워크스페이스를 쓰려면 각 워크스페이스마다 별도 설정을 사용하는 것을 권장합니다.
+**env 없이도 되나요?**
+- 됩니다. `args`에 `--workspace-root`가 있으면 정상 동작합니다.
+- 다만 **환경 변수가 우선**되도록 사용 환경이 구성된 경우가 있어, 혼선을 줄이려면 `args`와 `env`를 같이 맞춰두는 것이 안전합니다.
 
-> **배포 경로 고정(수동 설치)**: 이미 설치본이 있다면 아래처럼 설치본 경로를 직접 지정해도 됩니다.
-> ```toml
-> [mcp_servers.deckard]
-> command = "/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
-> args = ["--workspace-root", "/Users/YOUR_USERNAME/Documents/repositories"]
-> ```
+**args와 env가 서로 다르면?**
+- `DECKARD_WORKSPACE_ROOT`(환경 변수)가 왕의 권위를 가집니다.  
+  하지만 두 값이 다르면 선생님이 "어디로 가라는 건가!" 하고 지팡이를 휘두르실 테니, **항상 동일하게 맞추는 걸 추천**하네.
 
-> 참고: 일부 클라이언트는 MCP initialize에 rootUri/workspaceFolders를 전달하지 않을 수 있습니다.
-> 이 경우 Deckard는 현재 작업 디렉토리의 `.codex-root`를 기준으로 workspace를 추론합니다.
+**`--workspace-root`를 생략하면 어떤 재앙이?**
+- 실행 위치를 기준으로 워크스페이스를 멋대로 추정합니다.  
+  - 현재 폴더 또는 상위 폴더에 `.codex-root`가 있으면 "찾았다!" 하고 사용
+  - 없다면 **현재 폴더 전체**를 자기 안방인 줄 압니다.
 
-### 초기화 (권장)
-워크스페이스에 `.codex-root`와 Deckard 설정을 생성합니다.
+**예: 홈 디렉토리에서 실수로 실행하면?**
+- 의도치 않게 여러분의 '비밀 사진첩'과 '다운로드 폴더' 전체가 호라드림 장부에 기록될 수 있습니다.  
+  정신 건강을 위해 `--workspace-root`를 명시하는 것을 **강력하고 간절하게** 추천하네.
 
-```bash
-/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh init
-```
+**설정 파일이 두 군데 있으면 어떻게 되나요?**
+- 데커드 선생님은 **프로젝트 설정(현장 중심)**을 가장 신뢰합니다.  
+  글로벌 설정과 함께 존재하면 선생님이 헷갈려하시니,  
+  `install.py`는 자비롭게 글로벌의 `deckard` 블록을 제거해 버린다네. (오직 질서!)
 
-이미 설정이 있다면 덮어쓰지 않습니다. 덮어쓰려면:
-
-```bash
-/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh init --force
-```
-
-> 기본 동작: 워크스페이스 설정이 없으면 설치 디렉토리의 기본 config를 사용합니다.
-
-설정 후 아래 명령으로 등록 여부를 확인할 수 있습니다:
-
-```bash
-codex mcp list
-```
-
-### 기타 MCP 지원 CLI
-대부분의 MCP 지원 CLI는 환경변수나 설정 파일(`~/.config/...`)을 통해 MCP 서버를 등록할 수 있습니다.
-일반적으로 아래와 같은 커맨드 라인 인수를 지원합니다:
-
-```bash
-# 실행 시 MCP 서버 지정
-claude-code --mcp-server="deckard:/Users/YOUR_USERNAME/.local/share/horadric-deckard/bootstrap.sh"
-```
+### ⌨️ Cursor (AI 에디터) 연동
+1.  **환경설정(Settings)** > **MCP** 메뉴를 클릭하세요.
+2.  **+ Add New MCP Server** 버튼을 누릅니다.
+3.  이름엔 `deckard`, 타입은 `stdio`를 선택하세요.
+4.  Command 칸에 `/Users/[사용자명]/.local/share/horadric-deckard/bootstrap.sh`를 입력하고 'Save' 하면 끝!
 
 ---
 
-### 🔥 활용 예시
-이제 AI에게 이렇게 물어보세요:
-> "이 프로젝트에서 `User` 클래스가 정의된 파일을 찾아서 인증 로직을 설명해줘."
+## 🗑️ 도서관 폐쇄 (삭제 방법 - Uninstall)
 
-Deckard가 백그라운드에서 프로젝트를 스캔하고 정확한 파일을 찾아 전달합니다.
-
-### CLI 도구
-
-터미널에서 직접 데몬을 제어할 수도 있습니다.
+이제 성역에 평화가 찾아왔거나, 선생님의 잔소리가 듣기 싫다면 언제든 보내드릴 수 있습니다. 터미널에 아래 명령어를 입력하세요. (눈물 주의)
 
 ```bash
-# 데몬 백그라운드 실행
-~/.local/share/horadric-deckard/bootstrap.sh daemon start -d
-
-# 데몬 상태 확인
-~/.local/share/horadric-deckard/bootstrap.sh daemon status
-
-# 데몬 중지
-~/.local/share/horadric-deckard/bootstrap.sh daemon stop
-
-# HTTP 검색 (디버깅용)
-~/.local/share/horadric-deckard/bootstrap.sh search "AuthService" --limit 10
+# 마법 주문에 --uninstall 옵션을 붙이면 선생님이 짐을 싸서 떠나십니다.
+curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/install.py | python3 - --uninstall
 ```
+
+또는 설치본 기준으로 이렇게도 가능합니다:
+```bash
+# macOS/Linux
+~/.local/share/horadric-deckard/bootstrap.sh uninstall
+
+# Windows
+%LOCALAPPDATA%\horadric-deckard\bootstrap.bat uninstall
+```
+
+### 삭제하면 무엇이 정화되나요? (이별의 미학)
+- **거처 정화**: 데커드 선생님이 머물던 도서관과 낡은 장부(index.db)를 트리스트럼의 불길로 소멸시킵니다.
+- **쌍둥이 유령 퇴치**: `install.py --uninstall`은 Codex와 Gemini 양쪽의 인장을 모두 지워버리는 강력한 정화 의식을 거행합니다.
+- **선택적 작별**: `bootstrap.sh uninstall`은 오직 Codex의 인장만 지우고 떠나는 절제된 이별을 선사합니다. (Gemini/Claude 등은 그대로 남습니다.)
+- **윈도우 주의**: `bootstrap.bat uninstall`은 **설정 파일을 정리하지 않습니다.** 필요하면 수동으로 `config.toml`에서 `deckard` 블록을 제거하세요.
+- **깔끔한 승천**: 여러분의 컴퓨터에 그 어떤 지옥의 찌꺼기도 남기지 않고 고결하게 사라지십니다!
 
 ---
 
-## 🏗 기술 스택 (Under the Hood)
+## 🏗️ 개발자를 위한 제원 (Tech Specs)
 
-- **Language**: Python 3.9+ (Zero Dependency - 표준 라이브러리만 사용)
-- **Database**: SQLite (WAL Mode) + FTS5 (Full Text Search)
-- **Protocol**: Model Context Protocol (MCP) over Stdio/TCP
-- **Architecture**:
-    - **Daemon**: 중앙 인덱싱 서버 (Multi-workspace 지원)
-    - **Proxy**: 클라이언트와 데몬 간의 경량 연결 통로
+- **언어**: Python 3.9+ (표준 라이브러리만 사용하는 제로 디펜던시!)
+- **DB**: SQLite (WAL 모드) + FTS5 (전문 검색 기술)
+- **통신**: MCP (Model Context Protocol) 
+- **구조**: 
+    - **Daemon**: 실제로 공부하고 검색을 처리하는 핵심 본체
+    - **Proxy**: AI 앱과 Daemon 사이의 빠른 메신저
 
 ---
 
 ## 📜 라이선스 (License)
 
-이 프로젝트는 [MIT License](LICENSE)를 따릅니다. 누구나 자유롭게 사용하고 기여할 수 있습니다.
+이 프로젝트는 **MIT License**를 따르고 있어요. 누구나 자유롭게 사용하고, 고치고, 공유할 수 있답니다! 😄
+
+---
+
+**"자, 이제 데커드 선생님과 함께 여러분의 코드 속에 숨겨진 비밀을 찾아보시겠나?"** 🧙‍♂️✨

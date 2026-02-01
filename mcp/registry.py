@@ -10,8 +10,8 @@ import threading
 from pathlib import Path
 from typing import Dict, Optional
 
-from .server import LocalSearchMCPServer
-
+from app.http_server import serve_forever
+from app.registry import ServerRegistry
 
 logger = logging.getLogger("deckard.registry")
 
@@ -21,40 +21,76 @@ class SharedState:
     
     Multiple clients connected to the same workspace share this state,
     avoiding duplicate indexing and DB connections.
+    
+    Also manages the dedicated HTTP server for this workspace.
     """
     
     def __init__(self, workspace_root: str):
+        from .server import LocalSearchMCPServer
         self.workspace_root = workspace_root
         self.server = LocalSearchMCPServer(workspace_root)
         self.ref_count = 0
         self.lock = threading.Lock()
+        
+        # HTTP Server State
+        self.httpd = None
+        self.http_port = 0
+        self.http_thread = None
+        
+        # Initialize Core Server (Loads Config)
+        try:
+            self.server._ensure_initialized()
+            cfg = self.server.cfg
+            
+            # Start HTTP Server
+            self.httpd, self.http_port = serve_forever(
+                host=cfg.server_host, 
+                port=cfg.server_port, 
+                db=self.server.db, 
+                indexer=self.server.indexer, 
+                version=self.server.SERVER_VERSION,
+                workspace_root=self.workspace_root
+            )
+            logger.info(f"Started HTTP Server for {workspace_root} on port {self.http_port}")
+            
+        except Exception as e:
+            logger.error(f"Failed to start server components for {workspace_root}: {e}")
+            # We don't raise here to allow partial functionality (MCP might work without HTTP?)
+            # But usually if init fails, MCP fails too.
+            pass
+            
         logger.info(f"Created SharedState for workspace: {workspace_root}")
 
     def acquire(self) -> int:
-        """Increment refcount (client connected).
-        
-        Returns:
-            New refcount value
-        """
+        """Increment refcount (client connected)."""
         with self.lock:
             self.ref_count += 1
             logger.debug(f"Acquired {self.workspace_root} (refcount={self.ref_count})")
             return self.ref_count
 
     def release(self) -> int:
-        """Decrement refcount (client disconnected).
-        
-        Returns:
-            New refcount value
-        """
+        """Decrement refcount (client disconnected)."""
         with self.lock:
             self.ref_count -= 1
             logger.debug(f"Released {self.workspace_root} (refcount={self.ref_count})")
             return self.ref_count
 
     def shutdown(self) -> None:
-        """Stop indexer and close DB."""
+        """Stop indexer, close DB, and shutdown HTTP server."""
         logger.info(f"Shutting down SharedState for {self.workspace_root}")
+        
+        # Unregister from Global Registry
+        try:
+            ServerRegistry().unregister(self.workspace_root)
+        except Exception as e:
+            logger.error(f"Failed to unregister workspace: {e}")
+
+        # Shutdown HTTP Server
+        if self.httpd:
+            logger.info("Shutting down HTTP server...")
+            self.httpd.shutdown()
+            self.httpd.server_close()
+            
         self.server.shutdown()
 
 
