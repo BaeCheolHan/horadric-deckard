@@ -9,6 +9,7 @@ import sys
 import json
 import shutil
 import subprocess
+import signal
 from pathlib import Path
 
 REPO_URL = "https://github.com/BaeCheolHan/horadric-deckard.git"
@@ -25,23 +26,87 @@ def print_success(msg):
 def print_error(msg):
     print(f"\\033[1;31m[ERROR]\\033[0m {msg}")
 
+def _run(cmd, **kwargs):
+    return subprocess.run(cmd, **kwargs)
+
+def _list_deckard_pids():
+    """Best-effort process scan to find deckard-related daemons."""
+    try:
+        ps = _run(["ps", "-ax", "-o", "pid=", "-o", "command="], capture_output=True, text=True, check=False)
+    except Exception:
+        return []
+    pids = []
+    for line in ps.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pid_str, cmd = line.split(None, 1)
+            pid = int(pid_str)
+        except Exception:
+            continue
+        if "mcp.daemon" in cmd or "horadric-deckard" in cmd or "deckard" in cmd:
+            if str(INSTALL_DIR) in cmd or "mcp.daemon" in cmd:
+                pids.append(pid)
+    return pids
+
+def _terminate_pids(pids):
+    if not pids:
+        return
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except Exception:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+def _inspect_codex_config():
+    cfg = Path.home() / ".codex" / "config.toml"
+    if not cfg.exists():
+        return None
+    try:
+        text = cfg.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    cmd_line = None
+    in_deckard = False
+    for line in text.splitlines():
+        if line.strip() == "[mcp_servers.deckard]":
+            in_deckard = True
+            continue
+        if in_deckard and line.startswith("[") and line.strip() != "[mcp_servers.deckard]":
+            in_deckard = False
+        if in_deckard and line.strip().startswith("command"):
+            cmd_line = line.strip()
+            break
+    return cmd_line
+
 def main():
     print_step("Starting Deckard installation...")
 
-    # 1. Clone Repo
+    # 1. Clone Repo (fresh install by default)
     if INSTALL_DIR.exists():
-        print_step(f"Directory {INSTALL_DIR} exists. Updating...")
+        print_step(f"Directory {INSTALL_DIR} exists. Reinstalling (fresh clone)...")
         try:
-            subprocess.run(["git", "-C", str(INSTALL_DIR), "pull"], check=True)
-        except subprocess.CalledProcessError:
-            print_error("Failed to update git repo.")
-    else:
-        print_step(f"Cloning to {INSTALL_DIR}...")
-        try:
-            subprocess.run(["git", "clone", REPO_URL, str(INSTALL_DIR)], check=True)
-        except subprocess.CalledProcessError:
-            print_error("Failed to clone git repo.")
+            shutil.rmtree(INSTALL_DIR)
+        except Exception:
+            print_error("Failed to remove existing install directory.")
             sys.exit(1)
+
+    print_step(f"Cloning to {INSTALL_DIR}...")
+    try:
+        subprocess.run(["git", "clone", REPO_URL, str(INSTALL_DIR)], check=True)
+    except subprocess.CalledProcessError:
+        print_error("Failed to clone git repo.")
+        sys.exit(1)
 
     # 2. Setup Bootstrap
     bootstrap_script = INSTALL_DIR / "bootstrap.sh"
@@ -52,14 +117,38 @@ def main():
     os.chmod(bootstrap_script, 0o755)
     print_success("Repository set up successfully.")
 
+    # Remove .git to avoid macOS provenance/permission issues
+    git_dir = INSTALL_DIR / ".git"
+    if git_dir.exists():
+        try:
+            shutil.rmtree(git_dir)
+            print_step("Removed .git directory (fresh install mode).")
+        except Exception:
+            print_error("Failed to remove .git directory.")
+
     # Stop running daemon to ensure update application
     print_step("Stopping any running Deckard daemon...")
     try:
-        subprocess.run([str(bootstrap_script), "daemon", "stop"], 
-                       stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       timeout=5)
+        _run([str(bootstrap_script), "daemon", "stop"],
+             stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+             timeout=5)
     except Exception:
         pass
+
+    # Fallback: terminate any lingering deckard daemons
+    pids = _list_deckard_pids()
+    if pids:
+        print_step(f"Found running deckard processes: {pids}. Terminating...")
+        _terminate_pids(pids)
+
+    # Inspect codex config to avoid mixed command paths
+    cmd_line = _inspect_codex_config()
+    if cmd_line:
+        print_step(f"Detected deckard command in ~/.codex/config.toml: {cmd_line}")
+        if str(bootstrap_script) not in cmd_line:
+            print_error("WARNING: Mixed deckard command detected (repo vs install). This can cause protocol mismatch.")
+            print("  Recommendation: set command to the install path shown below:")
+            print(f"  Command: {bootstrap_script}")
 
     # 3. Configure Claude Desktop
     if CLAUDE_CONFIG_DIR.exists():
