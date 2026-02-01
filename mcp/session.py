@@ -3,6 +3,7 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional
 from .registry import Registry, SharedState
+from .workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,8 @@ class Session:
         
         root_uri = params.get("rootUri") or params.get("rootPath")
         if not root_uri:
-            await self.send_error(msg_id, -32602, "rootUri or rootPath is required")
-            return
+            # Fallback for clients that omit rootUri/rootPath
+            root_uri = WorkspaceManager.detect_workspace()
 
         # Handle file:// prefix
         if root_uri.startswith("file://"):
