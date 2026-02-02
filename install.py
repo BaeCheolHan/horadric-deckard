@@ -116,7 +116,7 @@ def print_next_steps(version):
 def confirm(question, default=True):
     """Ask a yes/no question via input()."""
     if os.environ.get("DECKARD_NO_INTERACTIVE"):
-        return True
+        return default
     
     valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
     prompt = " [Y/n] " if default else " [y/N] "
@@ -269,122 +269,122 @@ def _remove_deckard_block(cfg_path: Path):
     return _remove_mcp_config(cfg_path)
 
 def do_install(args):
-    # 1. Check existing
-    if INSTALL_DIR.exists():
-        if not args.yes and not confirm(f"Deckard is already installed at {INSTALL_DIR}. Reinstall/Update?", default=True):
-            print_step("Installation cancelled.")
-            return
-        print_step(f"Removing existing installation at {INSTALL_DIR}...")
-        try: shutil.rmtree(INSTALL_DIR)
-        except Exception as e:
-            print_error(f"Failed to remove existing directory: {e}")
-            sys.exit(1)
-    
-    # 2. Clone
-    # Check for local install source (testing)
-    source_url = os.environ.get("DECKARD_INSTALL_SOURCE", REPO_URL)
-    print_step(f"Cloning latest Deckard from {source_url} to {INSTALL_DIR}...")
-    try:
-        subprocess.run(["git", "clone", source_url, str(INSTALL_DIR)], check=True, capture_output=CONFIG["quiet"])
-    except subprocess.CalledProcessError as e:
-        print_error(f"Failed to clone git repo: {e}")
-        sys.exit(1)
+    # Part 1: Handle global installation/update
+    perform_global_install = False
+    version = "dev"
+    if args.update:
+        if not args.yes and not confirm(f"Deckard will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
+            print_step("Update cancelled. Workspace will still be configured.")
+        else:
+            print_step("Updating Deckard...")
+            perform_global_install = True
+    elif not INSTALL_DIR.exists():
+        print_step("Deckard not found. Starting first-time installation...")
+        perform_global_install = True
+    else:
+        print_step("Deckard is already installed globally. Skipping global installation.")
+        print_warn("Use the --update flag to force a re-installation/update.")
 
-    # 3. Setup bootstrap script and permissions
+    if perform_global_install:
+        # Stop any running daemons to prevent file locking issues
+        pids = _list_deckard_pids()
+        if pids:
+            print_step(f"Stopping running deckard processes: {pids}")
+            _terminate_pids(pids)
+
+        # Remove previous installation if it exists
+        if INSTALL_DIR.exists(follow_symlinks=False):
+            print_step(f"Removing existing installation at {INSTALL_DIR}...")
+            try:
+                if INSTALL_DIR.is_symlink():
+                    INSTALL_DIR.unlink()
+                else:
+                    shutil.rmtree(INSTALL_DIR)
+            except Exception as e:
+                print_error(f"Failed to remove existing directory: {e}")
+                sys.exit(1)        
+        # Clone the repository
+        source_url = os.environ.get("DECKARD_INSTALL_SOURCE", REPO_URL)
+        print_step(f"Cloning latest Deckard from {source_url} to {INSTALL_DIR}...")
+        try:
+            subprocess.run(["git", "clone", source_url, str(INSTALL_DIR)], check=True, capture_output=CONFIG["quiet"])
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print_error(f"Failed to clone git repo. Make sure 'git' is installed and in your PATH. Error: {e}")
+            sys.exit(1)
+
+        # Setup bootstrap script and permissions
+        bootstrap_name = "bootstrap.bat" if IS_WINDOWS else "bootstrap.sh"
+        bootstrap_script = INSTALL_DIR / bootstrap_name
+        
+        if not bootstrap_script.exists():
+            print_error(f"{bootstrap_name} not found in cloned repo!")
+            sys.exit(1)
+            
+        if not IS_WINDOWS:
+            os.chmod(bootstrap_script, 0o755)
+
+        # Generate VERSION file from git tag
+        try:
+            ver = subprocess.check_output(["git", "-C", str(INSTALL_DIR), "describe", "--tags", "--abbrev=0"], text=True).strip()
+            version = ver[1:] if ver.startswith("v") else ver
+            (INSTALL_DIR / "VERSION").write_text(version + "\n", encoding="utf-8")
+        except Exception:
+            pass # version remains 'dev'
+
+        # Remove .git and development artifacts
+        for artifact in [".git", "tests"]:
+            artifact_dir = INSTALL_DIR / artifact
+            if artifact_dir.exists():
+                try:
+                    shutil.rmtree(artifact_dir)
+                    print_step(f"Removed development artifact: {artifact}/")
+                except Exception:
+                    pass
+        
+        print_success("Global installation/update complete!")
+
+    # Part 2: ALWAYS configure the local workspace
+    print_step("Configuring current workspace...")
     bootstrap_name = "bootstrap.bat" if IS_WINDOWS else "bootstrap.sh"
     bootstrap_script = INSTALL_DIR / bootstrap_name
-    
     if not bootstrap_script.exists():
-        print_error(f"{bootstrap_name} not found in cloned repo!")
+        print_error(f"Deckard is not installed correctly. Missing {bootstrap_script}.")
+        print_error("Please run the installer again with the --update flag.")
         sys.exit(1)
-        
-    if not IS_WINDOWS:
-        os.chmod(bootstrap_script, 0o755)
 
-        # Ensure uninstall command exists even if upstream bootstrap is older
-        try:
-            content = bootstrap_script.read_text(encoding="utf-8")
-            if "# Added by install.py: safe uninstall shim" not in content:
-                lines = content.splitlines()
-                if lines and lines[0].startswith("#!"):
-                    shebang = lines[0]
-                    rest = "\n".join(lines[1:])
-                    uninstall_block = (
-                        "\n# Added by install.py: safe uninstall shim\n"
-                        "if [ \"$1\" = \"uninstall\" ]; then\n"
-                        "    _tmp_uninstall=$(mktemp 2>/dev/null || mktemp -t deckard-uninstall)\n"
-                        "    cp \"$(dirname \"$0\")/install.py\" \"$_tmp_uninstall\"\n"
-                        "    python3 \"$_tmp_uninstall\" --uninstall -y\n"
-                        "    _code=$?\n"
-                        "    rm -f \"$_tmp_uninstall\"\n"
-                        "    exit $_code\n"
-                        "fi\n"
-                    )
-                    content = shebang + uninstall_block + "\n" + rest + "\n"
-                    bootstrap_script.write_text(content, encoding="utf-8")
-        except Exception as e:
-            print_warn(f"Failed to patch bootstrap uninstall shim: {e}")
-
-    # 4. Generate VERSION file
-    version = "dev"
-    try:
-        ver = subprocess.check_output(["git", "-C", str(INSTALL_DIR), "describe", "--tags", "--abbrev=0"], text=True).strip()
-        version = ver[1:] if ver.startswith("v") else ver
-        (INSTALL_DIR / "VERSION").write_text(version + "\n", encoding="utf-8")
-    except Exception: pass
-
-    # 5. Remove .git and development artifacts
-    git_dir = INSTALL_DIR / ".git"
-    if git_dir.exists():
-        try: shutil.rmtree(git_dir)
-        except: pass
-        
-    tests_dir = INSTALL_DIR / "tests"
-    if tests_dir.exists():
-        try: 
-            shutil.rmtree(tests_dir)
-            print_step("Removed development artifacts (tests/)")
-        except: pass
-
-    # 6. Stop daemons
-    pids = _list_deckard_pids()
-    if pids:
-        print_step(f"Stopping running deckard processes: {pids}")
-        _terminate_pids(pids)
-
-    # 7. Configure CLIs (Codex & Gemini)
     workspace_root = _resolve_workspace_root()
-    # Use the absolute path to the bootstrap script
     mcp_command = str(bootstrap_script)
     
-    # Workspace-local configs
+    # Configure workspace-local CLI files
     _upsert_mcp_config(Path(workspace_root) / ".codex" / "config.toml", mcp_command, workspace_root)
     _upsert_mcp_config(Path(workspace_root) / ".gemini" / "config.toml", mcp_command, workspace_root)
     
-    # Clean global configs if they exist (Migration to local-workspace-config model)
+    # Clean up legacy global configs, just in case
     _remove_mcp_config(Path.home() / ".codex" / "config.toml")
     _remove_mcp_config(Path.home() / ".gemini" / "config.toml")
     
-    # 8. Configure Claude
-    if CLAUDE_CONFIG_DIR.exists() and False: # Disabled Claude setup for now as config structure varies too much
-        # Logic kept for reference but skipped to avoid breaking existing configs
-        pass
+    print_success(f"Workspace '{workspace_root}' is now configured to use Deckard.")
 
-    print_success("Installation Complete!")
-    
-    # 9. Run Doctor
-    print_step("Running post-install health check (Doctor)...")
-    doctor_script = INSTALL_DIR / "doctor.py"
-    if doctor_script.exists():
+    # Final health check only if we installed/updated something
+    if perform_global_install:
+        print_step("Running post-install health check (Doctor)...")
+        doctor_script = INSTALL_DIR / "doctor.py"
+        if doctor_script.exists():
+            try:
+                env = os.environ.copy()
+                env["DECKARD_WORKSPACE_ROOT"] = workspace_root
+                subprocess.run([sys.executable, str(doctor_script)], env=env, check=False, capture_output=CONFIG["quiet"])
+            except Exception as e:
+                print_warn(f"Doctor check failed to run: {e}")
+        
+        # Only show next steps on a fresh install/update
         try:
-            env = os.environ.copy()
-            env["DECKARD_WORKSPACE_ROOT"] = workspace_root
-            # Doctor output should be visible unless quiet
-            subprocess.run([sys.executable, str(doctor_script)], env=env, check=False, capture_output=CONFIG["quiet"])
-        except Exception as e:
-            print_warn(f"Doctor check failed to run: {e}")
-
-    print_next_steps(version)
+            ver_file = INSTALL_DIR / "VERSION"
+            if ver_file.exists():
+                version = ver_file.read_text().strip()
+        except Exception:
+            pass
+        print_next_steps(version)
 
 def do_uninstall(args):
     def _schedule_remove(path: Path):
@@ -439,6 +439,7 @@ def do_uninstall(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--uninstall", action="store_true", help="Uninstall")
+    parser.add_argument("--update", action="store_true", help="Force update of existing installation")
     parser.add_argument("-y", "--yes", "--no-interactive", action="store_true", help="Skip prompts")
     parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode")
     parser.add_argument("--json", action="store_true", help="JSON output")
