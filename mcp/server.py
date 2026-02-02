@@ -50,7 +50,20 @@ class LocalSearchMCPServer:
     PROTOCOL_VERSION = "2025-11-25"
     SERVER_NAME = "deckard"
     # Version is injected via environment variable by the bootstrapper
-    SERVER_VERSION = os.environ.get("DECKARD_VERSION", "dev")
+    @staticmethod
+    def _resolve_version() -> str:
+        v = (os.environ.get("DECKARD_VERSION") or "").strip()
+        if v:
+            return v
+        ver_path = REPO_ROOT / "VERSION"
+        if ver_path.exists():
+            try:
+                return ver_path.read_text(encoding="utf-8").strip() or "dev"
+            except Exception:
+                pass
+        return "dev"
+
+    SERVER_VERSION = _resolve_version.__func__()
     
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root

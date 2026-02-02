@@ -198,7 +198,7 @@ def _resolve_workspace_root():
     return str(cwd)
 
 def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
-    """Generic MCP server block upsert into TOML config (Codex/Gemini)."""
+    """Generic MCP server block upsert into TOML config (Codex)."""
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     lines = cfg_path.read_text(encoding="utf-8").splitlines() if cfg_path.exists() else []
     
@@ -237,6 +237,27 @@ def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
     cfg_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     print_step(f"Updated Deckard config in {cfg_path}")
 
+def _upsert_gemini_settings(cfg_path: Path, command_path: str, workspace_root: str):
+    """Upsert MCP server config into Gemini CLI settings.json."""
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if cfg_path.exists():
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+
+    mcp_servers = data.get("mcpServers") or {}
+    mcp_servers["deckard"] = {
+        "command": command_path,
+        "args": ["--workspace-root", workspace_root],
+        "env": {"DECKARD_WORKSPACE_ROOT": workspace_root},
+    }
+    data["mcpServers"] = mcp_servers
+
+    cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print_step(f"Updated Deckard config in {cfg_path}")
+
 def _remove_mcp_config(cfg_path: Path):
     """Generic MCP server block removal from TOML config (Codex/Gemini)."""
     if not cfg_path.exists(): return
@@ -258,6 +279,23 @@ def _remove_mcp_config(cfg_path: Path):
         if removed:
             print_step(f"Removed Deckard config from {cfg_path}")
             cfg_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    except Exception as e:
+        print_warn(f"Failed to update {cfg_path}: {e}")
+
+def _remove_gemini_settings(cfg_path: Path):
+    """Remove Deckard MCP server from Gemini CLI settings.json."""
+    if not cfg_path.exists(): return
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        mcp_servers = data.get("mcpServers") or {}
+        if "deckard" in mcp_servers:
+            mcp_servers.pop("deckard", None)
+            if mcp_servers:
+                data["mcpServers"] = mcp_servers
+            else:
+                data.pop("mcpServers", None)
+            cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            print_step(f"Removed Deckard config from {cfg_path}")
     except Exception as e:
         print_warn(f"Failed to update {cfg_path}: {e}")
 
@@ -357,11 +395,12 @@ def do_install(args):
     
     # Configure workspace-local CLI files
     _upsert_mcp_config(Path(workspace_root) / ".codex" / "config.toml", mcp_command, workspace_root)
-    _upsert_mcp_config(Path(workspace_root) / ".gemini" / "config.toml", mcp_command, workspace_root)
+    _upsert_gemini_settings(Path(workspace_root) / ".gemini" / "settings.json", mcp_command, workspace_root)
     
     # Clean up legacy global configs, just in case
     _remove_mcp_config(Path.home() / ".codex" / "config.toml")
     _remove_mcp_config(Path.home() / ".gemini" / "config.toml")
+    _remove_gemini_settings(Path.home() / ".gemini" / "settings.json")
     
     print_success(f"Workspace '{workspace_root}' is now configured to use Deckard.")
 
@@ -444,7 +483,9 @@ def do_uninstall(args):
     
     # Clean Gemini configs
     _remove_mcp_config(Path.home() / ".gemini" / "config.toml")
+    _remove_gemini_settings(Path.home() / ".gemini" / "settings.json")
     _remove_mcp_config(Path.cwd() / ".gemini" / "config.toml")
+    _remove_gemini_settings(Path.cwd() / ".gemini" / "settings.json")
 
     print_success("Uninstallation Complete.")
 

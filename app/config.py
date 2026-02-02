@@ -38,6 +38,17 @@ class Config:
     def load(path: str, workspace_root_override: str = None) -> "Config":
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
+        # Backward compatibility: legacy "indexing" schema
+        legacy_indexing = raw.get("indexing", {}) if isinstance(raw, dict) else {}
+        if "include_ext" not in raw and "include_extensions" in legacy_indexing:
+            raw = dict(raw)
+            raw["include_ext"] = legacy_indexing.get("include_extensions", [])
+        if "exclude_dirs" not in raw and "exclude_patterns" in legacy_indexing:
+            raw = dict(raw)
+            legacy_excludes = list(legacy_indexing.get("exclude_patterns", []))
+            raw["exclude_dirs"] = legacy_excludes
+            if "exclude_globs" not in raw:
+                raw["exclude_globs"] = [p for p in legacy_excludes if any(c in p for c in ["*", "?"])]
 
         # Portability: allow runtime overrides for workspace root.
         # This helps when the packaged config is used in different locations.

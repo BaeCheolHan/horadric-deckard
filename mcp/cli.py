@@ -389,10 +389,8 @@ def cmd_init(args):
         # Default config content
         default_cfg = {
             "workspace_root": str(workspace_root),
-            "indexing": {
-                "exclude_patterns": ["node_modules", ".git", "venv", "__pycache__"],
-                "include_extensions": [".py", ".js", ".ts", ".md", ".txt"]
-            }
+            "include_ext": [".py", ".js", ".ts", ".md", ".txt"],
+            "exclude_dirs": ["node_modules", ".git", "venv", "__pycache__"],
         }
         with open(cfg_path, "w") as f:
             json.dump(default_cfg, f, indent=2)
