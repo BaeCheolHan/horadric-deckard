@@ -14,7 +14,10 @@ def workspace(tmp_path):
 def run_cli(args, cwd, env=None):
     if env is None:
         env = os.environ.copy()
-    env["PYTHONPATH"] = os.getcwd()
+    
+    # Resolve project root relative to this test file
+    project_root = Path(__file__).resolve().parent.parent.parent
+    env["PYTHONPATH"] = str(project_root)
     
     cmd = [sys.executable, "-m", "mcp.cli"] + args
     return subprocess.run(cmd, cwd=str(cwd), env=env, capture_output=True, text=True)
@@ -49,11 +52,13 @@ def test_status_no_daemon_ux(workspace):
 
 def test_doctor_ux(workspace):
     """Verify doctor command output structure and marker check."""
-    doctor_path = str(Path(os.getcwd()) / "doctor.py")
+    project_root = Path(__file__).resolve().parent.parent.parent
+    doctor_path = str(project_root / "doctor.py")
+    
     # 1. Fail Case (No marker)
     cmd = [sys.executable, doctor_path]
     env = os.environ.copy()
-    env["PYTHONPATH"] = os.getcwd()
+    env["PYTHONPATH"] = str(project_root)
     
     res = subprocess.run(cmd, cwd=str(workspace), env=env, capture_output=True, text=True)
     assert "FAIL" in res.stdout

@@ -7,18 +7,35 @@ from .session import Session
 
 from pathlib import Path
 
-# Configure logging
-log_dir = Path.home() / ".local" / "share" / "deckard"
-log_dir.mkdir(parents=True, exist_ok=True)
+def _resolve_log_dir() -> Path:
+    for env_key in ["DECKARD_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
+        val = (os.environ.get(env_key) or "").strip()
+        if val:
+            return Path(os.path.expanduser(val)).resolve()
+    return Path.home() / ".local" / "share" / "deckard"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_dir / "daemon.log"),
-        logging.StreamHandler()
-    ]
-)
+def _init_logging() -> None:
+    log_dir = _resolve_log_dir()
+    handlers = [logging.StreamHandler()]
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handlers.insert(0, logging.FileHandler(log_dir / "daemon.log"))
+    except Exception:
+        # Fall back to /tmp if the default log dir is not writable.
+        try:
+            tmp_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "deckard"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            handlers.insert(0, logging.FileHandler(tmp_dir / "daemon.log"))
+        except Exception:
+            pass
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=handlers,
+    )
+
+_init_logging()
 logger = logging.getLogger("mcp-daemon")
 
 DEFAULT_HOST = "127.0.0.1"

@@ -89,7 +89,7 @@ fi
 # Add repo root to PYTHONPATH
 export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
 
-# Inject Version from Git
+# Inject Version from Git or File
 if [ -d "$ROOT_DIR/.git" ] && command -v git >/dev/null 2>&1; then
     VERSION=$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null)
     # If standard tag format (v1.2.3), strip 'v' if preferred, or keep it. 
@@ -99,6 +99,8 @@ if [ -d "$ROOT_DIR/.git" ] && command -v git >/dev/null 2>&1; then
         # Strip leading 'v'
         export DECKARD_VERSION="${VERSION#v}"
     fi
+elif [ -f "$ROOT_DIR/VERSION" ]; then
+    export DECKARD_VERSION="$(cat "$ROOT_DIR/VERSION" | tr -d '\n')"
 fi
 
 # Optional: accept workspace root via args and map to env for MCP.
@@ -127,9 +129,12 @@ if [ $# -gt 0 ]; then
     done
 fi
 
-# Run CLI (default to proxy mode if no args)
+# Announce version to stderr (visible in host logs/console)
+echo "[Deckard] Starting Daemon (v${DECKARD_VERSION:-dev})..." >&2
+
+# Run CLI (default to auto mode if no args)
 if [ $# -eq 0 ]; then
-    exec python3 -m mcp.cli proxy
+    exec python3 -m mcp.cli auto
 else
     exec python3 -m mcp.cli "$@"
 fi

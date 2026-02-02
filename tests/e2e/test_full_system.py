@@ -36,7 +36,8 @@ class TestFullSystemE2E:
         # Prepare env
         env = os.environ.copy()
         # Ensure 'mcp' is importable. Assume pytest run from project root.
-        env["PYTHONPATH"] = os.getcwd()
+        project_root = Path(__file__).resolve().parent.parent.parent
+        env["PYTHONPATH"] = str(project_root)
         env["DECKARD_HTTP_PORT"] = "0"
         # Isolate Registry
         env["DECKARD_REGISTRY_FILE"] = str(workspace / "server.json")

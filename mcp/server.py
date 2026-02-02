@@ -459,19 +459,70 @@ class LocalSearchMCPServer:
             
     def run(self) -> None:
         self.logger.log_info(f"Starting MCP server (workspace: {self.workspace_root})")
-        
-        try:
-            for line in sys.stdin:
-                line = line.strip()
+        def _read_mcp_message(stdin):
+            line = stdin.readline()
+            if not line:
+                return None, None
+            while line in (b"\n", b"\r\n"):
+                line = stdin.readline()
                 if not line:
+                    return None, None
+
+            if line.lstrip().startswith((b"{", b"[")):
+                return line.rstrip(b"\r\n"), "jsonl"
+
+            headers = [line]
+            while True:
+                h = stdin.readline()
+                if not h:
+                    return None, None
+                if h in (b"\n", b"\r\n"):
+                    break
+                headers.append(h)
+
+            content_length = None
+            for h in headers:
+                parts = h.decode("utf-8", errors="ignore").split(":", 1)
+                if len(parts) != 2:
                     continue
-                
+                key = parts[0].strip().lower()
+                if key == "content-length":
+                    try:
+                        content_length = int(parts[1].strip())
+                    except ValueError:
+                        pass
+                    break
+
+            if content_length is None or content_length <= 0:
+                return None, None
+
+            body = stdin.read(content_length)
+            if not body:
+                return None, None
+            return body, "framed"
+
+        def _write_response(resp, mode):
+            if resp is None:
+                return
+            payload = json.dumps(resp).encode("utf-8")
+            if mode == "jsonl":
+                sys.stdout.buffer.write(payload + b"\n")
+                sys.stdout.buffer.flush()
+            else:
+                header = f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii")
+                sys.stdout.buffer.write(header + payload)
+                sys.stdout.buffer.flush()
+
+        try:
+            stdin = sys.stdin.buffer
+            while True:
+                body, mode = _read_mcp_message(stdin)
+                if body is None:
+                    break
                 try:
-                    request = json.loads(line)
+                    request = json.loads(body.decode("utf-8"))
                     response = self.handle_request(request)
-                    
-                    if response is not None:
-                        print(json.dumps(response), flush=True)
+                    _write_response(response, mode)
                 except json.JSONDecodeError as e:
                     self.logger.log_error(f"JSON decode error: {e}")
                     error_response = {
@@ -482,7 +533,7 @@ class LocalSearchMCPServer:
                             "message": "Parse error",
                         },
                     }
-                    print(json.dumps(error_response), flush=True)
+                    _write_response(error_response, mode)
         except KeyboardInterrupt:
             self.logger.log_info("Shutting down...")
         finally:
