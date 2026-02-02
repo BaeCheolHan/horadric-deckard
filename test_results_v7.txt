@@ -1,0 +1,176 @@
+....[deckard] INFO: test message
+.[deckard] INFO: DB path: /var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpq3wz1c4r/ws6/.codex/tools/deckard/data/index.db
+[deckard] INFO: FileWatcher started for /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpq3wz1c4r/ws6
+Executing <Task pending name='Task-1' coro=<IsolatedAsyncioTestCase._asyncioLoopRunner() running at /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/async_case.py:96> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109b4fd30>()] created at /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py:424> created at /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/async_case.py:118> took 0.108 seconds
+.[deckard] INFO: DB path: /var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmp8i2s0hxs/ws3/.codex/tools/deckard/data/index.db
+[deckard] INFO: FileWatcher started for /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmp8i2s0hxs/ws3
+F[deckard] INFO: DB path: /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpnomw3wd0/ws4/.codex/tools/deckard/data/index.db
+[deckard] INFO: FileWatcher started for /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpnomw3wd0/ws4
+[deckard] Started on port 47778 (requested: 47777)
+[deckard] INFO: DB path: /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpnomw3wd0/ws5/.codex/tools/deckard/data/index.db
+[deckard] INFO: FileWatcher started for /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpnomw3wd0/ws5
+[deckard] Started on port 47780 (requested: 47777)
+[deckard] INFO: Shutting down server for workspace: /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpnomw3wd0/ws4
+[deckard] INFO: Shutting down server for workspace: /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpnomw3wd0/ws5
+.[deckard] INFO: DB path: /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpkd36qqff/ws1/.codex/tools/deckard/data/index.db
+[deckard] INFO: FileWatcher started for /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpkd36qqff/ws1
+[deckard] Started on port 47778 (requested: 47777)
+[deckard] INFO: Shutting down server for workspace: /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpkd36qqff/ws1
+.[deckard] INFO: DB path: /var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpkz_pl3o1/ws2/.codex/tools/deckard/data/index.db
+[deckard] INFO: FileWatcher started for /private/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpkz_pl3o1/ws2
+Executing <Task pending name='Task-9' coro=<IsolatedAsyncioTestCase._asyncioLoopRunner() running at /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/async_case.py:96> wait_for=<Future pending cb=[<TaskWakeupMethWrapper object at 0x109d14220>()] created at /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py:424> created at /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/async_case.py:118> took 0.112 seconds
+..F...F.................[deckard] ERROR: Failed to log to file: [Errno 13] Permission denied: '/var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpu5wmw3np/readonly/deckard.log'
+...........................F........F.FE..F.F..F..F...F.....F...............................................F....[deckard] ERROR: Failed to log to file: 'str' object has no attribute 'mkdir'
+.[deckard] ERROR: Failed to log to file: 'str' object has no attribute 'mkdir'
+........F...F..........................F..................................
+======================================================================
+ERROR: test_4_3_docstring_cleanup (test_round4.TestRound4)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round4.py", line 53, in test_4_3_docstring_cleanup
+    self.assertEqual(symbols[0][8], "Hello\nWorld")
+IndexError: list index out of range
+
+======================================================================
+FAIL: test_fts_fallback_on_syntax_error (test_concurrency_stress.TestConcurrencyStress)
+Case 3: FTS syntax error fallback
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/async_case.py", line 65, in _callTestMethod
+    self._callMaybeAsync(method)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/async_case.py", line 84, in _callMaybeAsync
+    ret = func(*args, **kwargs)
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_concurrency_stress.py", line 64, in test_fts_fallback_on_syntax_error
+    self.assertTrue(data["meta"]["fallback_used"])
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_exact_filename_boost (test_cycle_1.TestCycle1)
+Test 5: Exact Filename Boost.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_cycle_1.py", line 85, in test_exact_filename_boost
+    self.assertIn("Exact filename match", hits[0].hit_reason)
+AssertionError: 'Exact filename match' not found in 'Exact Filename match'
+
+======================================================================
+FAIL: test_config_fallback_logic (test_daemon_advanced.TestDaemonAdvanced)
+Verify defaults are used when config.json is missing.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_daemon_advanced.py", line 69, in test_config_fallback_logic
+    self.assertTrue(mock_config_class.called)
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_1_2_java_implements (test_round1.TestRound1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round1.py", line 36, in test_1_2_java_implements
+    self.assertIn("@Service", meta["annotations"])
+AssertionError: '@Service' not found in []
+
+======================================================================
+FAIL: test_3_2_index_file_integration (test_round3.TestRound3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round3.py", line 59, in test_3_2_index_file_integration
+    self.assertTrue(res["success"])
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_4_2_java_call_extraction (test_round4.TestRound4)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round4.py", line 41, in test_4_2_java_call_extraction
+    self.assertIn("validate", targets)
+AssertionError: 'validate' not found in []
+
+======================================================================
+FAIL: test_03_comments_between_annotations (test_round_10_multiline_logic.TestRound10MultilineLogic)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_10_multiline_logic.py", line 42, in test_03_comments_between_annotations
+    self.assertIn("A", annos)
+AssertionError: 'A' not found in ['@A', '@B']
+
+======================================================================
+FAIL: test_05_implements_with_newlines (test_round_10_multiline_logic.TestRound10MultilineLogic)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_10_multiline_logic.py", line 63, in test_05_implements_with_newlines
+    self.assertIn("Leader", targets)
+AssertionError: 'Leader' not found in {'Manager'}
+
+======================================================================
+FAIL: test_08_kotlin_multiline_inheritance (test_round_10_multiline_logic.TestRound10MultilineLogic)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_10_multiline_logic.py", line 98, in test_08_kotlin_multiline_inheritance
+    self.assertIn("BaseView()", targets)
+AssertionError: 'BaseView()' not found in set()
+
+======================================================================
+FAIL: test_01_spring_controller_aggregation (test_round_11_real_world.TestRound11RealWorld)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_11_real_world.py", line 28, in test_01_spring_controller_aggregation
+    self.assertIn("RESTCONTROLLER", json.loads(ctrl[7])["annotations"])
+AssertionError: 'RESTCONTROLLER' not found in ['@RestController', '@RequestMapping']
+
+======================================================================
+FAIL: test_05_docstring_with_annotations (test_round_11_real_world.TestRound11RealWorld)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_11_real_world.py", line 70, in test_05_docstring_with_annotations
+    self.assertIn("CACHEABLE", json.loads(target[7])["annotations"])
+AssertionError: 'CACHEABLE' not found in ['@Cacheable', '@GetMapping']
+
+======================================================================
+FAIL: test_01_java_full_header (test_round_12_refactored.TestRound12Refactored)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_12_refactored.py", line 26, in test_01_java_full_header
+    self.assertIn("SERVICE", json.loads(srv[7])["annotations"])
+AssertionError: 'SERVICE' not found in ['@Service', '@RequestMapping']
+
+======================================================================
+FAIL: test_09_java_star_stripping (test_round_4_docstring.TestRound4Docstring)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_4_docstring.py", line 125, in test_09_java_star_stripping
+    self.assertIn("* Bullet point", target[8])
+AssertionError: '* Bullet point' not found in 'Bullet point'
+
+======================================================================
+FAIL: test_03_wildcard_generics (test_round_6_advanced_java.TestRound6AdvancedJava)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_6_advanced_java.py", line 33, in test_03_wildcard_generics
+    self.assertTrue(rel[3].startswith("ArrayList"))
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_07_kotlin_inheritance (test_round_6_advanced_java.TestRound6AdvancedJava)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_6_advanced_java.py", line 74, in test_07_kotlin_inheritance
+    self.assertIsNotNone(rel, "Kotlin inheritance ':' should be detected")
+AssertionError: unexpectedly None : Kotlin inheritance ':' should be detected
+
+======================================================================
+FAIL: test_04_annotation_aggregation (test_round_9_advanced_parser.TestRound9AdvancedParser)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/baecheolhan/Documents/repositories/horadric-deckard/tests/test_round_9_advanced_parser.py", line 39, in test_04_annotation_aggregation
+    self.assertIn("SERVICE", annos)
+AssertionError: 'SERVICE' not found in ['@Service', '@Transactional', '@RequestMapping']
+
+----------------------------------------------------------------------
+Ran 221 tests in 20.675s
+
+FAILED (failures=16, errors=1)
+[deckard] Config not found in workspace (/Users/baecheolhan/Documents/repositories/horadric-deckard/config/config.json), using defaults.
+[deckard] DB path: /var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmpzrz9boim/ws/.codex/tools/deckard/data/index.db
+[deckard] DB path: /var/folders/53/1642qrvs7rdg6qlcn2v_50sh0000gn/T/tmph90m2iny/ws/test.db
+[deckard] server.json updated with fallback port 48888
