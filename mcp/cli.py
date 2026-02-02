@@ -295,6 +295,55 @@ def cmd_proxy(args):
     proxy_main()
 
 
+def _tcp_blocked(err: OSError) -> bool:
+    return getattr(err, "errno", None) in (1, 13)
+
+
+def cmd_auto(args):
+    """Try TCP daemon/proxy first, fallback to STDIO server."""
+    host, port = get_daemon_address()
+
+    # Fast path: if TCP is blocked by sandbox, skip daemon/proxy.
+    try:
+        with socket.create_connection((host, port), timeout=0.1):
+            return cmd_proxy(args)
+    except OSError as e:
+        if _tcp_blocked(e):
+            from mcp.server import main as server_main
+            server_main()
+            return 0
+        # Connection refused etc. We'll try to start daemon below.
+
+    # Try to start daemon in background, then proxy.
+    if not is_daemon_running(host, port):
+        repo_root = Path(__file__).parent.parent.resolve()
+        subprocess.Popen(
+            [sys.executable, "-m", "mcp.daemon"],
+            cwd=repo_root,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for _ in range(30):
+            try:
+                if is_daemon_running(host, port):
+                    break
+            except OSError as e:
+                if _tcp_blocked(e):
+                    from mcp.server import main as server_main
+                    server_main()
+                    return 0
+            time.sleep(0.1)
+
+    if is_daemon_running(host, port):
+        return cmd_proxy(args)
+
+    # Final fallback to STDIO server.
+    from mcp.server import main as server_main
+    server_main()
+    return 0
+
+
 def cmd_status(args):
     """Query HTTP status endpoint."""
     try:
@@ -384,6 +433,10 @@ def main():
     # proxy subcommand
     proxy_parser = subparsers.add_parser("proxy", help="Run in proxy mode")
     proxy_parser.set_defaults(func=cmd_proxy)
+
+    # auto subcommand
+    auto_parser = subparsers.add_parser("auto", help="Auto: TCP proxy, fallback to STDIO")
+    auto_parser.set_defaults(func=cmd_auto)
 
     # status subcommand (HTTP)
     status_parser = subparsers.add_parser("status", help="Query HTTP status")

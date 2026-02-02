@@ -108,7 +108,7 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
     
     # 1. INSTALL
     print("\n[E2E] Running installation...")
-    args = type('Args', (), {'yes': True, 'quiet': True, 'json': False, 'verbose': False})()
+    args = type('Args', (), {'yes': True, 'quiet': True, 'json': False, 'verbose': False, 'update': False})()
     install.do_install(args)
     
     assert test_env["install_dir"].exists(), "Installation directory not created"
@@ -119,14 +119,8 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
     codex_cfg_path = workspace / ".codex" / "config.toml"
     gemini_cfg_path = workspace / ".gemini" / "config.toml"
     
-    # We need to run init to generate these in the workspace
-    # or ensure install script found the workspace.
-    # install.py uses _resolve_workspace_root() which checks CWD or markers.
-    # Let's run 'init' via the installed deckard to be sure.
-    bootstrap = test_env["install_dir"] / "bootstrap.sh"
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(PROJECT_ROOT)
-    subprocess.run([str(bootstrap), "init"], cwd=str(workspace), env=env, check=True)
+    # install.py should have automatically run 'init', creating the marker
+    assert (workspace / ".codex-root").exists(), "Auto-init failed: .codex-root marker missing"
     
     assert codex_cfg_path.exists(), "Codex config missing"
     assert gemini_cfg_path.exists(), "Gemini config missing"

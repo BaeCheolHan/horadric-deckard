@@ -365,6 +365,18 @@ def do_install(args):
     
     print_success(f"Workspace '{workspace_root}' is now configured to use Deckard.")
 
+    # Auto-initialize the workspace to ensure marker exists
+    print_step(f"Initializing workspace at {workspace_root}...")
+    try:
+        init_cmd = [str(bootstrap_script), "init"]
+        # Pass workspace root via env to be safe, though init usually uses cwd
+        init_env = os.environ.copy()
+        init_env["DECKARD_WORKSPACE_ROOT"] = workspace_root
+        subprocess.run(init_cmd, env=init_env, check=True, capture_output=CONFIG["quiet"])
+        print_success("Workspace initialized.")
+    except Exception as e:
+        print_warn(f"Failed to automatically initialize workspace: {e}")
+
     # Final health check only if we installed/updated something
     if perform_global_install:
         print_step("Running post-install health check (Doctor)...")

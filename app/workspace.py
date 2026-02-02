@@ -110,5 +110,9 @@ class WorkspaceManager:
     
     @staticmethod
     def get_global_log_dir() -> Path:
-        """Get global log directory: ~/.local/share/deckard/logs/"""
+        """Get global log directory, with env override."""
+        for env_key in ["DECKARD_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
+            val = (os.environ.get(env_key) or "").strip()
+            if val:
+                return Path(os.path.expanduser(val)).resolve()
         return WorkspaceManager.get_global_data_dir() / "logs"
