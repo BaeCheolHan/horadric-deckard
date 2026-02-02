@@ -71,6 +71,31 @@ def test_get_http_host_port_from_packaged_config(monkeypatch, tmp_path):
     assert port == 47777
 
 
+def test_get_http_host_port_from_env_overrides(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(WorkspaceManager, "resolve_workspace_root", lambda: str(ws))
+    monkeypatch.setenv("DECKARD_HTTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("DECKARD_HTTP_PORT", "49999")
+    monkeypatch.setenv("DECKARD_DAEMON_PORT", "47800")
+
+    host, port = cli._get_http_host_port()
+    assert host == "127.0.0.1"
+    assert port == 49999
+
+
+def test_get_http_host_port_ignores_zero_port(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(WorkspaceManager, "resolve_workspace_root", lambda: str(ws))
+    monkeypatch.setenv("DECKARD_HTTP_PORT", "0")
+
+    with patch.object(ServerRegistry, "get_instance", return_value=None):
+        host, port = cli._get_http_host_port()
+    assert host == "127.0.0.1"
+    assert port == 47777
+
+
 def test_enforce_loopback_rejects_non_loopback(monkeypatch):
     monkeypatch.delenv("DECKARD_ALLOW_NON_LOOPBACK", raising=False)
     monkeypatch.delenv("LOCAL_SEARCH_ALLOW_NON_LOOPBACK", raising=False)

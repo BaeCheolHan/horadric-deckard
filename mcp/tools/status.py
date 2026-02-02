@@ -3,6 +3,7 @@
 Status tool for Local Search MCP Server.
 """
 import json
+import os
 from typing import Any, Dict, Optional
 
 try:
@@ -51,6 +52,8 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
     if logger:
         logger.log_telemetry(f"tool=status details={details} scanned={status['scanned_files']} indexed={status['indexed_files']}")
     
+    compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
+    payload = json.dumps(status, ensure_ascii=False, separators=(",", ":")) if compact else json.dumps(status, indent=2, ensure_ascii=False)
     return {
-        "content": [{"type": "text", "text": json.dumps(status, indent=2)}],
+        "content": [{"type": "text", "text": payload}],
     }

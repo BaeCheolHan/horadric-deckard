@@ -3,6 +3,7 @@
 Search tool for Local Search MCP Server.
 """
 import json
+import os
 import time
 from typing import Any, Dict, List
 
@@ -22,6 +23,7 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
     """Execute enhanced search tool (v2.5.0)."""
     start_ts = time.time()
     query = args.get("query", "")
+    compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
     
     if not query.strip():
         return {
@@ -154,8 +156,10 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
     
     # Even if SQL total is exact, exclude_patterns might reduce it further
     is_exact_total = (total_mode == "exact")
+    filtered_total = None
     if opts.exclude_patterns and total > 0:
          is_exact_total = False
+         filtered_total = offset + len(results)
     
     warnings = []
     if has_more:
@@ -167,6 +171,8 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
 
     if not opts.repo and total > 50:
         warnings.append("Many results found. Consider specifying 'repo' to filter.")
+    if filtered_total is not None:
+        warnings.append("exclude_patterns applied: total may include filtered-out matches.")
     
     # Determine fallback reason code
     fallback_reason_code = None
@@ -186,6 +192,7 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
         "total_mode": total_mode,
         "is_exact_total": is_exact_total,
         "approx_total": total if total_mode == "approx" else None,
+        "filtered_total": filtered_total,
         "limit": limit,
         "offset": offset,
         "has_more": has_more,
@@ -232,11 +239,18 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
     latency_ms = int((time.time() - start_ts) * 1000)
     snippet_chars = sum(len(r.get("snippet", "")) for r in results)
     
-    logger.log_telemetry(f"tool=search query='{opts.query}' results={len(results)} snippet_chars={snippet_chars} latency={latency_ms}ms")
+    logger.log_telemetry(
+        f"tool=search query='{opts.query}' results={len(results)} fallback_used={db_meta.get('fallback_used', False)} "
+        f"total_mode={total_mode} latency={latency_ms}ms"
+    )
 
     # Merge output into return for backward compatibility with integration tests
+    if compact:
+        payload = json.dumps(output, ensure_ascii=False, separators=(",", ":"))
+    else:
+        payload = json.dumps(output, indent=2, ensure_ascii=False)
     res = {
-        "content": [{"type": "text", "text": json.dumps(output, indent=2, ensure_ascii=False)}],
+        "content": [{"type": "text", "text": payload}],
     }
     res.update(output)
     return res

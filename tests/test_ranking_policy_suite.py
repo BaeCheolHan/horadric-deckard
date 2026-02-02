@@ -100,6 +100,22 @@ class TestRankingPolicy(unittest.TestCase):
         data = json.loads(result["content"][0]["text"])
         self.assertEqual(data["limit"], 20)
 
+    def test_exclude_patterns_filtered_total(self):
+        args = {"query": "content", "exclude_patterns": ["doc_1"]}
+        result = execute_search(args, self.db, self.logger)
+        data = json.loads(result["content"][0]["text"])
+        self.assertFalse(data["is_exact_total"])
+        self.assertIsNotNone(data.get("filtered_total"))
+        self.assertTrue(any("exclude_patterns applied" in w for w in data.get("warnings", [])))
+
+    def test_search_telemetry_includes_fallback_and_total_mode(self):
+        args = {"query": "content"}
+        execute_search(args, self.db, self.logger)
+        self.assertIsNotNone(self.logger.last_log)
+        self.assertIn("tool=search", self.logger.last_log)
+        self.assertIn("fallback_used=", self.logger.last_log)
+        self.assertIn("total_mode=", self.logger.last_log)
+
 class TestRankingHybrid(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()

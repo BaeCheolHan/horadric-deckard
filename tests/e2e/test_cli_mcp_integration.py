@@ -167,7 +167,11 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
         resp = send_mcp_request(mcp_proc, status_req)
         assert resp and "result" in resp, "Tool 'status' call failed"
         content_text = resp["result"]["content"][0]["text"]
-        assert '"index_ready": true' in content_text.lower() or "active" in content_text.lower()
+        try:
+            payload = json.loads(content_text)
+            assert payload.get("index_ready") is True or "active" in content_text.lower()
+        except Exception:
+            assert '"index_ready": true' in content_text.lower() or "active" in content_text.lower()
         
     finally:
         # Cleanup MCP process

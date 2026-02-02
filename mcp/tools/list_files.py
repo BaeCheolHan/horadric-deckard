@@ -4,6 +4,7 @@ List files tool for Local Search MCP Server.
 """
 import json
 import time
+import os
 from typing import Any, Dict
 
 try:
@@ -25,28 +26,11 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
     path_pattern = args.get("path_pattern")
     file_types = args.get("file_types")
     include_hidden = bool(args.get("include_hidden", False))
-    summary_only = bool(args.get("summary", False)) or (not repo and not path_pattern and not file_types)
+    compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
 
-    if summary_only:
-        files: list[dict[str, Any]] = []
-        repo_stats = db.get_repo_stats()
-        repos = [{"repo": k, "file_count": v} for k, v in repo_stats.items()]
-        repos.sort(key=lambda r: r["file_count"], reverse=True)
-        total = sum(repo_stats.values())
-        output = {
-            "files": [],
-            "meta": {
-                "total": total,
-                "returned": 0,
-                "offset": 0,
-                "limit": 0,
-                "repos": repos,
-                "include_hidden": include_hidden,
-                "mode": "summary",
-            },
-        }
-    else:
-        files, meta = db.list_files(
+    paths = []
+    if compact:
+        files, _ = db.list_files(
             repo=repo,
             path_pattern=path_pattern,
             file_types=file_types,
@@ -54,18 +38,50 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
             limit=int(args.get("limit", 100)),
             offset=int(args.get("offset", 0)),
         )
-        output = {
-            "files": files,
-            "meta": meta,
-        }
-
-    json_output = json.dumps(output, indent=2, ensure_ascii=False)
+        paths = [f["path"] for f in files]
+        output = {"paths": paths}
+        json_output = json.dumps(output, ensure_ascii=False, separators=(",", ":"))
+    else:
+        summary_only = bool(args.get("summary", False)) or (not repo and not path_pattern and not file_types)
+        if summary_only:
+            files: list[dict[str, Any]] = []
+            repo_stats = db.get_repo_stats()
+            repos = [{"repo": k, "file_count": v} for k, v in repo_stats.items()]
+            repos.sort(key=lambda r: r["file_count"], reverse=True)
+            total = sum(repo_stats.values())
+            output = {
+                "files": [],
+                "meta": {
+                    "total": total,
+                    "returned": 0,
+                    "offset": 0,
+                    "limit": 0,
+                    "repos": repos,
+                    "include_hidden": include_hidden,
+                    "mode": "summary",
+                },
+            }
+        else:
+            files, meta = db.list_files(
+                repo=repo,
+                path_pattern=path_pattern,
+                file_types=file_types,
+                include_hidden=include_hidden,
+                limit=int(args.get("limit", 100)),
+                offset=int(args.get("offset", 0)),
+            )
+            output = {
+                "files": files,
+                "meta": meta,
+            }
+        json_output = json.dumps(output, ensure_ascii=False, indent=2)
     
     # Telemetry: Log list_files stats
     latency_ms = int((time.time() - start_ts) * 1000)
     payload_bytes = len(json_output.encode('utf-8'))
-    repo_val = repo or ("summary" if summary_only else "all")
-    logger.log_telemetry(f"tool=list_files repo='{repo_val}' files={len(files)} payload_bytes={payload_bytes} latency={latency_ms}ms")
+    repo_val = repo or ("summary" if (not compact and not repo and not path_pattern and not file_types) else "all")
+    file_count = len(paths) if compact else len(output.get("files", []))
+    logger.log_telemetry(f"tool=list_files repo='{repo_val}' files={file_count} payload_bytes={payload_bytes} latency={latency_ms}ms")
     
     return {
         "content": [{"type": "text", "text": json_output}],

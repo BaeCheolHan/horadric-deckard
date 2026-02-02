@@ -101,8 +101,17 @@ def _enforce_loopback(host: str) -> None:
 def _get_http_host_port() -> tuple[str, int]:
     """Get active HTTP server address with Environment priority (v2.7.0)."""
     # 0. Environment Override (Highest Priority for testing/isolation)
-    env_host = os.environ.get("DECKARD_HOST") or os.environ.get("DECKARD_DAEMON_HOST")
-    env_port = os.environ.get("DECKARD_PORT") or os.environ.get("DECKARD_DAEMON_PORT")
+    env_host = (
+        os.environ.get("DECKARD_HTTP_HOST")
+        or os.environ.get("LOCAL_SEARCH_HTTP_HOST")
+        or os.environ.get("DECKARD_HOST")
+    )
+    env_port_raw = (
+        os.environ.get("DECKARD_HTTP_PORT")
+        or os.environ.get("LOCAL_SEARCH_HTTP_PORT")
+        or os.environ.get("DECKARD_PORT")
+    )
+    env_port = None if env_port_raw in (None, "", "0") else env_port_raw
     if env_host or env_port:
         return str(env_host or DEFAULT_HTTP_HOST), int(env_port or DEFAULT_HTTP_PORT)
 

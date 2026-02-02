@@ -42,8 +42,8 @@ class TestIntegrationPortability(unittest.TestCase):
         result = execute_list_files(args, self.db, MagicMock())
         data = json.loads(result["content"][0]["text"])
         
-        self.assertEqual(len(data["files"]), 1)
-        self.assertEqual(data["files"][0]["path"], "repo1/src/main.py")
+        self.assertEqual(len(data["paths"]), 1)
+        self.assertEqual(data["paths"][0], "repo1/src/main.py")
 
     def test_repo_candidates_scoring(self):
         """Case 4: repo_candidates scoring logic"""

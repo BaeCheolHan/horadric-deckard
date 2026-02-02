@@ -573,7 +573,7 @@ class Indexer:
         tags_str = ",".join(tags)
         self.db.upsert_repo_meta(repo, tags=tags_str, description=description)
 
-    def _iter_file_entries(self, root: Path) -> List[Tuple[Path, os.stat_result]]:
+    def _iter_file_entries_stream(self, root: Path):
         include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
         include_all_ext = not include_ext
         include_files = set(getattr(self.cfg, "include_files", []))
@@ -583,7 +583,6 @@ class Indexer:
         exclude_globs = list(getattr(self.cfg, "exclude_globs", []))
         max_file_bytes = int(getattr(self.cfg, "max_file_bytes", 0)) or None
 
-        file_entries: List[Tuple[Path, os.stat_result]] = []
         for dirpath, dirnames, filenames in os.walk(root):
             if dirnames:
                 kept = []
@@ -614,8 +613,10 @@ class Indexer:
                     continue
                 if max_file_bytes is not None and st.st_size > max_file_bytes:
                     continue
-                file_entries.append((p, st))
-        return file_entries
+                yield p, st
+
+    def _iter_file_entries(self, root: Path) -> List[Tuple[Path, os.stat_result]]:
+        return list(self._iter_file_entries_stream(root))
 
     def _iter_files(self, root: Path) -> List[Path]:
         """Return candidate file paths (legacy tests expect Path objects)."""
@@ -624,47 +625,23 @@ class Indexer:
     def _scan_once(self):
         root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
         if not root.exists(): return
-        file_entries = self._iter_file_entries(root)
         now, scan_ts = time.time(), int(time.time())
-        self.status.last_scan_ts, self.status.scanned_files = now, len(file_entries)
+        self.status.last_scan_ts, self.status.scanned_files = now, 0
         
         batch_files, batch_syms, batch_rels, unchanged = [], [], [], []
         
         # v2.7.0: Batched futures to prevent memory bloat in large workspaces
         chunk_size = 100
-        for i in range(0, len(file_entries), chunk_size):
-            chunk = file_entries[i:i+chunk_size]
-            futures = [self._executor.submit(self._process_file_task, root, f, s, scan_ts, now) for f, s in chunk]
-            
-            for f, s in chunk:
-                if f.name == "package.json":
-                    rel = str(f.relative_to(root))
-                    repo = rel.split(os.sep, 1)[0] if os.sep in rel else "__root__"
-                    self._process_meta_file(f, repo)
-
-            for future in concurrent.futures.as_completed(futures):
-                try: res = future.result()
-                except: self.status.errors += 1; continue
-                if not res: continue
-                if res["type"] == "unchanged":
-                    unchanged.append(res["rel"])
-                    if len(unchanged) >= 100: self.db.update_last_seen(unchanged, scan_ts); unchanged.clear()
-                    continue
-                
-                batch_files.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
-                batch_syms.extend(res["symbols"]); batch_rels.extend(res["relations"])
-                
-                if len(batch_files) >= 50:
-                    try:
-                        self.db.upsert_files(batch_files)
-                        self.db.upsert_symbols(batch_syms)
-                        self.db.upsert_relations(batch_rels)
-                        self.status.indexed_files += len(batch_files)
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.log_error(f"Failed to flush batch to DB: {e}")
-                        self.status.errors += 1
-                    batch_files, batch_syms, batch_rels = [], [], []
+        chunk = []
+        for entry in self._iter_file_entries_stream(root):
+            chunk.append(entry)
+            self.status.scanned_files += 1
+            if len(chunk) < chunk_size:
+                continue
+            self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
+            chunk = []
+        if chunk:
+            self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
 
         if batch_files:
             try:
@@ -685,6 +662,41 @@ class Indexer:
             self.db.delete_unseen_files(scan_ts)
         except Exception as e:
             self.status.errors += 1
+
+    def _process_chunk(self, root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged):
+        futures = [self._executor.submit(self._process_file_task, root, f, s, scan_ts, now) for f, s in chunk]
+            
+        for f, s in chunk:
+            if f.name == "package.json":
+                rel = str(f.relative_to(root))
+                repo = rel.split(os.sep, 1)[0] if os.sep in rel else "__root__"
+                self._process_meta_file(f, repo)
+
+        for future in concurrent.futures.as_completed(futures):
+            try: res = future.result()
+            except: self.status.errors += 1; continue
+            if not res: continue
+            if res["type"] == "unchanged":
+                unchanged.append(res["rel"])
+                if len(unchanged) >= 100: self.db.update_last_seen(unchanged, scan_ts); unchanged.clear()
+                continue
+                
+            batch_files.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
+            batch_syms.extend(res["symbols"]); batch_rels.extend(res["relations"])
+                
+            if len(batch_files) >= 50:
+                try:
+                    self.db.upsert_files(batch_files)
+                    self.db.upsert_symbols(batch_syms)
+                    self.db.upsert_relations(batch_rels)
+                    self.status.indexed_files += len(batch_files)
+                except Exception as e:
+                    if self.logger:
+                        self.logger.log_error(f"Failed to flush batch to DB: {e}")
+                    self.status.errors += 1
+                batch_files.clear()
+                batch_syms.clear()
+                batch_rels.clear()
 
     def _process_watcher_event(self, path: str):
         try:

@@ -116,6 +116,12 @@ class LocalSearchMCPServer:
 
     def _search_first_error(self) -> Dict[str, Any]:
         self._search_usage["read_without_search"] += 1
+        try:
+            self.logger.log_telemetry(
+                f"policy=search_first mode={self._search_first_mode} action=enforce violations={self._search_usage['read_without_search']}"
+            )
+        except Exception:
+            pass
         return {
             "content": [{
                 "type": "text",
@@ -126,6 +132,12 @@ class LocalSearchMCPServer:
 
     def _search_first_warning(self, result: Dict[str, Any]) -> Dict[str, Any]:
         self._search_usage["read_without_search"] += 1
+        try:
+            self.logger.log_telemetry(
+                f"policy=search_first mode={self._search_first_mode} action=warn violations={self._search_usage['read_without_search']}"
+            )
+        except Exception:
+            pass
         warnings = list(result.get("warnings", []))
         warnings.append("Search-first policy (advisory): call search/search_symbols before read_file/read_symbol.")
         result["warnings"] = warnings
@@ -142,15 +154,8 @@ class LocalSearchMCPServer:
                 return
 
             try:
-                config_path = Path(self.workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
-                if not config_path.exists():
-                     # Fallback to older legacy path if it exists
-                     alt_path = Path(self.workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
-                     if alt_path.exists(): config_path = alt_path
-                     else: config_path = None
-                
-                # Config.load handles defaults if config_path is None or doesn't exist
-                self.cfg = Config.load(str(config_path) if config_path else None, workspace_root_override=self.workspace_root)
+                config_path = WorkspaceManager.resolve_config_path(self.workspace_root)
+                self.cfg = Config.load(str(config_path), workspace_root_override=self.workspace_root)
                 
                 db_path = Path(self.cfg.db_path)
 

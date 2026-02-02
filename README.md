@@ -137,6 +137,11 @@ python3 ~/.local/share/horadric-deckard/doctor.py
 - 코드가 지옥(외부 서버)으로 전송되는 불상사는 결코 일어나지 않습니다.
 - 로그와 캐시는 오직 여러분의 하드디스크 깊숙한 곳에만 봉인됩니다. (디아블로도 못 훔쳐가네.)
 
+### 🧼 Redaction (민감정보 마스킹)
+- 인덱싱/텔레메트리 로그 기록 전 **민감정보를 마스킹**합니다.
+- 기본값은 `redact_enabled=true`이며, 설정에서 비활성화할 수 있습니다.
+- 마스킹 범위/패턴은 `app/indexer.py`의 `_redact` 로직 기준입니다.
+
 ---
 
 ## 🧭 다중 워크스페이스를 똑똑하게 쓰는 방법
@@ -170,6 +175,9 @@ python3 ~/.local/share/horadric-deckard/doctor.py
 ### Q. 첫 실행이 너무 느려요
 - 첫 인덱싱은 원래 시간이 좀 걸립니다. (호라드림 도서관 20,000평을 혼자 청소하신다고 생각해보세요.)
 - `--workspace-root`로 범위를 줄이면 훨씬 빨라집니다. (선생님께 청소 범위를 좁게 알려드리는 매너!)
+
+### Q. 테스트가 운영 데몬과 충돌해요
+- 격리된 환경에서 실행하려면 `scripts/run_tests_isolated.sh`를 사용하세요. (HOME/registry/log/port 분리)
 
 ### Q. 업데이트가 안 되는 것 같아요
 - **1‑Step 모드인지 확인**하세요 (레포 `bootstrap.sh` 사용).
@@ -269,6 +277,7 @@ Deckard는 인덱싱 + FTS 기반 검색 구조라서 **“어떤 단계에서 �
 ### 2) 검색 속도: FTS가 켜져 있는지 확인
 - `status(details)`에서 `fts_enabled: true`인지 먼저 확인하세요.  
 - `fts_enabled: false`면 검색이 LIKE 폴백으로 전환되어 **느려지고 정확도도 떨어집니다.**
+- FTS가 켜져 있어도 **아주 짧은 쿼리(길이 < 3)** 또는 **유니코드 포함 쿼리**는 LIKE로 폴백될 수 있습니다.
 
 ### 3) 엔트리포인트 탐색은 심볼 기반이 유리
 - `search_symbols` → `read_symbol` 조합은 **필요한 코드 블록만 읽어** 토큰 비용을 줄입니다.
@@ -331,6 +340,20 @@ startup_timeout_sec = 60
   - `args`와 **동일한 값**을 넣는 것이 권장됩니다. (둘 중 하나만 있어도 동작합니다)
 - `startup_timeout_sec`: 데몬 기동 대기 시간(초).  
   초기 인덱싱이 길다면 120~180으로 늘려보세요.
+
+**설정 경로 우선순위(요약)**  
+1) `DECKARD_CONFIG` / `LOCAL_SEARCH_CONFIG`  
+2) `<workspace>/.codex/tools/deckard/config/config.json`  
+3) 패키지 기본 config
+
+### 📈 텔레메트리 로그
+- `tool=search`/`tool=list_files` 등 도구 실행 로그가 기록됩니다.
+- `search-first` 정책 위반/경고는 별도 로그 항목으로 남습니다.
+
+### 🧵 응답 압축 모드
+- `DECKARD_RESPONSE_COMPACT=1`이면 MCP 응답 JSON이 **minified**로 출력됩니다. (기본값)
+- `DECKARD_RESPONSE_COMPACT=0`이면 기존 pretty JSON 출력으로 복원됩니다.
+- `list_files`는 compact 모드에서 `paths`만 반환합니다. (verbose 모드에서만 `files/meta`)
 
 **여러 워크스페이스를 넣을 수 있나요?**
 - 현재는 `--workspace-root` **단일 경로만 지원**합니다.

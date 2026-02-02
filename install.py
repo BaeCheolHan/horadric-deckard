@@ -247,7 +247,7 @@ def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
         "[mcp_servers.deckard]",
         f"command = \"{command_path}\"",
         f"args = [\"--workspace-root\", \"{workspace_root}\"]",
-        f"env = {{ DECKARD_WORKSPACE_ROOT = \"{workspace_root}\" }}",
+        f"env = {{ DECKARD_WORKSPACE_ROOT = \"{workspace_root}\", DECKARD_RESPONSE_COMPACT = \"1\" }}",
         "startup_timeout_sec = 60",
     ]
 
@@ -279,7 +279,7 @@ def _upsert_gemini_settings(cfg_path: Path, command_path: str, workspace_root: s
     mcp_servers["deckard"] = {
         "command": command_path,
         "args": ["--workspace-root", workspace_root],
-        "env": {"DECKARD_WORKSPACE_ROOT": workspace_root},
+        "env": {"DECKARD_WORKSPACE_ROOT": workspace_root, "DECKARD_RESPONSE_COMPACT": "1"},
     }
     data["mcpServers"] = mcp_servers
 

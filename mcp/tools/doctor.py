@@ -5,6 +5,7 @@ Returns structured diagnostics (no ANSI/prints).
 """
 import json
 import os
+import os
 import socket
 import shutil
 import sys
@@ -174,6 +175,8 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
         "results": results,
     }
 
+    compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
+    payload = json.dumps(output, ensure_ascii=False, separators=(",", ":")) if compact else json.dumps(output, ensure_ascii=False, indent=2)
     return {
-        "content": [{"type": "text", "text": json.dumps(output, ensure_ascii=False, indent=2)}],
+        "content": [{"type": "text", "text": payload}],
     }
