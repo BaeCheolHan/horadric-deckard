@@ -1,4 +1,5 @@
 import sys
+import json
 import socket
 import threading
 import os
@@ -208,6 +209,41 @@ def forward_stdin_to_socket(sock, mode_holder):
             if res is None:
                 break
             msg, mode = res
+            # Inject rootUri for initialize when client omits it (per-connection workspace)
+            try:
+                req = json.loads(msg.decode("utf-8"))
+
+                def _inject(obj):
+                    if not isinstance(obj, dict) or obj.get("method") != "initialize":
+                        return obj, False
+                    params = obj.get("params") or {}
+                    if params.get("rootUri") or params.get("rootPath"):
+                        return obj, False
+                    ws = os.environ.get("DECKARD_WORKSPACE_ROOT") or os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT")
+                    if not ws:
+                        return obj, False
+                    params = dict(params)
+                    params["rootUri"] = f"file://{ws}"
+                    obj = dict(obj)
+                    obj["params"] = params
+                    _log_info(f"Injected rootUri for initialize: {ws}")
+                    return obj, True
+
+                injected = False
+                if isinstance(req, dict):
+                    req, injected = _inject(req)
+                elif isinstance(req, list):
+                    new_list = []
+                    for item in req:
+                        item2, did = _inject(item)
+                        injected = injected or did
+                        new_list.append(item2)
+                    req = new_list
+
+                if injected:
+                    msg = json.dumps(req).encode("utf-8")
+            except Exception:
+                pass
             if mode_holder.get("mode") is None:
                 mode_holder["mode"] = mode
             

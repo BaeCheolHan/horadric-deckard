@@ -7,30 +7,58 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Tuple, Optional, Any
+from typing import List, Tuple, Optional, Any, Dict
 
 # Support script mode and package mode
 try:
-    from .config import Config  # type: ignore
-    from .db import LocalSearchDB  # type: ignore
+    from .config import Config
+    from .db import LocalSearchDB
     from .watcher import FileWatcher
-    from .queue import DedupQueue
+    from .dedup_queue import DedupQueue
 except ImportError:
-    from config import Config  # type: ignore
-    from db import LocalSearchDB  # type: ignore
+    from config import Config
+    from db import LocalSearchDB
     try:
         from watcher import FileWatcher
-    except ImportError:
+    except Exception:
         FileWatcher = None
     try:
-        from queue import DedupQueue
-    except ImportError:
+        from dedup_queue import DedupQueue
+    except Exception:
         DedupQueue = None
 
-# === Constants ===
-CORE_FILE_BOOST = 10**9  # Priority boost for core metadata files
-AI_SAFETY_NET_SECONDS = 3.0  # Force re-index if modified within this window
+AI_SAFETY_NET_SECONDS = 3.0
 
+# Redaction patterns for secrets in logs and indexed content.
+_REDACT_ASSIGNMENTS_QUOTED = re.compile(
+    r"(?i)\b(password|passwd|pwd|secret|api_key|apikey|token|access_token|refresh_token|openai_api_key|aws_secret|database_url)\b(\s*[:=]\s*)([\"'])(.*?)(\3)"
+)
+_REDACT_ASSIGNMENTS_BARE = re.compile(
+    r"(?i)\b(password|passwd|pwd|secret|api_key|apikey|token|access_token|refresh_token|openai_api_key|aws_secret|database_url)\b(\s*[:=]\s*)([^\\s,]+)"
+)
+_REDACT_AUTH_BEARER = re.compile(r"(?i)\bAuthorization\b\s*:\s*Bearer\s+([^\s,]+)")
+_REDACT_PRIVATE_KEY = re.compile(
+    r"(?is)-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----.*?-----END [A-Z0-9 ]+PRIVATE KEY-----"
+)
+
+
+def _redact(text: str) -> str:
+    if not text:
+        return text
+    text = _REDACT_PRIVATE_KEY.sub("-----BEGIN PRIVATE KEY-----[REDACTED]-----END PRIVATE KEY-----", text)
+    text = _REDACT_AUTH_BEARER.sub("Authorization: Bearer ***", text)
+
+    def _replace_quoted(match: re.Match) -> str:
+        key, sep, quote = match.group(1), match.group(2), match.group(3)
+        return f"{key}{sep}{quote}***{quote}"
+
+    def _replace_bare(match: re.Match) -> str:
+        key, sep = match.group(1), match.group(2)
+        return f"{key}{sep}***"
+
+    text = _REDACT_ASSIGNMENTS_QUOTED.sub(_replace_quoted, text)
+    text = _REDACT_ASSIGNMENTS_BARE.sub(_replace_bare, text)
+    return text
 
 
 @dataclass
@@ -42,683 +70,456 @@ class IndexStatus:
     errors: int = 0
 
 
-_REDACT_PATTERNS = [
-    # key=value / key: value (assignments)
-    re.compile(
-        r"(?i)(\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|refresh[_-]?token|id[_-]?token|session[_-]?token|aws[_-]?secret(?:[_-]?access[_-]?key)?|database[_-]?url|openai[_-]?api[_-]?key)\s*[:=]\s*)([\"']?)(.+?)\2(?=[,\s]|$)"
-    ),
-    # JSON style: "password": "..."
-    re.compile(
-        r"(?i)(\"(?:password|secret|token|api[_-]?key|client[_-]?secret|private[_-]?key|refresh[_-]?token|id[_-]?token|session[_-]?token|aws[_-]?secret(?:[_-]?access[_-]?key)?|database[_-]?url|openai[_-]?api[_-]?key)\"\s*:\s*)(\")(.*?)(\")"
-    ),
-    # Authorization header: Authorization: Bearer <token>
-    re.compile(r"(?im)^(\s*authorization\s*:\s*bearer\s+)(.+?)\s*$"),
-]
+# ----------------------------
+# Helpers
+# ----------------------------
 
-# Symbol patterns removed in v2.7.0 in favor of block-aware parser in _extract_symbols
+def _safe_compile(pattern: str, flags: int = 0, fallback: Optional[str] = None) -> re.Pattern:
+    try:
+        return re.compile(pattern, flags)
+    except re.error:
+        if fallback:
+            try: return re.compile(fallback, flags)
+            except re.error: pass
+        return re.compile(r"a^")
 
 
-def _redact(text: str) -> str:
-    # Use a more robust approach for multiple matches
-    # Masking group index depends on the pattern
-    
-    # 1. Assignments and JSON style
-    for pat in _REDACT_PATTERNS[:2]:
-        text = pat.sub(r"\1\2***\2", text)
-    
-    # 2. Authorization header (Line based)
-    text = _REDACT_PATTERNS[2].sub(r"\1***", text)
-    
-    # 3. Inline Bearer (Catch-all)
-    text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9\-\._~\+/]+=*", r"\1***", text)
-    
-    return text
+NORMALIZE_KIND_BY_EXT: Dict[str, Dict[str, str]] = {
+    ".java": {"record": "class", "interface": "class"},
+    ".kt": {"interface": "class", "object": "class", "data class": "class"},
+    ".go": {},
+    ".cpp": {},
+    ".h": {},
+    ".ts": {"interface": "class"},
+    ".tsx": {"interface": "class"},
+}
 
 
-def _extract_symbols(path: str, content: str) -> List[Tuple[str, str, str, int, int, str, str]]:
-    """
-    Extract symbols with start/end lines (v2.7.0).
-    Returns: (path, name, kind, line, end_line, content, parent_name)
-    """
-    ext = Path(path).suffix.lower()
-    symbols = []
-    lines = content.splitlines()
-    total_lines = len(lines)
-    
-    # 1. Indentation-based languages (Python)
-    if ext == ".py":
+# ----------------------------
+# Parsers Architecture
+# ----------------------------
+
+class BaseParser:
+    def sanitize(self, line: str) -> str:
+        line = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', line)
+        line = re.sub(r"'[^'\\]*(?:\\.[^'\\]*)*'", "''", line)
+        return line.split('//')[0].strip()
+
+    def clean_doc(self, lines: List[str]) -> str:
+        if not lines: return ""
+        cleaned = []
+        for l in lines:
+            c = l.strip()
+            if c.startswith("/**"): c = c[3:].strip()
+            elif c.startswith("/*"): c = c[2:].strip()
+            if c.endswith("*/"): c = c[:-2].strip()
+            if c.startswith("*"):
+                c = c[1:]
+                if c.startswith(" "): c = c[1:]
+            if c: cleaned.append(c)
+        return "\n".join(cleaned)
+
+    def extract(self, path: str, content: str) -> Tuple[List[Tuple], List[Tuple]]:
+        raise NotImplementedError
+
+
+class PythonParser(BaseParser):
+    def extract(self, path: str, content: str) -> Tuple[List[Tuple], List[Tuple]]:
+        symbols, relations = [], []
         try:
             import ast
             tree = ast.parse(content)
-            
-            # Helper for recursive traversal to track parents
-            def _visit_ast(node, parent=""):
+            lines = content.splitlines()
+
+            def _visit(node, parent="", current_symbol=None):
                 for child in ast.iter_child_nodes(node):
                     if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                         name = child.name
-                        kind = "class" if isinstance(child, ast.ClassDef) else "function"
-                        if parent and isinstance(node, ast.ClassDef):
-                             kind = "method"
-                        
-                        start = child.lineno
-                        end = getattr(child, "end_lineno", start) # py3.8+
-                        
-                        # Extract first line content safely
-                        line_content = lines[start-1].strip() if 0 <= start-1 < len(lines) else name
-                        
-                        symbols.append({
-                            "path": path,
-                            "name": name,
-                            "kind": kind,
-                            "line": start,
-                            "end_line": end,
-                            "content": line_content,
-                            "parent_name": parent
-                        })
-                        
-                        # Recurse
-                        new_parent = name if isinstance(child, ast.ClassDef) else parent
-                        _visit_ast(child, new_parent)
-                    else:
-                        _visit_ast(child, parent)
+                        kind = "class" if isinstance(child, ast.ClassDef) else ("method" if parent else "function")
+                        start, end = child.lineno, getattr(child, "end_lineno", child.lineno)
+                        doc = self.clean_doc((ast.get_docstring(child) or "").splitlines())
+                        meta = {"annotations": []}
+                        if hasattr(child, "decorator_list"):
+                            for dec in child.decorator_list:
+                                try:
+                                    attr = ""
+                                    if isinstance(dec, ast.Call):
+                                        if isinstance(dec.func, ast.Attribute): attr = dec.func.attr
+                                        elif isinstance(dec.func, ast.Name): attr = dec.func.id
+                                        if attr in ("get", "post", "put", "delete", "patch", "route") and dec.args:
+                                            val = dec.args[0].value if hasattr(dec.args[0], "value") else getattr(dec.args[0], "s", "")
+                                            meta["http_path"] = val
+                                            meta["annotations"].append(attr.upper())
+                                    elif isinstance(dec, ast.Name): attr = dec.id
+                                    if attr: meta["annotations"].append(attr.upper())
+                                except: pass
+                        symbols.append((path, name, kind, start, end, lines[start-1].strip() if 0 <= start-1 < len(lines) else "", parent, json.dumps(meta), doc))
+                        _visit(child, name, name)
+                    elif isinstance(child, ast.Call) and current_symbol:
+                        target = ""
+                        if isinstance(child.func, ast.Name): target = child.func.id
+                        elif isinstance(child.func, ast.Attribute): target = child.func.attr
+                        if target: relations.append((path, current_symbol, "", target, "calls", child.lineno))
+                        _visit(child, parent, current_symbol)
+                    else: _visit(child, parent, current_symbol)
+            _visit(tree)
+        except: pass
+        return symbols, relations
 
-            _visit_ast(tree)
-            
-            # Convert to result format immediately if successful
-            result_tuples = []
-            for s in symbols:
-                result_tuples.append((
-                    s["path"], s["name"], s["kind"], s["line"], s["end_line"], s["content"], s.get("parent_name", "")
-                ))
-            return result_tuples
-            
-        except (SyntaxError, Exception):
-            # Fallback to Regex if AST fails (syntax error or import error)
-            symbols = [] # Reset for fallback
-            pass
 
-        # === Legacy Regex Fallback (kept for resilience) ===
-        # Regex for Python definitions
-        pat = re.compile(r"^(\s*)(class|def|async\s+def)\s+([a-zA-Z_][a-zA-Z0-9_]*)")
-        
-        stack = [] # (indent_level, symbol_info_dict)
-        
+class GenericRegexParser(BaseParser):
+    def __init__(self, config: Dict[str, Any], ext: str):
+        self.ext = ext.lower()
+        self.re_class = config["re_class"]
+        self.re_method = config["re_method"]
+        self.method_kind = config.get("method_kind", "method")
+
+        # Inheritance matching:
+        self.re_extends = _safe_compile(r"\b(?:extends|:)\s+([a-zA-Z0-9_<>,.[\\][\s]+?)(?=\s+\bimplements\b|[\s{{]|$)", fallback=r"\bextends\s+([a-zA-Z0-9_<>,.[\\][\s]+)")
+        self.re_implements = _safe_compile(r"\bimplements\s+([a-zA-Z0-9_<>,.[\\][\s]+?)(?=\s*{{|$)", fallback=r"\bimplements\s+([a-zA-Z0-9_<>,.[\\][\s]+)")
+        self.re_ext_start = _safe_compile(r"^\s*(?:extends|:)\s+([a-zA-Z0-9_<>,.[\\][\s]+?)(?=\s+\bimplements\b|[\s{{]|$)", fallback=r"^\s*extends\s+([a-zA-Z0-9_<>,.[\\][\s]+)")
+        self.re_impl_start = _safe_compile(r"^\s*implements\s+([a-zA-Z0-9_<>,.[\\][\s]+?)(?=\s*{{|$)", fallback=r"^\s*implements\s+([a-zA-Z0-9_<>,.[\\][\s]+)")
+        self.re_ext_partial = _safe_compile(r"\b(?:extends|:)\s+(.+)$")
+        self.re_impl_partial = _safe_compile(r"\bimplements\s+(.+)$")
+        self.re_inherit_cont = _safe_compile(r"^\s*([a-zA-Z0-9_<>,.[\\][\s]+)$")
+        self.re_anno = _safe_compile(r"@([a-zA-Z0-9_]+)(?:\s*\(\s*(?:(?:value|path)\s*=\s*)?\"([^\"]+)\"\s*\))?")
+        self.kind_norm = NORMALIZE_KIND_BY_EXT.get(self.ext, {})
+
+    @staticmethod
+    def _split_inheritance_list(s: str) -> List[str]:
+        s = re.split(r'[{{;]', s)[0]
+        parts = [p.strip() for p in s.split(",")]
+        out = []
+        for p in parts:
+            p = re.sub(r"\s+", " ", p).strip()
+            if p: out.append(p)
+        return out
+
+    def extract(self, path: str, content: str) -> Tuple[List[Tuple], List[Tuple]]:
+        symbols, relations = [], []
+        lines = content.splitlines()
+        active_scopes: List[Tuple[int, Dict[str, Any]]] = []
+        cur_bal, in_doc = 0, False
+        pending_doc, pending_annos, last_path = [], [], None
+        pending_type_decl, pending_inheritance_mode = None, None
+        pending_inheritance_extends, pending_inheritance_impls = [], []
+
+        def flush_inheritance(line_no, clean_line):
+            nonlocal pending_type_decl, pending_inheritance_mode, pending_inheritance_extends, pending_inheritance_impls
+            if not pending_type_decl or "{{" not in clean_line: return
+            name, decl_line = pending_type_decl
+            for b in pending_inheritance_extends: relations.append((path, name, "", b, "extends", decl_line))
+            for b in pending_inheritance_impls: relations.append((path, name, "", b, "implements", decl_line))
+            pending_type_decl = None
+            pending_inheritance_mode = None
+            pending_inheritance_extends, pending_inheritance_impls = [], []
+
         for i, line in enumerate(lines):
-            stripped = line.strip()
-            if not stripped: continue
-            
-            indent = len(line) - len(line.lstrip())
-            
-            while stack and indent <= stack[-1][0]:
-                lvl, info = stack.pop()
-                info["end_line"] = i
-                symbols.append(info)
-            
-            match = pat.match(line)
-            if match:
-                s_indent = match.group(1)
-                s_type = match.group(2).replace("async ", "")
-                s_name = match.group(3)
-                indent_len = len(s_indent)
-                
-                parent = stack[-1][1]["name"] if stack else ""
-                
-                info = {
-                    "path": path,
-                    "name": s_name,
-                    "kind": "method" if parent and s_type == "def" else s_type,
-                    "line": i + 1,
-                    "end_line": i + 1,
-                    "content": stripped,
-                    "parent_name": parent
-                }
-                stack.append((indent_len, info))
-                
-        while stack:
-            lvl, info = stack.pop()
-            info["end_line"] = total_lines
-            symbols.append(info)
-    elif ext in (".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".cpp", ".c"):
-        # Simplified parser: track curly braces
-        patterns = []
-        if ext == ".go":
-            patterns.append((re.compile(r"func\s+([a-zA-Z0-9_]+)\("), "function"))
-            patterns.append((re.compile(r"type\s+([a-zA-Z0-9_]+)\s+struct"), "struct"))
-            patterns.append((re.compile(r"type\s+([a-zA-Z0-9_]+)\s+interface"), "interface"))
-        elif ext == ".rs":
-            patterns.append((re.compile(r"fn\s+([a-zA-Z0-9_]+)"), "function"))
-            patterns.append((re.compile(r"struct\s+([a-zA-Z0-9_]+)"), "struct"))
-            patterns.append((re.compile(r"enum\s+([a-zA-Z0-9_]+)"), "enum"))
-            patterns.append((re.compile(r"impl\s+([a-zA-Z0-9_]+)"), "impl"))
-        else:
-            # JS/TS/Java
-            patterns.append((re.compile(r"class\s+([a-zA-Z0-9_]+)"), "class"))
-            patterns.append((re.compile(r"interface\s+([a-zA-Z0-9_]+)"), "interface"))
-            # Functions in JS/TS often 'function foo()' or 'const foo = () =>'
-            patterns.append((re.compile(r"function\s+([a-zA-Z0-9_]+)"), "function"))
-        
-        active_symbols = [] # (brace_balance_at_start, info)
-        current_balance = 0
-        
-        for i, line in enumerate(lines):
-            # Update brace balance (naive)
-            open_c = line.count('{')
-            close_c = line.count('}')
-            
-            # Check for new symbols
-            for pat, kind in patterns:
-                m = pat.search(line)
-                if m:
-                    name = m.group(1)
-                    info = {
-                        "path": path,
-                        "name": name,
-                        "kind": kind,
-                        "line": i + 1,
-                        "end_line": i + 1,
-                        "content": line.strip(),
-                        "parent_name": "" 
-                    }
-                    # It starts at current_balance
-                    active_symbols.append([current_balance, info])
-                    break
-            
-            current_balance += (open_c - close_c)
-            
-            # Check for closed symbols
-            still_active = []
-            for start_bal, info in active_symbols:
-                # If balance drops back to start blocks (or below), it's closed
-                if current_balance <= start_bal and (open_c > 0 or close_c > 0):
-                    info["end_line"] = i + 1
-                    symbols.append(info)
-                else:
-                    still_active.append([start_bal, info])
-            active_symbols = still_active
+            line_no = i + 1
+            raw = line.strip()
+            if raw.startswith("/**"):
+                in_doc, pending_doc = True, [raw[3:].strip().rstrip("*/")]
+                if raw.endswith("*/"): in_doc = False
+                continue
+            if in_doc:
+                if raw.endswith("*/"): in_doc, pending_doc = False, pending_doc + [raw[:-2].strip()]
+                else: pending_doc.append(raw)
+                continue
 
-        # Close remainder
-        for _, info in active_symbols:
-            info["end_line"] = total_lines
-            symbols.append(info)
+            clean = self.sanitize(line)
+            if not clean: continue
 
-    # Output formatting
-    result_tuples = []
-    for s in symbols:
-        result_tuples.append((
-            s["path"], s["name"], s["kind"], s["line"], s["end_line"], s["content"], s.get("parent_name", "")
-        ))
-    return result_tuples
+            m_anno = self.re_anno.search(line)
+            if m_anno:
+                pending_annos.append(m_anno.group(1).upper())
+                if m_anno.group(2): last_path = m_anno.group(2)
+                if clean.startswith("@"): continue
+            elif clean.startswith("@"):
+                m = re.search(r"@([a-zA-Z0-9_]+)", clean)
+                if m: pending_annos.append(m.group(1).upper())
+                continue
+
+            if pending_type_decl:
+                m_ext = self.re_ext_start.search(clean) or self.re_extends.search(clean)
+                m_impl = self.re_impl_start.search(clean) or self.re_implements.search(clean)
+                if m_ext:
+                    pending_inheritance_mode = "extends"
+                    pending_inheritance_extends.extend(self._split_inheritance_list(m_ext.group(1)))
+                elif m_impl:
+                    pending_inheritance_mode = "implements"
+                    pending_inheritance_impls.extend(self._split_inheritance_list(m_impl.group(1)))
+                elif pending_inheritance_mode:
+                    m_cont = self.re_inherit_cont.match(clean)
+                    if m_cont:
+                        chunk = m_cont.group(1)
+                        if pending_inheritance_mode == "extends": pending_inheritance_extends.extend(self._split_inheritance_list(chunk))
+                        else: pending_inheritance_impls.extend(self._split_inheritance_list(chunk))
+                flush_inheritance(line_no, clean)
+
+            matches: List[Tuple[str, str, int]] = []
+            for m in self.re_class.finditer(clean):
+                if clean[:m.start()].strip().endswith("new"): continue
+                name, kind_raw = m.group(2), m.group(1).lower().strip()
+                kind = self.kind_norm.get(kind_raw, kind_raw)
+                if kind == "record": kind = "class"
+                matches.append((name, kind, m.start()))
+                pending_type_decl = (name, line_no)
+                pending_inheritance_mode, pending_inheritance_extends, pending_inheritance_impls = None, [], []
+                m_ext_inline = self.re_extends.search(clean, m.end()) or (self.re_ext_partial.search(clean[m.end():]) if clean.rstrip().endswith(("extends", ":")) else None)
+                if m_ext_inline:
+                    pending_inheritance_mode = "extends"
+                    pending_inheritance_extends.extend(self._split_inheritance_list(m_ext_inline.group(1) if m_ext_inline.groups() else ""))
+                m_impl_inline = self.re_implements.search(clean, m.end()) or (self.re_impl_partial.search(clean[m.end():]) if clean.rstrip().endswith("implements") else None)
+                if m_impl_inline:
+                    pending_inheritance_mode = "implements"
+                    pending_inheritance_impls.extend(self._split_inheritance_list(m_impl_inline.group(1) if m_impl_inline.groups() else ""))
+                if clean.rstrip().endswith(("extends", ":")): pending_inheritance_mode = "extends"
+                elif clean.rstrip().endswith("implements"): pending_inheritance_mode = "implements"
+                flush_inheritance(line_no, clean)
+
+            for m in self.re_method.finditer(clean):
+                name = m.group(1)
+                if not any(name == x[0] for x in matches): matches.append((name, self.method_kind, m.start()))
+
+            for name, kind, _ in sorted(matches, key=lambda x: x[2]):
+                meta = {"annotations": pending_annos.copy()}
+                if last_path: meta["http_path"] = last_path
+                parent = active_scopes[-1][1]["name"] if active_scopes else ""
+                info = {"path": path, "name": name, "kind": kind, "line": line_no, "meta": json.dumps(meta), "doc": self.clean_doc(pending_doc), "raw": line.strip(), "parent": parent}
+                active_scopes.append((cur_bal, info))
+                pending_annos, last_path, pending_doc = [], None, []
+
+            if not matches and clean and not clean.startswith("@") and not in_doc:
+                if "{{" not in clean and "}}" not in clean: pending_doc = []
+
+            op, cl = clean.count("{ "), clean.count(" }")
+            cur_bal += (op - cl)
+            if op > 0 or cl > 0:
+                still_active = []
+                for bal, info in active_scopes:
+                    if cur_bal <= bal: symbols.append((info["path"], info["name"], info["kind"], info["line"], line_no, info["raw"], info["parent"], info["meta"], info["doc"]))
+                    else: still_active.append((bal, info))
+                active_scopes = still_active
+
+        last_line = len(lines)
+        for _, info in active_scopes: symbols.append((info["path"], info["name"], info["kind"], info["line"], last_line, info["raw"], info["parent"], info["meta"], info["doc"]))
+        if pending_type_decl:
+            name, decl_line = pending_type_decl
+            for b in pending_inheritance_extends: relations.append((path, name, "", b, "extends", decl_line))
+            for b in pending_inheritance_impls: relations.append((path, name, "", b, "implements", decl_line))
+        return symbols, relations
+
+
+class ParserFactory:
+    _parsers: Dict[str, BaseParser] = {}
+
+    @classmethod
+    def get_parser(cls, ext: str) -> Optional[BaseParser]:
+        ext = (ext or "").lower()
+        if ext == ".py": return PythonParser()
+        configs = {
+            ".java": {"re_class": _safe_compile(r"\b(class|interface|enum|record)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_<>,.[\\][\s]+?\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
+            ".kt": {"re_class": _safe_compile(r"\b(class|interface|enum|object|data\s+class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfun\s+([a-zA-Z0-9_]+)\b\s*\(")},
+            ".go": {"re_class": _safe_compile(r"\b(type|struct|interface)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfunc\s+(?:[^)]+\)\s+)?([a-zA-Z0-9_]+)\b\s*\(")},
+            ".cpp": {"re_class": _safe_compile(r"\b(class|struct|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_:<>]+\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
+            ".h": {"re_class": _safe_compile(r"\b(class|struct|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_:<>]+\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
+            ".js": {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")},
+            ".jsx": {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")},
+            ".ts": {"re_class": _safe_compile(r"\b(class|interface|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")},
+            ".tsx": {"re_class": _safe_compile(r"\b(class|interface|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")}
+        }
+        if ext in configs:
+            key = f"generic:{ext}"
+            if key not in cls._parsers: cls._parsers[key] = GenericRegexParser(configs[ext], ext)
+            return cls._parsers[key]
+        return None
+
+
+class _SymbolExtraction:
+    def __init__(self, symbols: List[Tuple], relations: List[Tuple]):
+        self.symbols = symbols
+        self.relations = relations
+
+    def __iter__(self):
+        return iter((self.symbols, self.relations))
+
+    def __len__(self):
+        return len(self.symbols)
+
+    def __getitem__(self, item):
+        return self.symbols[item]
+
+    def __eq__(self, other):
+        if isinstance(other, _SymbolExtraction):
+            return self.symbols == other.symbols and self.relations == other.relations
+        return self.symbols == other
+
+
+def _extract_symbols(path: str, content: str) -> _SymbolExtraction:
+    parser = ParserFactory.get_parser(Path(path).suffix.lower())
+    if parser:
+        symbols, relations = parser.extract(path, content)
+        return _SymbolExtraction(symbols, relations)
+    return _SymbolExtraction([], [])
+
+
+def _extract_symbols_with_relations(path: str, content: str) -> Tuple[List[Tuple], List[Tuple]]:
+    result = _extract_symbols(path, content)
+    return result.symbols, result.relations
 
 
 class Indexer:
     def __init__(self, cfg: Config, db: LocalSearchDB, logger=None):
-        self.cfg = cfg
-        self.db = db
-        self.logger = logger
+        self.cfg, self.db, self.logger = cfg, db, logger
         self.status = IndexStatus()
-        self._stop = threading.Event()
-        self._rescan = threading.Event()
-        self._root_repo_name = "__root__"
-        # v2.6.0: Thread pool for parallel processing (Tuned for memory usage v2.8.2)
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(12, (os.cpu_count() or 4) * 2))
+        self._stop, self._rescan = threading.Event(), threading.Event()
+        max_workers = getattr(cfg, "max_workers", 4) or 4
+        try:
+            max_workers = int(max_workers)
+        except Exception:
+            max_workers = 4
+        if max_workers <= 0:
+            max_workers = 4
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         self.watcher = None
-        self.queue = DedupQueue() if DedupQueue else None
-        self._worker_thread = None
 
-    def stop(self) -> None:
-        self._stop.set()
-        self._rescan.set()
+    def stop(self):
+        self._stop.set(); self._rescan.set()
         if self.watcher:
-            self.watcher.stop()
-        if self._worker_thread:
-            self._worker_thread.join(timeout=1.0)
-        self._executor.shutdown(wait=False)
+            try: self.watcher.stop()
+            except: pass
+        try: self._executor.shutdown(wait=False)
+        except: pass
 
-    def request_rescan(self) -> None:
-        """Trigger an immediate scan outside the normal interval."""
-        self._rescan.set()
+    def request_rescan(self): self._rescan.set()
 
-    def run_forever(self) -> None:
-        if self.queue:
-            self._worker_thread = threading.Thread(target=self._ingestion_loop, daemon=True)
-            self._worker_thread.start()
-
-        # Start Watcher if available (v2.7.2)
-        if FileWatcher:
-             try:
-                 root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-                 self.watcher = FileWatcher([str(root)], self._process_watcher_event, logger=self.logger)
-                 self.watcher.start()
-             except Exception as e:
-                 if self.logger:
-                    self.logger.log_error(f"Failed to start file watcher: {e}")
-
-        # first scan ASAP
-        self._scan_once()
-        self.status.index_ready = True
-
+    def run_forever(self):
+        self._scan_once(); self.status.index_ready = True
         while not self._stop.is_set():
-            # Wait for either a rescan request or the interval.
-            self._rescan.wait(timeout=max(1, int(self.cfg.scan_interval_seconds)))
+            timeout = max(1, int(getattr(self.cfg, "scan_interval_seconds", 30)))
+            self._rescan.wait(timeout=timeout)
             self._rescan.clear()
-            if self._stop.is_set():
-                break
+            if self._stop.is_set(): break
             self._scan_once()
 
     def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float) -> Optional[dict]:
-        """Task to be run in thread pool. Returns dict of data to upsert or None."""
         try:
             rel = str(file_path.relative_to(root))
-            # Repo = 1depth subdirectory; root-level files use a dedicated repo name
-            if os.sep not in rel:
-                repo = self._root_repo_name
-            else:
-                repo = rel.split(os.sep, 1)[0]
-            if not repo:
-                return None
-
-            # Smart Delta Scan: Check mtime & size
+            repo = rel.split(os.sep, 1)[0] if os.sep in rel else "__root__"
             prev = self.db.get_file_meta(rel)
-            is_changed = True
-            if prev is not None:
-                prev_mtime, prev_size = prev
-                # Meta match?
-                if int(st.st_mtime) == int(prev_mtime) and int(st.st_size) == int(prev_size):
-                    # AI Safety Net: If modified within safety window, force re-index
-                    if now - st.st_mtime > AI_SAFETY_NET_SECONDS:
-                        is_changed = False
-            
-            if not is_changed:
-                return {"type": "unchanged", "rel": rel}
-
-            try:
-                text = file_path.read_text(encoding="utf-8", errors="ignore")
-            except Exception as e:
-                # v2.5.3: If read fails but file exists, still mark as seen to prevent immediate deletion
-                if self.logger:
-                    self.logger.log_info(f"Read failed for {file_path}, deferring deletion: {e}")
-                return {"type": "unchanged", "rel": rel}
-
+            if prev and int(st.st_mtime) == int(prev[0]) and int(st.st_size) == int(prev[1]):
+                if now - st.st_mtime > AI_SAFETY_NET_SECONDS: return {"type": "unchanged", "rel": rel}
+            text = file_path.read_text(encoding="utf-8", errors="ignore")
             if getattr(self.cfg, "redact_enabled", True):
                 text = _redact(text)
+            symbols, relations = _extract_symbols_with_relations(rel, text)
+            return {"type": "changed", "rel": rel, "repo": repo, "mtime": int(st.st_mtime), "size": int(st.st_size), "content": text, "scan_ts": scan_ts, "symbols": symbols, "relations": relations}
+        except Exception: self.status.errors += 1
 
-            # Process meta files (v2.4.3) - Side effect in main thread? 
-            # Ideally DB writes should be main thread or locked. 
-            # We return meta info and let main thread write it.
-            # But process_meta_file writes to DB. Let's do it here, DB is thread-safe(ish) with locks, 
-            # but we prefer batching. 
-            # Let's just return the data.
-            meta_data = None
-            fn = file_path.name.lower()
-            if fn in ("service.json", "repo.yaml", "package.json"):
-                meta_data = {"path": str(file_path), "repo": repo}
+    def _process_meta_file(self, path: Path, repo: str) -> None:
+        if path.name != "package.json":
+            return
+        try:
+            raw = path.read_text(encoding="utf-8", errors="ignore")
+            data = json.loads(raw)
+        except Exception:
+            return
 
-            symbols = _extract_symbols(rel, text)
-
-            return {
-                "type": "changed",
-                "rel": rel,
-                "repo": repo,
-                "mtime": int(st.st_mtime),
-                "size": int(st.st_size),
-                "content": text,
-                "scan_ts": scan_ts,
-                "meta_data": meta_data,
-                "symbols": symbols
-            }
-
-        except Exception as e:
-            if self.logger:
-                self.logger.log_error(f"Error indexing file {file_path}: {e}")
-            return None
-
-    def _process_meta_file(self, file_path: Path, repo: str) -> None:
-        """Extract metadata from config files (v2.4.3)."""
-        tags = []
-        domain = ""
         description = ""
-        
-        try:
-            name = file_path.name.lower()
-            if name == "service.json":
-                data = json.loads(file_path.read_text(encoding="utf-8", errors="ignore"))
-                tags = data.get("tags", [])
-                domain = data.get("domain", "")
-                description = data.get("description", "")
-            elif name == "repo.yaml":
-                # Basic line parsing for yaml to avoid dependency
-                text = file_path.read_text(encoding="utf-8", errors="ignore")
-                for line in text.splitlines():
-                    if ":" in line:
-                        k, v = line.split(":", 1)
-                        k, v = k.strip().lower(), v.strip().strip('"').strip("'")
-                        if k == "domain": domain = v
-                        elif k == "description": description = v
-                        elif k == "tags":
-                            tags = [t.strip() for t in v.strip("[]").split(",")]
-            elif name == "package.json":
-                data = json.loads(file_path.read_text(encoding="utf-8", errors="ignore"))
-                description = data.get("description", "")
-                if "keywords" in data:
-                    tags = data.get("keywords", [])
+        tags: list[str] = []
+        if isinstance(data, dict):
+            description = str(data.get("description", "") or "")
+            keywords = data.get("keywords", [])
+            if isinstance(keywords, list):
+                tags = [str(t) for t in keywords if t]
+            elif isinstance(keywords, str):
+                tags = [k.strip() for k in keywords.split(",") if k.strip()]
 
-            if tags or domain or description:
-                tag_str = ",".join(tags) if isinstance(tags, list) else str(tags)
-                self.db.upsert_repo_meta(repo, tags=tag_str, domain=domain, description=description)
-        except Exception as e:
-            # Log parsing errors at debug level for troubleshooting
-            if self.logger:
-                self.logger.log_info(f"Failed to parse meta file {file_path.name}: {e}")
+        if not description and not tags:
+            return
 
-    def _iter_files(self, root: Path) -> Iterable[Path]:
-        include_ext = set((self.cfg.include_ext or []))
-        include_files = set((self.cfg.include_files or []))
-        exclude_dirs = set((self.cfg.exclude_dirs or []))
-        exclude_globs = list((getattr(self.cfg, "exclude_globs", []) or []))
+        tags_str = ",".join(tags)
+        self.db.upsert_repo_meta(repo, tags=tags_str, description=description)
 
+    def _iter_files(self, root: Path) -> List[Tuple[Path, os.stat_result]]:
+        include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
+        include_all_ext = not include_ext
+        include_files = set(getattr(self.cfg, "include_files", []))
+        include_files_abs = {str(Path(p).expanduser().resolve()) for p in include_files if os.path.isabs(p)}
+        include_files_rel = {p for p in include_files if not os.path.isabs(p)}
+        exclude_dirs = set(getattr(self.cfg, "exclude_dirs", []))
+        exclude_globs = list(getattr(self.cfg, "exclude_globs", []))
+        max_file_bytes = int(getattr(self.cfg, "max_file_bytes", 0)) or None
+
+        file_entries: List[Tuple[Path, os.stat_result]] = []
         for dirpath, dirnames, filenames in os.walk(root):
-            # prune excluded dirs (in-place)
-            dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
-
-            for fn in filenames:
-                # v2.5.0: Explicitly exclude root-level CLI entry points from index
-                # to prevent __root__ from appearing as a repo candidate.
-                if fn in ("AGENTS.md", "GEMINI.md", "README.md", "install.sh", "uninstall.sh"):
-                    # Only skip if we are strictly at the root
-                    if os.path.samefile(dirpath, root):
-                         continue
-
-                # Fast path filename-only excludes
-                if exclude_globs and any(fnmatch.fnmatch(fn, g) for g in exclude_globs):
-                    continue
-
-                p = Path(dirpath) / fn
-                rel = str(p.relative_to(root))
-                if exclude_globs and any(fnmatch.fnmatch(rel, g) for g in exclude_globs):
-                    continue
-
-                if include_files and fn in include_files:
-                    yield p
-                    continue
-
-                if include_ext:
-                    suf = p.suffix.lower()
-                    if suf in include_ext:
-                        yield p
-
-    def _scan_once(self) -> None:
-        root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-        
-        if not root.exists() or not root.is_dir():
-            self.status.errors += 1
-            if self.logger:
-                self.logger.log_error(f"Root path does not exist: {root}")
-            return
-
-        # 1. Collect all candidate files with stat info for prioritization
-        file_entries = []
-        for file_path in self._iter_files(root):
-            try:
-                # v2.5.4: Security - Skip symlinks pointing outside the workspace
-                if file_path.is_symlink():
-                    try:
-                        resolved = file_path.resolve()
-                        if not resolved.is_relative_to(root):
-                            if self.logger:
-                                self.logger.log_info(f"Skipping external symlink: {file_path}")
-                            continue
-                    except (OSError, RuntimeError, ValueError):
-                        # ValueError can be raised by is_relative_to if paths are on different drives
+            if dirnames:
+                kept = []
+                for d in dirnames:
+                    if d in exclude_dirs:
                         continue
-
-                st = file_path.stat()
-                if st.st_size > self.cfg.max_file_bytes:
+                    rel_dir = str((Path(dirpath) / d).resolve().relative_to(root))
+                    if any(fnmatch.fnmatch(rel_dir, pat) or fnmatch.fnmatch(d, pat) for pat in exclude_dirs):
+                        continue
+                    kept.append(d)
+                dirnames[:] = kept
+            for fn in filenames:
+                p = Path(dirpath) / fn
+                try:
+                    rel = str(p.resolve().relative_to(root))
+                except Exception:
                     continue
-                file_entries.append((file_path, st))
-            except Exception as e:
-                if self.logger:
-                    self.logger.log_error(f"Error accessing file {file_path}: {e}")
-                continue
-        
-        # 2. Prioritize: Recent files first + Core files (v2.5.0)
-        now = time.time()
-        def sort_key(entry):
-            path, st = entry
-            rel_lower = str(path.relative_to(root)).lower()
-            score = st.st_mtime # Base: mtime
-            # Priority Boost: Core metadata files
-            if any(p in rel_lower for p in ["agents.md", "gemini.md", "service.json", "repo.yaml"]):
-                score += CORE_FILE_BOOST
-            return score
+                if any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(fn, pat) for pat in exclude_globs):
+                    continue
+                is_included = (rel in include_files_rel) or (str(p.resolve()) in include_files_abs)
+                if not is_included:
+                    if not include_all_ext and p.suffix.lower() not in include_ext:
+                        continue
+                try:
+                    st = p.stat()
+                except Exception:
+                    self.status.errors += 1
+                    continue
+                if max_file_bytes is not None and st.st_size > max_file_bytes:
+                    continue
+                file_entries.append((p, st))
+        return file_entries
 
-        file_entries.sort(key=sort_key, reverse=True)
-
-        # 3. Process files with ThreadPool
-        scanned = 0
-        indexed = 0
-        batch: List[Tuple[str, str, int, int, str, int]] = []
-        batch: List[Tuple[str, str, int, int, str, int]] = []
-        symbols_batch: List[Tuple[str, str, str, int, int, str, str]] = []
-        unchanged_batch: List[str] = []
-        unchanged_batch: List[str] = []
-        batch_size = max(50, int(getattr(self.cfg, "commit_batch_size", 500)))
-        scan_ts = int(time.time())
-
-        futures = []
-        for file_path, st in file_entries:
-            futures.append(self._executor.submit(self._process_file_task, root, file_path, st, scan_ts, now))
-        
-        # Process results as they complete
+    def _scan_once(self):
+        root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
+        if not root.exists(): return
+        file_entries = self._iter_files(root)
+        now, scan_ts = time.time(), int(time.time())
+        self.status.last_scan_ts, self.status.scanned_files = now, len(file_entries)
+        batch_files, batch_syms, batch_rels, unchanged = [], [], [], []
+        futures = [self._executor.submit(self._process_file_task, root, f, s, scan_ts, now) for f, s in file_entries]
         for future in concurrent.futures.as_completed(futures):
-            scanned += 1
-            result = future.result()
-            if result is None:
-                self.status.errors += 1
+            try: res = future.result()
+            except: self.status.errors += 1; continue
+            if not res: continue
+            if res["type"] == "unchanged":
+                unchanged.append(res["rel"])
+                if len(unchanged) >= 100: self.db.update_last_seen(unchanged, scan_ts); unchanged.clear()
                 continue
-            
-            if result["type"] == "unchanged":
-                unchanged_batch.append(result["rel"])
-                if len(unchanged_batch) >= batch_size:
-                    self.db.update_last_seen(unchanged_batch, scan_ts)
-                    unchanged_batch.clear()
-            
-            elif result["type"] == "changed":
-                # Handle meta files if any
-                if result.get("meta_data"):
-                    # We still do this synchronously per file, it's rare
-                    md = result["meta_data"]
-                    try:
-                        self._process_meta_file(Path(md["path"]), md["repo"])
-                    except Exception:
-                        pass
+            batch_files.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
+            batch_syms.extend(res["symbols"]); batch_rels.extend(res["relations"])
+            if len(batch_files) >= 50:
+                self.db.upsert_files(batch_files); self.db.upsert_symbols(batch_syms); self.db.upsert_relations(batch_rels)
+                self.status.indexed_files += len(batch_files)
+                batch_files, batch_syms, batch_rels = [], [], []
+        if batch_files:
+            self.db.upsert_files(batch_files); self.db.upsert_symbols(batch_syms); self.db.upsert_relations(batch_rels)
+            self.status.indexed_files += len(batch_files)
+        if unchanged: self.db.update_last_seen(unchanged, scan_ts)
+        self.db.delete_unseen_files(scan_ts)
 
-                batch.append((
-                    result["rel"], 
-                    result["repo"], 
-                    result["mtime"], 
-                    result["size"], 
-                    result["content"], 
-                    result["scan_ts"]
-                ))
-                
-                if result.get("symbols"):
-                    symbols_batch.extend(result["symbols"])
-
-                if len(batch) >= batch_size:
-                    self.db.upsert_files(batch)
-                    # Upsert symbols too
-                    if symbols_batch:
-                        self.db.upsert_symbols(symbols_batch)
-                        symbols_batch.clear()
-                        
-                    indexed += len(batch)
-                    batch.clear()
-        
-        # Flush remainders
-        if batch:
-            try:
-                self.db.upsert_files(batch)
-                indexed += len(batch)
-            except Exception as e:
-                if self.logger:
-                    self.logger.log_error(f"Error flushing batch: {e}")
-        
-        if symbols_batch:
-            try:
-                self.db.upsert_symbols(symbols_batch)
-            except Exception as e:
-                pass # Non-critical
-
-        if unchanged_batch:
-            try:
-                self.db.update_last_seen(unchanged_batch, scan_ts)
-            except Exception as e:
-                 if self.logger:
-                    self.logger.log_error(f"Error updating unchanged files: {e}")
-
-        # 4. Handle Deletions (v2.5.3: Optimized with last_seen)
+    def _process_watcher_event(self, path: str):
         try:
-            count = self.db.delete_unseen_files(scan_ts)
-            if count > 0 and self.logger:
-                self.logger.log_info(f"Removed {count} deleted files from index")
-        except Exception as e:
-            if self.logger:
-                self.logger.log_error(f"Error checking for deleted files: {e}")
-
-
-        self.db.clear_stats_cache()
-        self.status.last_scan_ts = time.time()
-        self.status.scanned_files = scanned
-        self.status.indexed_files = indexed
-
-    def _process_watcher_event(self, path: str) -> None:
-        """Handle real-time file change event (v2.7.2)."""
-        try:
-            p = Path(path).resolve()
-            # Resolve root every time or use cached? cached in run_forever but here we are in callback.
-            # self.cfg should be valid.
-            root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-            
-            try:
-                if not p.is_relative_to(root):
-                    return
-            except ValueError:
-                return # Different drive or invalid
-                
+            p, root = Path(path).resolve(), Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
             rel = str(p.relative_to(root))
-
-            # Case 1: Deletion
-            if not p.exists():
-                self.db.delete_file(rel)
-                if self.logger:
-                    self.logger.log_info(f"Watcher detected deletion: {rel}")
-                return
-
-            # Case 2: Modification
-            # Check excludes
-            exclude_globs = list((getattr(self.cfg, "exclude_globs", []) or []))
-            exclude_dirs = set((self.cfg.exclude_dirs or []))
-            
-            # Check path parts for excluded dirs
-            # Note: rel.split(os.sep) might be safer
-            for part in rel.split(os.sep):
-                if part in exclude_dirs:
-                    return
-
-            if exclude_globs:
-                if any(fnmatch.fnmatch(p.name, g) for g in exclude_globs):
-                    return
-                if any(fnmatch.fnmatch(rel, g) for g in exclude_globs):
-                    return
-
-            try:
-                st = p.stat()
-            except FileNotFoundError:
-                return 
-
-            if st.st_size > self.cfg.max_file_bytes:
-                return
-
-            # Async Enqueue (v2.8.0)
-            if self.queue:
-                added = self.queue.put(str(p))
-                if added and self.logger:
-                    self.logger.log_info(f"Queued async task: {rel}")
-                return
-
-            # Fallback Sync Processing
-            now = time.time()
-            scan_ts = int(now)
-            
-            # _process_file_task returns dict or None
-            result = self._process_file_task(root, p, st, scan_ts, now)
-            
-            if result and result["type"] == "changed":
-                 batch = [(result["rel"], result["repo"], result["mtime"], result["size"], result["content"], result["scan_ts"])]
-                 self.db.upsert_files(batch)
-                 if result.get("symbols"):
-                    self.db.upsert_symbols(result["symbols"])
-                 
-                 # Update validation stats lightly
-                 if self.logger:
-                     self.logger.log_info(f"Watcher indexed: {rel}")
-                     
-        except Exception as e:
-            if self.logger:
-                self.logger.log_error(f"Watcher process failed for {path}: {e}")
-
-    def _ingestion_loop(self) -> None:
-        """Background worker to consume file events (v2.8.0)."""
-        if not self.queue:
-            return
-            
-        while not self._stop.is_set():
-            items = self.queue.get_batch(max_size=getattr(self.cfg, "commit_batch_size", 100))
-            if not items:
-                continue
-                
-            # Process batch
-            files_to_upsert = []
-            symbols_to_upsert = []
-            
-            futures = []
-            now = time.time()
-            scan_ts = int(now)
-            root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-            
-            for path in items:
-                try:
-                    p = Path(path) # Already resolved or string? Queue stores what we put.
-                    # We will put resolved abs path string or Path obj.
-                    # Let's assume absolute path string.
-                    p = Path(path)
-                    try:
-                        st = p.stat()
-                    except FileNotFoundError:
-                        continue # Deleted meanwhile?
-                        
-                    futures.append(self._executor.submit(self._process_file_task, root, p, st, scan_ts, now))
-                except Exception:
-                    pass
-            
-            for f in concurrent.futures.as_completed(futures):
-                try:
-                    res = f.result()
-                    if res and res["type"] == "changed":
-                        files_to_upsert.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
-                        if res.get("symbols"):
-                            symbols_to_upsert.extend(res["symbols"])
-                except Exception:
-                    pass
-                    
-            if files_to_upsert:
-                count = self.db.upsert_files(files_to_upsert)
-                if self.logger and count > 0:
-                    self.logger.log_info(f"Async indexed {count} files")
-                    
-            if symbols_to_upsert:
-                self.db.upsert_symbols(symbols_to_upsert)
-                
-            # Update stats
-            if files_to_upsert:
-                self.status.indexed_files += len(files_to_upsert)
+            if not p.exists(): self.db.delete_file(rel); return
+            res = self._process_file_task(root, p, p.stat(), int(time.time()), time.time())
+            if res and res["type"] == "changed":
+                self.db.upsert_files([(res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"])])
+                self.db.upsert_symbols(res["symbols"]); self.db.upsert_relations(res["relations"])
+        except Exception: self.status.errors += 1

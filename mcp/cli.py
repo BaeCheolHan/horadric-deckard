@@ -389,7 +389,6 @@ def cmd_init(args):
         # Default config content
         default_cfg = {
             "workspace_root": str(workspace_root),
-            "include_ext": [".py", ".js", ".ts", ".md", ".txt"],
             "exclude_dirs": ["node_modules", ".git", "venv", "__pycache__"],
         }
         with open(cfg_path, "w") as f:

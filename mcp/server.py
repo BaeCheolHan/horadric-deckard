@@ -42,6 +42,11 @@ import mcp.tools.list_files as list_files_tool
 import mcp.tools.read_file as read_file_tool
 import mcp.tools.search_symbols as search_symbols_tool
 import mcp.tools.read_symbol as read_symbol_tool
+import mcp.tools.doctor as doctor_tool
+import mcp.tools.search_api_endpoints as search_api_endpoints_tool
+import mcp.tools.index_file as index_file_tool
+import mcp.tools.get_callers as get_callers_tool
+import mcp.tools.get_implementations as get_implementations_tool
 
 
 class LocalSearchMCPServer:
@@ -362,6 +367,80 @@ class LocalSearchMCPServer:
                         "required": ["path", "name"],
                     },
                 },
+                {
+                    "name": "doctor",
+                    "description": "Run health checks and return structured diagnostics.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "include_network": {"type": "boolean", "default": True},
+                            "include_port": {"type": "boolean", "default": True},
+                            "include_db": {"type": "boolean", "default": True},
+                            "include_disk": {"type": "boolean", "default": True},
+                            "include_daemon": {"type": "boolean", "default": True},
+                            "include_venv": {"type": "boolean", "default": True},
+                            "include_marker": {"type": "boolean", "default": True},
+                            "port": {"type": "integer", "default": 47800},
+                            "min_disk_gb": {"type": "number", "default": 1.0},
+                        },
+                    },
+                },
+                {
+                    "name": "search_api_endpoints",
+                    "description": "Search for API endpoints (Controllers/Methods) by URL path. Useful for Java/Spring/Python apps.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "URL path pattern to search for (e.g., '/api/v1/users')",
+                            }
+                        },
+                        "required": ["path"],
+                    },
+                },
+                {
+                    "name": "index_file",
+                    "description": "Force immediate re-indexing of a specific file. Use this after making changes to ensure index is up to date.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Absolute or relative path to the file to re-index",
+                            }
+                        },
+                        "required": ["path"],
+                    },
+                },
+                {
+                    "name": "get_callers",
+                    "description": "Find symbols that call a specific symbol. Helps in impact analysis.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Name of the symbol to find callers for",
+                            }
+                        },
+                        "required": ["name"],
+                    },
+                },
+                {
+                    "name": "get_implementations",
+                    "description": "Find symbols that implement or extend a specific symbol (interface/class).",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "Name of the symbol (interface/class) to find implementations for",
+                            }
+                        },
+                        "required": ["name"],
+                    },
+                },
             ],
         }
     
@@ -385,6 +464,16 @@ class LocalSearchMCPServer:
             return self._tool_search_symbols(args)
         elif tool_name == "read_symbol":
             return self._tool_read_symbol(args)
+        elif tool_name == "doctor":
+            return self._tool_doctor(args)
+        elif tool_name == "search_api_endpoints":
+            return search_api_endpoints_tool.execute_search_api_endpoints(args, self.db)
+        elif tool_name == "index_file":
+            return index_file_tool.execute_index_file(args, self.indexer)
+        elif tool_name == "get_callers":
+            return get_callers_tool.execute_get_callers(args, self.db)
+        elif tool_name == "get_implementations":
+            return get_implementations_tool.execute_get_implementations(args, self.db)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
     
@@ -409,6 +498,9 @@ class LocalSearchMCPServer:
         
     def _tool_read_symbol(self, args: Dict[str, Any]) -> Dict[str, Any]:
         return read_symbol_tool.execute_read_symbol(args, self.db, self.logger)
+
+    def _tool_doctor(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        return doctor_tool.execute_doctor(args)
     
     def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         method = request.get("method")

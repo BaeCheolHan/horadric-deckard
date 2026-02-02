@@ -43,14 +43,35 @@ def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: Telemet
         }
     
     # Format output
-    output = (
-        f"File: {path}\n"
-        f"Symbol: {block['name']}\n"
-        f"Range: L{block['start_line']} - L{block['end_line']}\n"
-        f"--------------------------------------------------\n"
-        f"{block['content']}\n"
-        f"--------------------------------------------------"
-    )
+    doc = block.get('docstring', '')
+    meta = block.get('metadata', '{}')
+    
+    header = [
+        f"File: {path}",
+        f"Symbol: {block['name']}",
+        f"Range: L{block['start_line']} - L{block['end_line']}"
+    ]
+    
+    try:
+        m = json.loads(meta)
+        if m.get("annotations"):
+            header.append(f"Annotations: {', '.join(m['annotations'])}")
+        if m.get("http_path"):
+            header.append(f"API Endpoint: {m['http_path']}")
+    except: pass
+
+    output_lines = [
+        "\n".join(header),
+        "--------------------------------------------------"
+    ]
+    
+    if doc:
+        output_lines.append(f"/* DOCSTRING */\n{doc}\n")
+    
+    output_lines.append(block['content'])
+    output_lines.append("--------------------------------------------------")
+
+    output = "\n".join(output_lines)
 
     return {
         "content": [{"type": "text", "text": output}],

@@ -113,6 +113,13 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
             result["file_type"] = hit.file_type
         if hit.context_symbol:
             result["context_symbol"] = hit.context_symbol
+        if hasattr(hit, 'docstring') and hit.docstring:
+            # Show only first 3 lines of docstring to save tokens
+            doc_lines = hit.docstring.splitlines()
+            summary = "\n".join(doc_lines[:3])
+            if len(doc_lines) > 3:
+                summary += "\n..."
+            result["docstring"] = summary
         results.append(result)
     
     # Result Grouping

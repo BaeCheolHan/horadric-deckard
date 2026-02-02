@@ -22,6 +22,8 @@ class SearchHit:
     file_type: str = ""
     hit_reason: str = ""  # v2.4.3: Added hit reason
     context_symbol: str = ""  # v2.6.0: Enclosing symbol context
+    docstring: str = "" # v2.9.0: Docstring/Javadoc
+    metadata: str = "{}" # v2.9.0: Raw metadata JSON
 
 
 @dataclass
@@ -149,20 +151,45 @@ class LocalSearchDB:
                   end_line INTEGER NOT NULL,
                   content TEXT NOT NULL,
                   parent_name TEXT DEFAULT '',
+                  metadata TEXT DEFAULT '{}',
+                  docstring TEXT DEFAULT '',
                   FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
                 );
                 """
             )
-            # v2.7.0: Migration for existing symbols table
+            # v2.7.0/v2.9.0: Migration for symbols table
             try:
                 cur.execute("ALTER TABLE symbols ADD COLUMN end_line INTEGER DEFAULT 0")
+            except sqlite3.OperationalError: pass
+            try:
                 cur.execute("ALTER TABLE symbols ADD COLUMN parent_name TEXT DEFAULT ''")
-                self._write.commit()
-            except sqlite3.OperationalError:
-                pass
+            except sqlite3.OperationalError: pass
+            try:
+                cur.execute("ALTER TABLE symbols ADD COLUMN metadata TEXT DEFAULT '{}'")
+            except sqlite3.OperationalError: pass
+            try:
+                cur.execute("ALTER TABLE symbols ADD COLUMN docstring TEXT DEFAULT ''")
+            except sqlite3.OperationalError: pass
+
+            # v2.9.0: Symbol Relations table
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS symbol_relations (
+                    from_path TEXT NOT NULL,
+                    from_symbol TEXT NOT NULL,
+                    to_path TEXT NOT NULL,
+                    to_symbol TEXT NOT NULL,
+                    rel_type TEXT NOT NULL, -- 'calls', 'implements', 'extends'
+                    line INTEGER NOT NULL,
+                    FOREIGN KEY(from_path) REFERENCES files(path) ON DELETE CASCADE
+                );
+                """
+            )
 
             cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_path ON symbols(path);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_from ON symbol_relations(from_symbol);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_to ON symbol_relations(to_symbol);")
 
             # Index for efficient filtering
             cur.execute("CREATE INDEX IF NOT EXISTS idx_files_repo ON files(repo);")
@@ -236,9 +263,12 @@ class LocalSearchDB:
             self._write.commit()
         return len(rows_list)
 
-    def upsert_symbols(self, symbols: Iterable[tuple[str, str, str, int, int, str, str]]) -> int:
-        """Upsert detected symbols (path, name, kind, line, end_line, content, parent_name)."""
-        symbols_list = list(symbols)
+    def upsert_symbols(self, symbols: Iterable[tuple[str, str, str, int, int, str, str, str, str]]) -> int:
+        """Upsert detected symbols (path, name, kind, line, end_line, content, parent_name, metadata, docstring)."""
+        if hasattr(symbols, "symbols"):
+            symbols_list = list(getattr(symbols, "symbols"))
+        else:
+            symbols_list = list(symbols)
         if not symbols_list:
             return 0
         
@@ -250,14 +280,12 @@ class LocalSearchDB:
             cur.execute("BEGIN")
             
             # Clear old symbols for these paths
-            # Note: We don't have ON CONFLICT for symbols because a file can have multiple same-named symbols (overloaded) 
-            # or just multiple symbols. We wipe and rewrite for the file.
             cur.executemany("DELETE FROM symbols WHERE path = ?", [(p,) for p in paths])
             
             cur.executemany(
                 """
-                INSERT INTO symbols(path, name, kind, line, end_line, content, parent_name)
-                VALUES(?,?,?,?,?,?,?)
+                INSERT INTO symbols(path, name, kind, line, end_line, content, parent_name, metadata, docstring)
+                VALUES(?,?,?,?,?,?,?,?,?)
                 """,
                 symbols_list,
             )
@@ -267,7 +295,7 @@ class LocalSearchDB:
     def get_symbol_block(self, path: str, name: str) -> Optional[dict[str, Any]]:
         """Get the full content block for a specific symbol (v2.7.0)."""
         sql = """
-            SELECT s.line, s.end_line, f.content
+            SELECT s.line, s.end_line, s.metadata, s.docstring, f.content
             FROM symbols s
             JOIN files f ON s.path = f.path
             WHERE s.path = ? AND s.name = ?
@@ -298,8 +326,31 @@ class LocalSearchDB:
             "name": name,
             "start_line": line_start,
             "end_line": line_end,
-            "content": block
+            "content": block,
+            "metadata": row["metadata"],
+            "docstring": row["docstring"]
         }
+
+    def upsert_relations(self, relations: Iterable[tuple[str, str, str, str, str, int]]) -> int:
+        """Upsert symbol relations (from_path, from_symbol, to_path, to_symbol, rel_type, line)."""
+        rels_list = list(relations)
+        if not rels_list:
+            return 0
+        
+        paths = {r[0] for r in rels_list}
+        with self._lock:
+            cur = self._write.cursor()
+            cur.execute("BEGIN")
+            cur.executemany("DELETE FROM symbol_relations WHERE from_path = ?", [(p,) for p in paths])
+            cur.executemany(
+                """
+                INSERT INTO symbol_relations(from_path, from_symbol, to_path, to_symbol, rel_type, line)
+                VALUES(?,?,?,?,?,?)
+                """,
+                rels_list,
+            )
+            self._write.commit()
+        return len(rels_list)
 
     def update_last_seen(self, paths: Iterable[str], timestamp: int) -> int:
         """Update last_seen timestamp for existing files (v2.5.3)."""
@@ -731,7 +782,7 @@ class LocalSearchDB:
             return []
             
         sql = """
-            SELECT s.path, s.name, s.kind, s.line, s.end_line, s.content, f.repo, f.mtime, f.size
+            SELECT s.path, s.name, s.kind, s.line, s.end_line, s.content, s.docstring, s.metadata, f.repo, f.mtime, f.size
             FROM symbols s
             JOIN files f ON s.path = f.path
             WHERE s.name LIKE ?
@@ -756,6 +807,8 @@ class LocalSearchDB:
                 "kind": r["kind"],
                 "line": r["line"],
                 "snippet": r["content"],
+                "docstring": r["docstring"],
+                "metadata": r["metadata"],
                 "mtime": int(r["mtime"]),
                 "size": int(r["size"])
             }
@@ -800,7 +853,9 @@ class LocalSearchDB:
                 match_count=1,
                 file_type=self._get_file_extension(s["path"]),
                 hit_reason=f"Symbol: {s['kind']} {s['name']}",
-                context_symbol=f"{s['kind']}: {s['name']}"
+                context_symbol=f"{s['kind']}: {s['name']}",
+                docstring=s.get("docstring", ""),
+                metadata=s.get("metadata", "{}")
             )
             # Recency boost if enabled
             if opts.recency_boost:
@@ -855,6 +910,11 @@ class LocalSearchDB:
                 # We'll prepend the symbol snippet if it's not effectively the same.
                 if sh.snippet.strip() not in existing.snippet:
                      existing.snippet = f"{sh.snippet}\n...\n{existing.snippet}"
+                # Also propagate docstring and metadata from symbol hit (v2.9.3 fix)
+                if sh.docstring:
+                    existing.docstring = sh.docstring
+                if sh.metadata and sh.metadata != "{}":
+                    existing.metadata = sh.metadata
             else:
                 merged_map[sh.path] = sh
                 
@@ -1259,7 +1319,8 @@ class LocalSearchDB:
                 match_count=0, 
                 file_type=self._get_file_extension(path),
                 hit_reason=", ".join(reasons) if reasons else "Content match",
-                context_symbol=context_symbol
+                context_symbol=context_symbol,
+                docstring="" # FTS hits don't have docstring yet
             ))
         
         # Sort by Score (Desc)

@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+Doctor tool for Local Search MCP Server.
+Returns structured diagnostics (no ANSI/prints).
+"""
+import json
+import os
+import socket
+import shutil
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+
+try:
+    from app.db import LocalSearchDB
+    from app.workspace import WorkspaceManager
+    from mcp.cli import get_daemon_address, is_daemon_running, read_pid
+except ImportError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from app.db import LocalSearchDB
+    from app.workspace import WorkspaceManager
+    from mcp.cli import get_daemon_address, is_daemon_running, read_pid
+
+
+def _result(name: str, passed: bool, error: str = "") -> dict[str, Any]:
+    return {"name": name, "passed": passed, "error": error}
+
+
+def _check_db(ws_root: str) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    db_path = WorkspaceManager.get_local_db_path(ws_root)
+    if not db_path.exists():
+        results.append(_result("DB Existence", False, f"DB not found at {db_path}"))
+        return results
+
+    try:
+        db = LocalSearchDB(str(db_path))
+    except Exception as e:
+        results.append(_result("DB Access", False, str(e)))
+        return results
+
+    results.append(_result("DB FTS5 Support", bool(db.fts_enabled), "FTS5 module missing in SQLite" if not db.fts_enabled else ""))
+    try:
+        cursor = db._read.execute("PRAGMA table_info(symbols)")
+        cols = [r["name"] for r in cursor.fetchall()]
+        if "end_line" in cols:
+            results.append(_result("DB Schema v2.7.0", True))
+        else:
+            results.append(_result("DB Schema v2.7.0", False, "Column 'end_line' missing in 'symbols'. Run update."))
+    except Exception as e:
+        results.append(_result("DB Schema Check", False, str(e)))
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+    return results
+
+
+def _check_port(port: int) -> dict[str, Any]:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+        return _result(f"Port {port} Availability", True)
+    except OSError as e:
+        return _result(f"Port {port} Availability", False, f"Address in use or missing permission: {e}")
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def _check_network() -> dict[str, Any]:
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=3)
+        return _result("Network Check", True)
+    except OSError as e:
+        return _result("Network Check", False, f"Unreachable: {e}")
+
+
+def _check_disk_space(ws_root: str, min_gb: float) -> dict[str, Any]:
+    try:
+        total, used, free = shutil.disk_usage(ws_root)
+        free_gb = free / (1024**3)
+        if free_gb < min_gb:
+            return _result("Disk Space", False, f"Low space: {free_gb:.2f} GB (Min: {min_gb} GB)")
+        return _result("Disk Space", True)
+    except Exception as e:
+        return _result("Disk Space", False, str(e))
+
+
+def _check_marker(ws_root: str) -> dict[str, Any]:
+    marker = Path(ws_root) / ".codex-root"
+    if marker.exists():
+        return _result("Workspace Marker (.codex-root)", True)
+    return _result("Workspace Marker (.codex-root)", False, f"Marker missing at {ws_root}. Run 'init' first.")
+
+
+def _check_daemon() -> dict[str, Any]:
+    host, port = get_daemon_address()
+    running = is_daemon_running(host, port)
+    if running:
+        pid = read_pid()
+        return _result("Deckard Daemon", True, f"Running on {host}:{port} (PID: {pid})")
+    return _result("Deckard Daemon", False, "Not running")
+
+
+def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
+    ws_root = WorkspaceManager.resolve_workspace_root()
+
+    include_network = bool(args.get("include_network", True))
+    include_port = bool(args.get("include_port", True))
+    include_db = bool(args.get("include_db", True))
+    include_disk = bool(args.get("include_disk", True))
+    include_daemon = bool(args.get("include_daemon", True))
+    include_venv = bool(args.get("include_venv", True))
+    include_marker = bool(args.get("include_marker", True))
+    port = int(args.get("port", 47800))
+    min_disk_gb = float(args.get("min_disk_gb", 1.0))
+
+    results: list[dict[str, Any]] = []
+
+    if include_venv:
+        in_venv = sys.prefix != sys.base_prefix
+        results.append(_result("Virtualenv", in_venv, "Not running in venv" if not in_venv else ""))
+
+    if include_marker:
+        results.append(_check_marker(ws_root))
+
+    if include_daemon:
+        results.append(_check_daemon())
+
+    if include_port:
+        results.append(_check_port(port))
+
+    if include_network:
+        results.append(_check_network())
+
+    if include_db:
+        results.extend(_check_db(ws_root))
+
+    if include_disk:
+        results.append(_check_disk_space(ws_root, min_disk_gb))
+
+    output = {
+        "workspace_root": ws_root,
+        "results": results,
+    }
+
+    return {
+        "content": [{"type": "text", "text": json.dumps(output, ensure_ascii=False, indent=2)}],
+    }
