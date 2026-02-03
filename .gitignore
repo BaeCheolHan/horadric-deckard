@@ -7,3 +7,6 @@ dist/
 *.db-wal
 data/
 .idea/
+.DS_Store
+.vscode/
+*.log
