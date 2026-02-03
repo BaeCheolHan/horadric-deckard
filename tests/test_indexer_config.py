@@ -27,6 +27,7 @@ class TestIndexerConfig(unittest.TestCase):
         (self.workspace / "temp_file.tmp").write_text("temp")
         
         cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1", server_port=47777,
             scan_interval_seconds=180, snippet_max_lines=5,
@@ -41,9 +42,9 @@ class TestIndexerConfig(unittest.TestCase):
         indexer.stop()
         
         paths = self.db.get_all_file_paths()
-        self.assertIn("normal.py", paths)
-        self.assertNotIn("secret.key", paths)
-        self.assertNotIn("temp_file.tmp", paths)
+        self.assertTrue(any(p.endswith("normal.py") for p in paths), f"normal.py not found in {paths}")
+        self.assertFalse(any(p.endswith("secret.key") for p in paths))
+        self.assertFalse(any(p.endswith("temp_file.tmp") for p in paths))
 
     def test_max_file_size_limit(self):
         """Verify files exceeding max_file_bytes are skipped."""
@@ -54,6 +55,7 @@ class TestIndexerConfig(unittest.TestCase):
         small_file.write_text("a" * 100)
         
         cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1", server_port=47777,
             scan_interval_seconds=180, snippet_max_lines=5,
@@ -68,8 +70,8 @@ class TestIndexerConfig(unittest.TestCase):
         indexer.stop()
         
         paths = self.db.get_all_file_paths()
-        self.assertIn("small.txt", paths)
-        self.assertNotIn("large.txt", paths)
+        self.assertTrue(any(p.endswith("small.txt") for p in paths))
+        self.assertFalse(any(p.endswith("large.txt") for p in paths))
 
     def test_telemetry_readonly_dir(self):
         """Verify logger handles read-only directory gracefully."""

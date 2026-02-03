@@ -10,6 +10,7 @@ from app.config import Config, resolve_config_path
 def test_config_defaults(tmp_path):
     cfg = Config.get_defaults(str(tmp_path))
     assert cfg["workspace_root"] == str(tmp_path)
+    assert cfg["workspace_roots"] == [str(tmp_path)]
     assert cfg["server_port"] == 47777
 
 

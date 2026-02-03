@@ -510,10 +510,29 @@ class SearchEngine:
     def _matches_path_pattern(self, path: str, pattern: Optional[str]) -> bool:
         if not pattern: return True
         import fnmatch
-        clean_pat = pattern.replace("**", "").rstrip("/")
-        if path.startswith(clean_pat + "/"): return True
-        return (fnmatch.fnmatch(path, pattern) or 
-                fnmatch.fnmatch(path, f"**/{pattern}") or 
+        
+        # Normalize slashes for consistency
+        path = path.replace("\\", "/")
+        pattern = pattern.replace("\\", "/")
+        
+        # If pattern is absolute, match exactly or prefix
+        if pattern.startswith("/"):
+             if path.startswith(pattern): return True
+             return fnmatch.fnmatch(path, pattern)
+
+        # Relative pattern: match end of path or segment
+        # e.g. "src/main.py" should match "/users/.../src/main.py"
+        
+        if path.endswith("/" + pattern): return True
+        if path == pattern: return True
+        
+        # Check glob
+        if fnmatch.fnmatch(path, pattern): return True
+        if fnmatch.fnmatch(path, f"*/{pattern}"): return True
+        if fnmatch.fnmatch(path, f"*/{pattern}/*"): return True
+        
+        # Fallback to existing loose match
+        return (fnmatch.fnmatch(path, f"**/{pattern}") or 
                 fnmatch.fnmatch(path, f"{pattern}*"))
     
     def _matches_exclude_patterns(self, path: str, patterns: List[str]) -> bool:

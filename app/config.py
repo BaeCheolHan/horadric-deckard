@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -20,7 +20,7 @@ def _expanduser(p: str) -> str:
 
 @dataclass(frozen=True)
 class Config:
-    workspace_root: str
+    workspace_root: str # Primary root
     server_host: str
     server_port: int
     scan_interval_seconds: int
@@ -33,12 +33,22 @@ class Config:
     exclude_globs: list[str]
     redact_enabled: bool
     commit_batch_size: int
-    exclude_content_bytes: int = 104857600 # v2.7.0 (Default: 100MB)
+    exclude_content_bytes: int = 104857600 
+    workspace_roots: list[str] = field(default_factory=list) # Optional for compatibility
+
+    def __post_init__(self):
+        # Ensure workspace_roots is always a list containing at least workspace_root
+        if not self.workspace_roots:
+            object.__setattr__(self, "workspace_roots", [self.workspace_root])
+        elif self.workspace_root not in self.workspace_roots:
+            # Sync workspace_root to be the first of roots
+            object.__setattr__(self, "workspace_root", self.workspace_roots[0])
 
     @staticmethod
     def get_defaults(workspace_root: str) -> dict:
         """Central source for default configuration values (v2.7.0)."""
         return {
+            "workspace_roots": [workspace_root],
             "workspace_root": workspace_root,
             "server_host": "127.0.0.1",
             "server_port": 47777,
@@ -67,12 +77,43 @@ class Config:
             "exclude_content_bytes": 104857600, # 100MB default for full content storage
         }
 
+    def save_paths_only(self, path: str, extra_paths: dict | None = None) -> None:
+        """Persist resolved path-related configuration to disk (Write-back)."""
+        extra_paths = extra_paths or {}
+        data = {}
+        # Load existing config to preserve non-path settings
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f) or {}
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+
+        data["roots"] = self.workspace_roots
+        data["db_path"] = self.db_path
+        # Optional path keys (if provided)
+        for k, v in extra_paths.items():
+            if v:
+                data[k] = v
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Configuration saved to {path}")
+        except Exception as e:
+            logger.error(f"Failed to save configuration to {path}: {e}")
+
     @staticmethod
     def load(path: str, workspace_root_override: str = None) -> "Config":
         raw = {}
         if path and os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load config from {path}: {e}")
         
         # Backward compatibility: legacy "indexing" schema
         legacy_indexing = raw.get("indexing", {}) if isinstance(raw, dict) else {}
@@ -86,18 +127,47 @@ class Config:
             if "exclude_globs" not in raw:
                 raw["exclude_globs"] = [p for p in legacy_excludes if any(c in p for c in ["*", "?"])]
 
-        # Portability: allow runtime overrides for workspace root.
-        env_workspace_root = os.environ.get("DECKARD_WORKSPACE_ROOT") or os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT")
-        workspace_root = workspace_root_override or env_workspace_root or raw.get("workspace_root") or os.getcwd()
-        workspace_root = _expanduser(workspace_root)
+        # --- Multi-root Resolution ---
+        # Sources for roots:
+        # 1. workspace_root_override (argument) -> treated as a root
+        # 2. Config file 'roots' or 'workspace_roots' (list)
+        # 3. Config file 'workspace_root' (str) -> legacy
+        config_roots = raw.get("roots") or raw.get("workspace_roots") or []
+        if not config_roots and raw.get("workspace_root"):
+            config_roots = [raw.get("workspace_root")]
+             
+        # Resolve final roots using WorkspaceManager (handles Env, JSON, Legacy, Merging)
+        # Pass override as root_uri (highest priority in resolution logic if we mapped it)
+        # But resolve_workspace_roots prioritizes JSON env var. 
+        # Let's map override to root_uri for consistency.
         
-        defaults = Config.get_defaults(workspace_root)
+        # Resolve base roots (env + config + legacy). Override is handled explicitly.
+        final_roots = WorkspaceManager.resolve_workspace_roots(
+            root_uri=None,
+            config_roots=config_roots
+        )
+        if workspace_root_override:
+            follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+            try:
+                override_norm = WorkspaceManager._normalize_path(workspace_root_override, follow_symlinks=follow_symlinks)  # type: ignore
+            except Exception:
+                override_norm = workspace_root_override
+            # Put override first, keep others after
+            final_roots = [override_norm] + [r for r in final_roots if r != override_norm]
+        
+        if not final_roots:
+             final_roots = [os.getcwd()]
+             
+        primary_root = final_roots[0]
+        
+        defaults = Config.get_defaults(primary_root)
 
         # Support port override
         port_override = os.environ.get("DECKARD_PORT") or os.environ.get("LOCAL_SEARCH_PORT_OVERRIDE")
         server_port = int(port_override) if port_override else int(raw.get("server_port", defaults["server_port"]))
 
         # Unified DB path resolution
+        # Priority: Env > Config File > Default(primary_root)
         env_db_path = (os.environ.get("DECKARD_DB_PATH") or os.environ.get("LOCAL_SEARCH_DB_PATH") or "").strip()
         
         db_path = ""
@@ -110,21 +180,20 @@ class Config:
         
         if not db_path:
             raw_db_path = raw.get("db_path", "")
-            package_root = Path(__file__).resolve().parents[1]
-            packaged_config = str(package_root / "config" / "config.json")
-            is_packaged_config = path and str(Path(path).resolve()) == packaged_config
-            if raw_db_path and not is_packaged_config:
-                expanded = _expanduser(raw_db_path)
-                if os.path.isabs(expanded):
-                    db_path = expanded
-                else:
-                    logger.warning(f"Ignoring relative db_path in config '{raw_db_path}'. Absolute path required.")
+            # Check if packaged config logic applies (skip relative path check for packaged default?)
+            # Simplified: just expand and use if absolute
+            if raw_db_path:
+                 expanded = _expanduser(raw_db_path)
+                 if os.path.isabs(expanded):
+                     db_path = expanded
         
         if not db_path:
-            db_path = defaults["db_path"]
+            db_path = str(WorkspaceManager.get_local_db_path(primary_root))
 
-        return Config(
-            workspace_root=workspace_root,
+        # --- Construct Config Object ---
+        cfg = Config(
+            workspace_roots=final_roots,
+            workspace_root=primary_root,
             server_host=raw.get("server_host", defaults["server_host"]),
             server_port=server_port,
             scan_interval_seconds=int(raw.get("scan_interval_seconds", defaults["scan_interval_seconds"])),
@@ -139,6 +208,21 @@ class Config:
             commit_batch_size=int(raw.get("commit_batch_size", defaults["commit_batch_size"])),
             exclude_content_bytes=int(raw.get("exclude_content_bytes", defaults["exclude_content_bytes"])),
         )
+        
+        # --- Write-back (Persist) Logic ---
+        persist_flag = os.environ.get("DECKARD_PERSIST_PATHS", "0").strip().lower()
+        should_persist = persist_flag in ("1", "true", "yes", "on")
+        
+        if should_persist and path:
+            extra = {
+                "install_dir": (os.environ.get("DECKARD_INSTALL_DIR") or "").strip(),
+                "data_dir": (os.environ.get("DECKARD_DATA_DIR") or "").strip(),
+                "db_path": (os.environ.get("DECKARD_DB_PATH") or "").strip(),
+                "config_path": (os.environ.get("DECKARD_CONFIG") or "").strip(),
+            }
+            cfg.save_paths_only(path, extra_paths=extra)
+            
+        return cfg
 
 
 

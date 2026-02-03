@@ -23,6 +23,7 @@ class TestRound5Integration(unittest.TestCase):
         self.db_path = os.path.join(self.test_dir, "test.db")
         self.db = LocalSearchDB(self.db_path)
         self.cfg = Config(
+            workspace_roots=[self.test_dir],
             workspace_root=self.test_dir,
             server_host="127.0.0.1",
             server_port=0,

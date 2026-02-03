@@ -29,6 +29,7 @@ class TestIndexerDeepDive(unittest.TestCase):
 
     def _set_config(self, **kwargs):
         base = {
+            "workspace_roots": [str(self.workspace)],
             "workspace_root": str(self.workspace),
             "server_host": "127.0.0.1", "server_port": 47777,
             "scan_interval_seconds": 180, "snippet_max_lines": 5,

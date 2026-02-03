@@ -22,6 +22,7 @@ try:
     from .watcher import FileWatcher
     from .dedup_queue import DedupQueue
     from .queue_pipeline import FsEvent, FsEventKind, TaskAction, CoalesceTask, DbTask, coalesce_action, split_moved_event
+    from .workspace import WorkspaceManager
 except ImportError:
     from config import Config
     from db import LocalSearchDB
@@ -38,6 +39,10 @@ except ImportError:
     except Exception:
         FsEvent = None
         FsEventKind = None
+    try:
+        from workspace import WorkspaceManager
+    except Exception:
+        WorkspaceManager = None
         TaskAction = None
         CoalesceTask = None
         DbTask = None
@@ -634,7 +639,8 @@ class Indexer:
         self._drain_timeout = 2.0
         self._coalesce_max_keys = 100000
         self._coalesce_lock = threading.Lock()
-        self._coalesce_map: Dict[Tuple[str, str], CoalesceTask] = {}
+        self._coalesce_map: Dict[str, CoalesceTask] = {}
+        self._legacy_purge_done = False
         self._event_queue = DedupQueue() if DedupQueue else None
         self._worker_thread = None
         self._db_writer = DBWriter(self.db, logger=self.logger, latency_cb=self._record_latency)
@@ -684,10 +690,12 @@ class Indexer:
         # v2.7.0: Start watcher if available and not already running
         if FileWatcher and not self.watcher:
             try:
-                root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-                self.watcher = FileWatcher([str(root)], self._process_watcher_event)
-                self.watcher.start()
-                if self.logger: self.logger.log_info(f"FileWatcher started for {root}")
+                # Watch all roots
+                roots = [str(Path(os.path.expanduser(r)).absolute()) for r in self.cfg.workspace_roots if Path(r).exists()]
+                if roots:
+                    self.watcher = FileWatcher(roots, self._process_watcher_event)
+                    self.watcher.start()
+                    if self.logger: self.logger.log_info(f"FileWatcher started for {roots}")
             except Exception as e:
                 if self.logger: self.logger.log_error(f"Failed to start FileWatcher: {e}")
 
@@ -801,12 +809,49 @@ class Indexer:
 
     def _normalize_path(self, path: str) -> Optional[str]:
         try:
-            root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-            p = Path(path).resolve()
-            rel = str(p.relative_to(root))
-            return rel.replace(os.sep, "/")
+            p = Path(path).absolute()
+            # Multi-root support: Check if path is within any workspace root
+            for root_str in self.cfg.workspace_roots:
+                root = Path(os.path.expanduser(root_str)).absolute()
+                try:
+                    p.relative_to(root)
+                    return self._encode_db_path(root, p)
+                except ValueError:
+                    continue
+            return None
         except Exception:
             return None
+
+    def _get_root_map(self) -> dict[str, Path]:
+        roots = {}
+        for r in self.cfg.workspace_roots:
+            root_path = Path(os.path.expanduser(r)).absolute()
+            root_id = self._root_id(str(root_path))
+            roots[root_id] = root_path
+        return roots
+
+    def _encode_db_path(self, root: Path, file_path: Path) -> str:
+        root_id = self._root_id(str(root))
+        rel = file_path.relative_to(root).as_posix()
+        return f"{root_id}/{rel}"
+
+    def _decode_db_path(self, db_path: str) -> Optional[tuple[Path, Path]]:
+        if "/" not in db_path:
+            return None
+        root_id, rel = db_path.split("/", 1)
+        roots = self._get_root_map()
+        root = roots.get(root_id)
+        if not root:
+            return None
+        rel_path = Path(*rel.split("/"))
+        return root, (root / rel_path)
+
+    def _root_id(self, path: str) -> str:
+        if WorkspaceManager is None:
+            import hashlib
+            digest = hashlib.sha1(path.encode("utf-8")).hexdigest()[:8]
+            return f"root-{digest}"
+        return WorkspaceManager.root_id(path)
 
     def _enqueue_action(self, action: TaskAction, path: str, ts: float, attempts: int = 0) -> None:
         if not self._event_queue:
@@ -814,7 +859,8 @@ class Indexer:
         norm = self._normalize_path(path)
         if not norm:
             return
-        key = (self.cfg.workspace_root, norm)
+        # Key must be unique per file. Use db path as key.
+        key = norm
         with self._coalesce_lock:
             exists = key in self._coalesce_map
             if not exists and len(self._coalesce_map) >= self._coalesce_max_keys:
@@ -861,8 +907,11 @@ class Indexer:
                 self._handle_index_task(task)
 
     def _handle_index_task(self, task: CoalesceTask) -> None:
-        root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-        file_path = root / task.path
+        resolved = self._decode_db_path(task.path)
+        if not resolved:
+            return
+        matched_root, file_path = resolved
+
         try:
             st = file_path.stat()
         except FileNotFoundError:
@@ -873,7 +922,7 @@ class Indexer:
             return
 
         try:
-            res = self._process_file_task(root, file_path, st, int(time.time()), time.time(), raise_on_error=True)
+            res = self._process_file_task(matched_root, file_path, st, int(time.time()), time.time(), raise_on_error=True)
         except (IOError, PermissionError, OSError) as e:
             self._retry_task(task, e)
             return
@@ -907,11 +956,16 @@ class Indexer:
 
     def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, raise_on_error: bool = False) -> Optional[dict]:
         try:
-            rel = str(file_path.relative_to(root))
-            repo = rel.split(os.sep, 1)[0] if os.sep in rel else "__root__"
-            prev = self.db.get_file_meta(rel)
+            # Calculate repo name from root-relative path
+            rel_to_root = str(file_path.relative_to(root))
+            repo = rel_to_root.split(os.sep, 1)[0] if os.sep in rel_to_root else "__root__"
+            
+            # DB path: root_id + rel path (relative, no absolute)
+            db_path = self._encode_db_path(root, file_path)
+
+            prev = self.db.get_file_meta(db_path)
             if prev and int(st.st_mtime) == int(prev[0]) and int(st.st_size) == int(prev[1]):
-                if now - st.st_mtime > AI_SAFETY_NET_SECONDS: return {"type": "unchanged", "rel": rel}
+                if now - st.st_mtime > AI_SAFETY_NET_SECONDS: return {"type": "unchanged", "rel": db_path}
             max_bytes = int(getattr(self.cfg, "max_file_bytes", 0) or 0)
             if max_bytes and int(getattr(st, "st_size", 0) or 0) > max_bytes:
                 return None
@@ -925,15 +979,14 @@ class Indexer:
 
             if getattr(self.cfg, "redact_enabled", True):
                 text = _redact(text)
-            symbols, relations = _extract_symbols_with_relations(rel, text)
-            return {"type": "changed", "rel": rel, "repo": repo, "mtime": int(st.st_mtime), "size": int(st.st_size), "content": text, "scan_ts": scan_ts, "symbols": symbols, "relations": relations}
+            symbols, relations = _extract_symbols_with_relations(db_path, text)
+            return {"type": "changed", "rel": db_path, "repo": repo, "mtime": int(st.st_mtime), "size": int(st.st_size), "content": text, "scan_ts": scan_ts, "symbols": symbols, "relations": relations}
         except Exception:
             self.status.errors += 1
             if raise_on_error:
                 raise
             try:
-                rel = str(file_path.relative_to(root))
-                return {"type": "unchanged", "rel": rel}
+                return {"type": "unchanged", "rel": self._encode_db_path(root, file_path)}
             except Exception:
                 return None
 
@@ -966,7 +1019,7 @@ class Indexer:
         include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
         include_all_ext = not include_ext
         include_files = set(getattr(self.cfg, "include_files", []))
-        include_files_abs = {str(Path(p).expanduser().resolve()) for p in include_files if os.path.isabs(p)}
+        include_files_abs = {str(Path(p).expanduser().absolute()) for p in include_files if os.path.isabs(p)}
         include_files_rel = {p for p in include_files if not os.path.isabs(p)}
         exclude_dirs = set(getattr(self.cfg, "exclude_dirs", []))
         exclude_globs = list(getattr(self.cfg, "exclude_globs", []))
@@ -978,7 +1031,7 @@ class Indexer:
                 for d in dirnames:
                     if d in exclude_dirs:
                         continue
-                    rel_dir = str((Path(dirpath) / d).resolve().relative_to(root))
+                    rel_dir = str((Path(dirpath) / d).absolute().relative_to(root))
                     if any(fnmatch.fnmatch(rel_dir, pat) or fnmatch.fnmatch(d, pat) for pat in exclude_dirs):
                         continue
                     kept.append(d)
@@ -986,12 +1039,12 @@ class Indexer:
             for fn in filenames:
                 p = Path(dirpath) / fn
                 try:
-                    rel = str(p.resolve().relative_to(root))
+                    rel = str(p.absolute().relative_to(root))
                 except Exception:
                     continue
                 if any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(fn, pat) for pat in exclude_globs):
                     continue
-                is_included = (rel in include_files_rel) or (str(p.resolve()) in include_files_abs)
+                is_included = (rel in include_files_rel) or (str(p.absolute()) in include_files_abs)
                 if not is_included:
                     if not include_all_ext and p.suffix.lower() not in include_ext:
                         continue
@@ -1012,25 +1065,42 @@ class Indexer:
         return [p for p, _ in self._iter_file_entries(root)]
 
     def _scan_once(self):
-        root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-        if not root.exists(): return
+        # Optional: purge legacy db paths (one-time)
+        if not self._legacy_purge_done:
+            flag = os.environ.get("DECKARD_PURGE_LEGACY_PATHS", "0").strip().lower()
+            if flag in ("1", "true", "yes", "on"):
+                try:
+                    purged = self.db.purge_legacy_paths()
+                    if self.logger:
+                        self.logger.log_info(f"purged_legacy_paths={purged}")
+                except Exception:
+                    if self.logger:
+                        self.logger.log_error("failed to purge legacy paths")
+            self._legacy_purge_done = True
+
+        # Iterate over all workspace roots
+        all_roots = [Path(os.path.expanduser(r)).absolute() for r in self.cfg.workspace_roots]
+        valid_roots = [r for r in all_roots if r.exists()]
+        
         now, scan_ts = time.time(), int(time.time())
         self.status.last_scan_ts, self.status.scanned_files = now, 0
         
         batch_files, batch_syms, batch_rels, unchanged = [], [], [], []
         
-        # v2.7.0: Batched futures to prevent memory bloat in large workspaces
         chunk_size = 100
         chunk = []
-        for entry in self._iter_file_entries_stream(root):
-            chunk.append(entry)
-            self.status.scanned_files += 1
-            if len(chunk) < chunk_size:
-                continue
-            self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
-            chunk = []
-        if chunk:
-            self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
+        
+        for root in valid_roots:
+            for entry in self._iter_file_entries_stream(root):
+                chunk.append(entry)
+                self.status.scanned_files += 1
+                if len(chunk) < chunk_size:
+                    continue
+                self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
+                chunk = []
+            if chunk:
+                self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
+                chunk = []
 
         if batch_files or batch_syms or batch_rels:
             self._enqueue_db_tasks(batch_files, batch_syms, batch_rels)

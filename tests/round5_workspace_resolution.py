@@ -38,10 +38,10 @@ def test_resolve_config_path_workspace_file(tmp_path, monkeypatch):
 
 def test_resolve_workspace_root_from_root_uri(tmp_path):
     root_uri = f"file://{tmp_path}"
-    assert WorkspaceManager.resolve_workspace_root(root_uri) == str(tmp_path.resolve())
+    assert WorkspaceManager.resolve_workspace_root(root_uri) == str(tmp_path.absolute())
 
 
 def test_resolve_workspace_root_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DECKARD_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.delenv("LOCAL_SEARCH_WORKSPACE_ROOT", raising=False)
-    assert WorkspaceManager.resolve_workspace_root(None) == str(tmp_path.resolve())
+    assert WorkspaceManager.resolve_workspace_root(None) == str(tmp_path.absolute())

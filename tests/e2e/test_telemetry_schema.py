@@ -14,7 +14,7 @@ class TestShieldTelemetrySchema:
     @pytest.fixture
     def log_dir(self, tmp_path):
         d = tmp_path / "logs"
-        d.mkdir()
+        d.mkdir(exist_ok=True)
         return d
 
     def test_log_format_timestamp(self, log_dir):

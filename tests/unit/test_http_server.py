@@ -55,6 +55,7 @@ def _request_json(port: int, path: str):
     return resp.status, json.loads(body.decode("utf-8"))
 
 
+@pytest.mark.allow_socket
 def test_http_server_endpoints(tmp_path):
     db = DummyDB()
     indexer = DummyIndexer()

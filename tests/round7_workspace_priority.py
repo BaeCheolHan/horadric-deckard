@@ -19,7 +19,7 @@ def test_root_uri_over_env(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DECKARD_WORKSPACE_ROOT", str(env_root))
     resolved = WorkspaceManager.resolve_workspace_root(f"file://{uri_root}")
-    assert resolved == str(uri_root.resolve())
+    assert resolved == str(uri_root.absolute())
 
 
 def test_env_over_cwd(monkeypatch, tmp_path):
@@ -27,7 +27,7 @@ def test_env_over_cwd(monkeypatch, tmp_path):
     env_root.mkdir()
     monkeypatch.setenv("DECKARD_WORKSPACE_ROOT", str(env_root))
     resolved = WorkspaceManager.resolve_workspace_root(None)
-    assert resolved == str(env_root.resolve())
+    assert resolved == str(env_root.absolute())
 
 
 def test_codex_root_marker_detection(monkeypatch, tmp_path):
@@ -42,7 +42,7 @@ def test_codex_root_marker_detection(monkeypatch, tmp_path):
     monkeypatch.delenv("LOCAL_SEARCH_WORKSPACE_ROOT", raising=False)
 
     resolved = WorkspaceManager.resolve_workspace_root(None)
-    assert resolved == str(ws)
+    assert resolved == str(ws.absolute())
 
 
 def test_invalid_root_uri_falls_back(tmp_path, monkeypatch):

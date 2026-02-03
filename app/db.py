@@ -179,6 +179,24 @@ class LocalSearchDB:
         cur.execute("DELETE FROM symbols WHERE path = ?", (path,))
         cur.execute("DELETE FROM files WHERE path = ?", (path,))
 
+    def purge_legacy_paths(self, prefix: str = "root-") -> int:
+        """
+        Remove legacy file paths that don't match the new root_id/rel format.
+        New format: root-<hash>/relative/path
+        """
+        with self._lock:
+            cur = self._write.cursor()
+            cur.execute("BEGIN")
+            rows = cur.execute(
+                "SELECT path FROM files WHERE path NOT LIKE ?",
+                (f"{prefix}%/%",),
+            ).fetchall()
+            paths = [r[0] for r in rows]
+            for p in paths:
+                self.delete_path_tx(cur, p)
+            self._write.commit()
+        return len(paths)
+
     def update_last_seen_tx(self, cur: sqlite3.Cursor, paths: Iterable[str], timestamp: int) -> int:
         paths_list = list(paths)
         if not paths_list:

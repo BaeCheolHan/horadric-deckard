@@ -68,8 +68,8 @@ class TestDaemonAdvanced(unittest.TestCase):
             # Should have called Config(...) constructor with defaults
             self.assertTrue(mock_config_class.called)
             args, kwargs = mock_config_class.call_args
-            # First arg of Config dataclass is workspace_root
-            self.assertEqual(kwargs.get('workspace_root') or args[0], str(self.workspace))
+            self.assertEqual(kwargs.get('workspace_root') or args[1], str(self.workspace))
+            self.assertEqual(kwargs.get('workspace_roots') or args[0], [str(self.workspace)])
 
 if __name__ == "__main__":
     unittest.main()

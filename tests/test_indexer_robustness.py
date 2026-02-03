@@ -19,6 +19,7 @@ class TestIndexerRobustness(unittest.TestCase):
         self.db = LocalSearchDB(self.db_path)
         
         self.cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1", 
             server_port=47777,
@@ -70,7 +71,14 @@ class TestIndexerRobustness(unittest.TestCase):
         
         # Verify symbols are from V2 (deduper should have handled rapid changes)
         # We check one random file
-        hits = self.db.search_symbols("func_10_v2")
+        # Wait for symbols to be committed
+        start = time.time()
+        hits = []
+        while (time.time() - start) < 10:
+            hits = self.db.search_symbols("func_10_v2")
+            if hits:
+                break
+            time.sleep(0.2)
         self.assertTrue(len(hits) > 0, "Deduplication or burst handling failed: symbol not found")
 
     def test_malformed_scripts_resilience(self):

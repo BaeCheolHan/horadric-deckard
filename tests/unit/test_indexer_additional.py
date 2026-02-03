@@ -17,6 +17,11 @@ from app.indexer import (
 )
 from app.db import LocalSearchDB
 from app.queue_pipeline import FsEvent, FsEventKind, TaskAction, CoalesceTask, DbTask
+from app.workspace import WorkspaceManager
+
+
+def _db_path(root: Path, rel: str) -> str:
+    return f"{WorkspaceManager.root_id(str(root))}/{rel}"
 
 
 class DummyLogger:
@@ -77,6 +82,7 @@ class DummyDBWriter:
 
 def _mk_cfg(tmp_path, **overrides):
     base = dict(
+        workspace_roots=[str(tmp_path)],
         workspace_root=str(tmp_path),
         server_host="127.0.0.1",
         server_port=1,
@@ -170,11 +176,11 @@ def test_indexer_handle_index_and_retry(tmp_path):
     idx._event_queue = DummyQueue()
     idx._db_writer = DummyDBWriter()
 
-    missing_task = CoalesceTask(action=TaskAction.INDEX, path="missing.txt", attempts=0, enqueue_ts=time.time(), last_seen=time.time())
+    missing_task = CoalesceTask(action=TaskAction.INDEX, path=_db_path(tmp_path, "missing.txt"), attempts=0, enqueue_ts=time.time(), last_seen=time.time())
     idx._handle_index_task(missing_task)
     assert idx._db_writer.items
 
-    bad_task = CoalesceTask(action=TaskAction.INDEX, path="bad.txt", attempts=2, enqueue_ts=time.time(), last_seen=time.time())
+    bad_task = CoalesceTask(action=TaskAction.INDEX, path=_db_path(tmp_path, "bad.txt"), attempts=2, enqueue_ts=time.time(), last_seen=time.time())
     idx._retry_task(bad_task, IOError("boom"))
     assert idx._drop_count_degraded == 1
 
@@ -202,7 +208,7 @@ def test_process_file_task_paths(tmp_path):
     old_ts = int(time.time()) - 10
     os.utime(p, (old_ts, old_ts))
     st = p.stat()
-    db.upsert_files([("a.py", "__root__", int(st.st_mtime), int(st.st_size), "x", int(time.time()))])
+    db.upsert_files([(_db_path(tmp_path, "a.py"), "__root__", int(st.st_mtime), int(st.st_size), "x", int(time.time()))])
     res = idx._process_file_task(tmp_path, p, st, int(time.time()), time.time())
     assert res and res["type"] == "unchanged"
 

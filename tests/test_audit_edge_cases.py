@@ -42,6 +42,7 @@ class TestAuditEdgeCases(unittest.TestCase):
         large_file.write_text("a" * 1000)
         
         cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1", server_port=47777,
             scan_interval_seconds=180, snippet_max_lines=5,
@@ -73,6 +74,7 @@ class TestAuditEdgeCases(unittest.TestCase):
         (self.workspace / "skip.exe").touch()
         
         cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1", server_port=47777,
             scan_interval_seconds=180, snippet_max_lines=5,
@@ -88,8 +90,8 @@ class TestAuditEdgeCases(unittest.TestCase):
         indexer.stop()
         
         paths = self.db.get_all_file_paths()
-        self.assertIn("keep.py", paths)
-        self.assertNotIn("skip.exe", paths)
+        self.assertTrue(any(p.endswith("keep.py") for p in paths))
+        self.assertFalse(any(p.endswith("skip.exe") for p in paths))
 
     def test_config_load_invalid_path(self):
         """Case 3: Config load fallback when path invalid"""

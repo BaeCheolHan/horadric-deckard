@@ -26,6 +26,7 @@ class TestIndexerStreamingScan(unittest.TestCase):
         (self.workspace / "skip.md").write_text("ignore")
 
         cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1",
             server_port=47777,
@@ -47,8 +48,8 @@ class TestIndexerStreamingScan(unittest.TestCase):
 
         self.assertEqual(indexer.status.scanned_files, 2)
         paths = self.db.get_all_file_paths()
-        self.assertIn("one.txt", paths)
-        self.assertIn("two.txt", paths)
+        self.assertTrue(any(p.endswith("one.txt") for p in paths))
+        self.assertTrue(any(p.endswith("two.txt") for p in paths))
         self.assertNotIn("skip.md", paths)
 
 

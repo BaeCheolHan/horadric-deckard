@@ -85,6 +85,7 @@ class TestIntegrationPortability(unittest.TestCase):
         os.utime(test_file, (mtime, mtime))
         
         cfg = Config(
+            workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
             server_host="127.0.0.1", server_port=47777,
             scan_interval_seconds=180, snippet_max_lines=5,

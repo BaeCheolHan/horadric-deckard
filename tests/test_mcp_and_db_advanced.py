@@ -57,7 +57,7 @@ class TestMCPAndDBAdvanced(unittest.IsolatedAsyncioTestCase):
             
             with patch.dict("os.environ", {"DECKARD_WORKSPACE_ROOT": str(env_ws)}):
                 detected = WorkspaceManager.resolve_workspace_root()
-                self.assertEqual(detected, str(env_ws.resolve()))
+                self.assertEqual(detected, str(env_ws.absolute()))
         finally:
             os.chdir(old_cwd)
 

@@ -40,6 +40,7 @@ class TestMetaExtraction(unittest.TestCase):
         }))
         
         cfg = Config(
+            workspace_roots=[self.tmp_dir],
             workspace_root=self.tmp_dir, server_host="127.0.0.1", server_port=47777,
             scan_interval_seconds=180, snippet_max_lines=5,
             max_file_bytes=1000000, db_path=self.db_path,

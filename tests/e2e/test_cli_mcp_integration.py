@@ -110,6 +110,7 @@ def parse_pack_metrics(text: str) -> dict:
                 metrics[k.strip()] = v.strip()
     return metrics
 
+@pytest.mark.allow_subprocess
 def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
     """
     E2E: Actual Install -> Config Check -> MCP Handshake -> Tool Execute -> Uninstall.
