@@ -19,8 +19,8 @@ def _load_server_info() -> Optional[Dict]:
     root = _repo_root()
     # Check both potential locations
     paths = [
-        root / ".codex" / "tools" / "deckard" / "data" / "server.json",
-        root / "tools" / "deckard" / "data" / "server.json"
+        root / ".codex" / "tools" / "sari" / "data" / "server.json",
+        root / "tools" / "sari" / "data" / "server.json"
     ]
     for server_json in paths:
         if server_json.exists():
@@ -42,9 +42,9 @@ def _load_cfg() -> Dict:
             return {}
 
     if os.name == "nt":
-        ssot = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "deckard" / "config.json"
+        ssot = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "sari" / "config.json"
     else:
-        ssot = Path.home() / ".config" / "deckard" / "config.json"
+        ssot = Path.home() / ".config" / "sari" / "config.json"
     if ssot.exists():
         with open(ssot, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -76,7 +76,7 @@ def _enforce_loopback(host: str) -> None:
         return
     if not _is_loopback(host):
         raise RuntimeError(
-            f"deckard loopback-only: server_host must be 127.0.0.1/localhost/::1 (got={host}). "
+            f"sari loopback-only: server_host must be 127.0.0.1/localhost/::1 (got={host}). "
             "Set LOCAL_SEARCH_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
         )
 

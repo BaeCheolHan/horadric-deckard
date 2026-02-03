@@ -3,7 +3,7 @@
 Entry point for `python -m mcp` execution.
 
 Routes to either:
-- CLI mode (deckard daemon/proxy commands)
+- CLI mode (sari daemon/proxy commands)
 - Legacy server mode (for backward compatibility)
 """
 import sys

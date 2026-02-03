@@ -23,8 +23,6 @@ class Config:
     workspace_root: str # Primary root
     server_host: str
     server_port: int
-    http_api_host: str
-    http_api_port: int
     scan_interval_seconds: int
     snippet_max_lines: int
     max_file_bytes: int
@@ -35,6 +33,8 @@ class Config:
     exclude_globs: list[str]
     redact_enabled: bool
     commit_batch_size: int
+    http_api_host: str = "127.0.0.1"
+    http_api_port: int = 7331
     exclude_content_bytes: int = 104857600 
     workspace_roots: list[str] = field(default_factory=list) # Optional for compatibility
 

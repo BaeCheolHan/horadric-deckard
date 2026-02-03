@@ -43,7 +43,7 @@ def main() -> int:
         cfg = Config.load(cfg_path)
     else:
         # Use safe defaults if config.json is missing.
-        print(f"[deckard] Config not found in workspace ({cfg_path}), using defaults.")
+        print(f"[sari] Config not found in workspace ({cfg_path}), using defaults.")
         defaults = config_mod.Config.get_defaults(workspace_root)
         cfg = Config(**defaults)
 
@@ -60,7 +60,7 @@ def main() -> int:
 
     if (not is_loopback) and (not allow_non_loopback):
         raise SystemExit(
-            f"deckard refused to start: server_host must be loopback only (127.0.0.1/localhost/::1). got={host}. "
+            f"sari refused to start: server_host must be loopback only (127.0.0.1/localhost/::1). got={host}. "
             "Set LOCAL_SEARCH_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
         )
 
@@ -69,9 +69,14 @@ def main() -> int:
     db_path = cfg.db_path
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     
-    print(f"[deckard] DB path: {db_path}")
+    print(f"[sari] DB path: {db_path}")
 
     db = LocalSearchDB(db_path)
+    try:
+        from app.engine_registry import get_default_engine
+        db.set_engine(get_default_engine(db, cfg, cfg.workspace_roots))
+    except Exception as e:
+        print(f"[sari] engine init failed: {e}")
     from app.indexer import resolve_indexer_settings
     mode, enabled, startup_enabled, lock_handle = resolve_indexer_settings(str(db_path))
     indexer = Indexer(cfg, db, indexer_mode=mode, indexing_enabled=enabled, startup_index_enabled=startup_enabled, lock_handle=lock_handle)
@@ -82,7 +87,7 @@ def main() -> int:
     httpd, actual_port = serve_forever(host, cfg.http_api_port, db, indexer, version=version, workspace_root=workspace_root)
 
     # Write server.json with actual binding info (single source of truth for port tracking)
-    data_dir = Path(workspace_root) / ".codex" / "tools" / "deckard" / "data"
+    data_dir = Path(workspace_root) / ".codex" / "tools" / "sari" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     server_json = data_dir / "server.json"
     server_info = {
@@ -95,7 +100,7 @@ def main() -> int:
     server_json.write_text(json.dumps(server_info, indent=2), encoding="utf-8")
 
     if actual_port != cfg.http_api_port:
-        print(f"[deckard] server.json updated with fallback port {actual_port}")
+        print(f"[sari] server.json updated with fallback port {actual_port}")
 
     try:
         port_file = Path(db_path + ".http_api.port")

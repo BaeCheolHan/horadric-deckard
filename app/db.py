@@ -2,6 +2,8 @@ import sqlite3
 import threading
 import time
 import zlib
+import unicodedata
+import os
 from pathlib import Path
 from typing import Any, Iterable, Optional, Tuple, List, Dict
 
@@ -9,11 +11,11 @@ from typing import Any, Iterable, Optional, Tuple, List, Dict
 try:
     from .models import SearchHit, SearchOptions
     from .ranking import get_file_extension, glob_to_like
-    from .search_engine import SearchEngine
+    from .engine_registry import get_registry
 except ImportError:
     from models import SearchHit, SearchOptions
     from ranking import get_file_extension, glob_to_like
-    from search_engine import SearchEngine
+    from engine_registry import get_registry
 
 def _compress(text: str) -> bytes:
     if not text: return b""
@@ -26,6 +28,15 @@ def _decompress(data: Any) -> str:
         return zlib.decompress(data).decode("utf-8")
     except Exception:
         return str(data)
+
+
+def _normalize_engine_text(text: str) -> str:
+    if not text:
+        return ""
+    norm = unicodedata.normalize("NFKC", text)
+    norm = norm.lower()
+    norm = " ".join(norm.split())
+    return norm
 
 class LocalSearchDB:
     """SQLite + optional FTS5 backed index.
@@ -72,7 +83,10 @@ class LocalSearchDB:
         self._stats_cache_ts = 0.0
         self._stats_cache_ttl = 60.0 # 60 seconds
         
-        self.engine = SearchEngine(self)
+        self.engine = get_registry().create("sqlite", self)
+
+    def set_engine(self, engine: Any) -> None:
+        self.engine = engine
 
     @staticmethod
     def _apply_pragmas(conn: sqlite3.Connection) -> None:
@@ -561,6 +575,26 @@ class LocalSearchDB:
             "db_size_bytes": Path(self.db_path).stat().st_size if Path(self.db_path).exists() else 0
         }
 
+    def has_legacy_paths(self) -> bool:
+        """Return True if DB contains non root-id paths."""
+        cache_key = "legacy_paths"
+        now = time.time()
+        cached = self._stats_cache.get(cache_key)
+        if cached is not None and (now - self._stats_cache_ts < self._stats_cache_ttl):
+            return bool(cached)
+        try:
+            with self._read_lock:
+                row = self._read.execute(
+                    "SELECT 1 AS c FROM files WHERE path NOT LIKE ? LIMIT 1",
+                    ("root-%/%",),
+                ).fetchone()
+            exists = bool(row)
+            self._stats_cache[cache_key] = exists
+            self._stats_cache_ts = now
+            return exists
+        except Exception:
+            return False
+
     def count_files(self) -> int:
         with self._read_lock:
             row = self._read.execute("SELECT COUNT(1) AS c FROM files").fetchone()
@@ -796,6 +830,51 @@ class LocalSearchDB:
         with self._read_lock:
             row = self._read.execute("SELECT content FROM files WHERE path = ?", (path,)).fetchone()
         return _decompress(row["content"]) if row else None
+
+    def iter_engine_documents(self, root_ids: list[str]) -> Iterable[Dict[str, Any]]:
+        max_doc_bytes = int(os.environ.get("DECKARD_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304)
+        preview_bytes = int(os.environ.get("DECKARD_ENGINE_PREVIEW_BYTES", "8192") or 8192)
+        head_bytes = max_doc_bytes // 2
+        tail_bytes = max_doc_bytes - head_bytes
+        with self._read_lock:
+            if root_ids:
+                clauses = " OR ".join(["path LIKE ?"] * len(root_ids))
+                params = [f"{rid}/%" for rid in root_ids]
+                sql = f"SELECT path, repo, mtime, size, content, parse_status FROM files WHERE {clauses}"
+                rows = self._read.execute(sql, params)
+            else:
+                rows = self._read.execute("SELECT path, repo, mtime, size, content, parse_status FROM files")
+            for r in rows:
+                path = str(r["path"])
+                if "/" not in path:
+                    continue
+                root_id, rel_path = path.split("/", 1)
+                if root_ids and root_id not in root_ids:
+                    continue
+                path_text = f"{path} {rel_path}"
+                body_text = ""
+                preview = ""
+                if str(r["parse_status"]) == "ok":
+                    raw = _decompress(r["content"])
+                    norm = _normalize_engine_text(raw)
+                    if len(norm) > max_doc_bytes:
+                        norm = norm[:head_bytes] + norm[-tail_bytes:]
+                    body_text = norm
+                    if preview_bytes > 0:
+                        half = preview_bytes // 2
+                        preview = raw[:half] + ("\n...\n" if len(raw) > preview_bytes else "") + raw[-half:]
+                yield {
+                    "doc_id": path,
+                    "path": path,
+                    "repo": str(r["repo"] or "__root__"),
+                    "root_id": root_id,
+                    "rel_path": rel_path,
+                    "path_text": path_text,
+                    "body_text": body_text,
+                    "preview": preview,
+                    "mtime": int(r["mtime"] or 0),
+                    "size": int(r["size"] or 0),
+                }
 
     def search_v2(self, opts: SearchOptions) -> Tuple[List[SearchHit], Dict[str, Any]]:
         return self.engine.search_v2(opts)

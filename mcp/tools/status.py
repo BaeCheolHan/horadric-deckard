@@ -9,6 +9,7 @@ try:
     from app.db import LocalSearchDB
     from app.indexer import Indexer
     from app.config import Config
+    from app.registry import ServerRegistry
     from mcp.telemetry import TelemetryLogger
 except ImportError:
     # Fallback for direct script execution
@@ -18,6 +19,7 @@ except ImportError:
     from app.db import LocalSearchDB
     from app.indexer import Indexer
     from app.config import Config
+    from app.registry import ServerRegistry
     from mcp.telemetry import TelemetryLogger
 
 
@@ -26,6 +28,15 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
     details = bool(args.get("details", False))
     
     # 1. Gather status data
+    actual_http_port = None
+    try:
+        inst = ServerRegistry().get_instance(workspace_root)
+        if inst and inst.get("port"):
+            actual_http_port = int(inst.get("port"))
+    except Exception:
+        actual_http_port = None
+
+    config_http_port = cfg.http_api_port if cfg else 0
     status_data = {
         "index_ready": indexer.status.index_ready if indexer else False,
         "last_scan_ts": indexer.status.last_scan_ts if indexer else 0,
@@ -36,9 +47,31 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
         "fts_enabled": db.fts_enabled if db else False,
         "workspace_root": workspace_root,
         "server_version": server_version,
-        "http_api_port": cfg.http_api_port if cfg else 0,
+        "http_api_port": actual_http_port if actual_http_port is not None else config_http_port,
+        "http_api_port_config": config_http_port,
         "indexer_mode": getattr(indexer, "indexer_mode", "auto") if indexer else "off",
     }
+    if db and hasattr(db, "engine") and hasattr(db.engine, "status"):
+        try:
+            st = db.engine.status()
+            status_data.update({
+                "engine_mode": st.engine_mode,
+                "engine_ready": st.engine_ready,
+                "engine_version": st.engine_version,
+                "index_docs": st.doc_count,
+                "index_size_bytes": st.index_size_bytes,
+                "last_build_ts": st.last_build_ts,
+                "engine_reason": st.reason,
+                "engine_hint": st.hint,
+                "engine_mem_mb": getattr(st, "engine_mem_mb", 0),
+                "index_mem_mb": getattr(st, "index_mem_mb", 0),
+                "engine_threads": getattr(st, "engine_threads", 0),
+            })
+        except Exception:
+            status_data.update({
+                "engine_mode": "embedded",
+                "engine_ready": False,
+            })
     if indexer and hasattr(indexer, "get_queue_depths"):
         status_data["queue_depths"] = indexer.get_queue_depths()
     

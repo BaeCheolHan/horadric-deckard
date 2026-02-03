@@ -1,4 +1,4 @@
-name: Release Deckard
+name: Release Sari
 
 on:
   push:
@@ -33,5 +33,5 @@ jobs:
         with:
           token: ${{ secrets.GHA_PAT }}
           repository: BaeCheolHan/horadric-forge
-          event-type: deckard-update
+          event-type: sari-update
           client-payload: '{"version": "${{ steps.check_version.outputs.version }}"}'

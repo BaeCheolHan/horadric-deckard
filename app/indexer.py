@@ -58,6 +58,15 @@ else:
 
 _TEXT_SAMPLE_BYTES = 8192
 
+def _normalize_engine_text(text: str) -> str:
+    if not text:
+        return ""
+    import unicodedata
+    norm = unicodedata.normalize("NFKC", text)
+    norm = norm.lower()
+    norm = " ".join(norm.split())
+    return norm
+
 def _env_flag(name: str, default: bool = False) -> bool:
     val = os.environ.get(name)
     if val is None:
@@ -122,10 +131,9 @@ def _printable_ratio(sample: bytes, policy: str = "strong") -> float:
     except UnicodeDecodeError:
         return 0.0
     printable = 0
-    total = len(sample)
+    total = len(text)
     for ch in text:
-        o = ord(ch)
-        if ch in ("\t", "\n", "\r") or (0x20 <= o <= 0x7E):
+        if ch in ("\t", "\n", "\r") or ch.isprintable():
             printable += 1
     return printable / max(1, total)
 
@@ -724,15 +732,21 @@ class DBWriter:
         upsert_relations_rows: List[tuple] = []
         update_last_seen_paths: List[str] = []
         repo_meta_tasks: List[dict] = []
+        engine_docs: List[dict] = []
+        engine_deletes: List[str] = []
         latency_samples: List[float] = []
 
         for t in tasks:
             if t.kind == "delete_path" and t.path:
                 delete_paths.add(t.path)
+                if t.engine_deletes:
+                    engine_deletes.extend(t.engine_deletes)
                 if t.ts:
                     latency_samples.append(time.time() - t.ts)
             elif t.kind == "upsert_files" and t.rows:
                 upsert_files_rows.extend(t.rows)
+                if t.engine_docs:
+                    engine_docs.extend(t.engine_docs)
                 if t.ts:
                     latency_samples.append(time.time() - t.ts)
             elif t.kind == "upsert_symbols" and t.rows:
@@ -749,6 +763,7 @@ class DBWriter:
             upsert_symbols_rows = [r for r in upsert_symbols_rows if r[0] not in delete_paths]
             upsert_relations_rows = [r for r in upsert_relations_rows if r[0] not in delete_paths]
             update_last_seen_paths = [p for p in update_last_seen_paths if p not in delete_paths]
+            engine_docs = [d for d in engine_docs if d.get("doc_id") not in delete_paths]
 
         # Safety order: delete -> upsert_files -> upsert_symbols -> upsert_relations -> update_last_seen
         for p in delete_paths:
@@ -780,6 +795,19 @@ class DBWriter:
                     priority=int(m.get("priority", 0) or 0),
                 )
 
+        if delete_paths:
+            engine_deletes.extend(list(delete_paths))
+        if engine_docs or engine_deletes:
+            engine = getattr(self.db, "engine", None)
+            try:
+                if engine_docs and hasattr(engine, "upsert_documents"):
+                    engine.upsert_documents(engine_docs)
+                if engine_deletes and hasattr(engine, "delete_documents"):
+                    engine.delete_documents(engine_deletes)
+            except Exception as e:
+                if self.logger:
+                    self.logger.log_error(f"engine update failed: {e}")
+
         if self.latency_cb and latency_samples:
             for s in latency_samples:
                 self.latency_cb(s)
@@ -802,7 +830,10 @@ class Indexer:
         self._legacy_purge_done = False
         self._event_queue = DedupQueue() if DedupQueue else None
         self._worker_thread = None
-        self._db_writer = DBWriter(self.db, logger=self.logger, latency_cb=self._record_latency)
+        batch_size = int(getattr(cfg, "commit_batch_size", 50) or 50)
+        if batch_size <= 0:
+            batch_size = 50
+        self._db_writer = DBWriter(self.db, logger=self.logger, max_batch=batch_size, latency_cb=self._record_latency)
         self._metrics_thread = None
         self._latencies = deque(maxlen=2000)
         self._enqueue_count = 0
@@ -955,9 +986,9 @@ class Indexer:
         if self.logger:
             self.logger.log_info(f"dropped_on_shutdown={remaining}")
 
-    def _enqueue_db_tasks(self, files_rows: List[tuple], symbols_rows: List[tuple], relations_rows: List[tuple], enqueue_ts: Optional[float] = None) -> None:
+    def _enqueue_db_tasks(self, files_rows: List[tuple], symbols_rows: List[tuple], relations_rows: List[tuple], engine_docs: Optional[List[dict]] = None, enqueue_ts: Optional[float] = None) -> None:
         if files_rows:
-            self._db_writer.enqueue(DbTask(kind="upsert_files", rows=list(files_rows), ts=enqueue_ts or time.time()))
+            self._db_writer.enqueue(DbTask(kind="upsert_files", rows=list(files_rows), ts=enqueue_ts or time.time(), engine_docs=list(engine_docs or [])))
         if symbols_rows:
             self._db_writer.enqueue(DbTask(kind="upsert_symbols", rows=list(symbols_rows)))
         if relations_rows:
@@ -1091,7 +1122,7 @@ class Indexer:
             return
 
         try:
-            res = self._process_file_task(matched_root, file_path, st, int(time.time()), time.time(), raise_on_error=True)
+            res = self._process_file_task(matched_root, file_path, st, int(time.time()), time.time(), False, raise_on_error=True)
         except (IOError, PermissionError, OSError) as e:
             self._retry_task(task, e)
             return
@@ -1120,6 +1151,7 @@ class Indexer:
             )],
             list(res.get("symbols") or []),
             list(res.get("relations") or []),
+            engine_docs=[res.get("engine_doc")] if res.get("engine_doc") else [],
             enqueue_ts=task.enqueue_ts,
         )
 
@@ -1136,6 +1168,40 @@ class Indexer:
         t = threading.Timer(sleep, lambda: self._enqueue_action(task.action, task.path, time.time(), attempts=task.attempts))
         t.daemon = True
         t.start()
+
+    def _build_engine_doc(self, doc_id: str, repo: str, rel_to_root: str, content: str, parse_status: str, mtime: int, size: int) -> dict:
+        rel_path = Path(rel_to_root).as_posix()
+        root_id = doc_id.split("/", 1)[0] if "/" in doc_id else ""
+        path_text = f"{doc_id} {rel_path}"
+        max_doc_bytes = int(os.environ.get("DECKARD_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304)
+        preview_bytes = int(os.environ.get("DECKARD_ENGINE_PREVIEW_BYTES", "8192") or 8192)
+        body_text = ""
+        preview = ""
+        if parse_status == "ok":
+            norm = _normalize_engine_text(content or "")
+            if len(norm) > max_doc_bytes:
+                head = max_doc_bytes // 2
+                tail = max_doc_bytes - head
+                norm = norm[:head] + norm[-tail:]
+            body_text = norm
+            if preview_bytes > 0:
+                if content and len(content) > preview_bytes:
+                    half = preview_bytes // 2
+                    preview = content[:half] + "\n...\n" + content[-half:]
+                else:
+                    preview = content or ""
+        return {
+            "doc_id": doc_id,
+            "path": doc_id,
+            "repo": repo,
+            "root_id": root_id,
+            "rel_path": rel_path,
+            "path_text": path_text,
+            "body_text": body_text,
+            "preview": preview,
+            "mtime": int(mtime),
+            "size": int(size),
+        }
 
     def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, excluded: bool, raise_on_error: bool = False) -> Optional[dict]:
         try:
@@ -1173,6 +1239,8 @@ class Indexer:
             relations: List[Tuple] = []
 
             size = int(getattr(st, "st_size", 0) or 0)
+            max_file_bytes = int(getattr(self.cfg, "max_file_bytes", 0) or 0)
+            too_large_meta = max_file_bytes > 0 and size > max_file_bytes
             # Determine include eligibility for parse/ast
             is_included = include_all_ext
             if not is_included:
@@ -1180,14 +1248,16 @@ class Indexer:
                 is_included = (rel in include_files_rel) or (str(file_path.absolute()) in include_files_abs)
                 if not is_included and include_ext:
                     is_included = file_path.suffix.lower() in include_ext
+            if (include_files or include_ext) and not is_included:
+                return None
 
             # Exclude rules for parse/ast
             if excluded and exclude_parse:
                 parse_status, parse_reason = "skipped", "excluded"
                 ast_status, ast_reason = "skipped", "excluded"
-            elif not is_included:
-                parse_status, parse_reason = "skipped", "excluded"
-                ast_status, ast_reason = "skipped", "parse_skipped"
+            elif too_large_meta:
+                parse_status, parse_reason = "skipped", "too_large"
+                ast_status, ast_reason = "skipped", "too_large"
             else:
                 sample = _sample_file(file_path, size)
                 printable_ratio = _printable_ratio(sample, policy=decode_policy)
@@ -1272,6 +1342,7 @@ class Indexer:
                 "is_minified": is_minified,
                 "sampled": sampled,
                 "content_bytes": content_bytes,
+                "engine_doc": self._build_engine_doc(db_path, repo, rel_to_root, content, parse_status, int(st.st_mtime), size),
             }
         except Exception:
             self.status.errors += 1

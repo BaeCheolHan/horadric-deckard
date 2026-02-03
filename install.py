@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Deckard Universal Installer/Uninstaller (v2.7.0)
+Sari Universal Installer/Uninstaller (v2.7.0)
 - Install: clones repo, configures Claude/Codex
 - Uninstall: removes files, cleans configs
 - Features: Interactive/JSON/Quiet modes, Network Diagnostics
@@ -17,13 +17,13 @@ import socket
 from pathlib import Path
 
 IS_WINDOWS = os.name == 'nt'
-REPO_URL = "https://github.com/BaeCheolHan/horadric-deckard.git"
+REPO_URL = "https://github.com/BaeCheolHan/sari.git"
 
 if IS_WINDOWS:
-    INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "horadric-deckard"
+    INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "sari"
     CLAUDE_CONFIG_DIR = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "Claude"
 else:
-    INSTALL_DIR = Path.home() / ".local" / "share" / "horadric-deckard"
+    INSTALL_DIR = Path.home() / ".local" / "share" / "sari"
     CLAUDE_CONFIG_DIR = Path.home() / "Library" / "Application Support" / "Claude"
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -64,7 +64,7 @@ def print_step(msg):
     log(msg)
     if CONFIG["json"]: return
     if not CONFIG["quiet"]:
-        print(f"{C_BLUE}[Deckard]{C_RESET} {msg}")
+        print(f"{C_BLUE}[Sari]{C_RESET} {msg}")
 
 def print_success(msg):
     log(f"SUCCESS: {msg}")
@@ -104,11 +104,11 @@ def print_next_steps(version):
         return
         
     print("\n" + "="*50)
-    print(f"{C_GREEN}Deckard v{version} Installed Successfully! 🚀{C_RESET}")
+    print(f"{C_GREEN}Sari v{version} Installed Successfully! 🚀{C_RESET}")
     print("="*50)
     print("Next Steps:")
     print(f"1. {C_BLUE}Restart your Editor{C_RESET} (Claude/Cursor) to load MCP.")
-    print(f"2. Check status: {C_YELLOW}deckard status{C_RESET}")
+    print(f"2. Check status: {C_YELLOW}sari status{C_RESET}")
     
     bootstrap_path = INSTALL_DIR / ("bootstrap.bat" if IS_WINDOWS else "bootstrap.sh")
     print(f"3. Run Doctor if issues: {C_YELLOW}{sys.executable} {INSTALL_DIR}/doctor.py{C_RESET}")
@@ -164,7 +164,7 @@ def _run(cmd, **kwargs):
     return subprocess.run(cmd, **kwargs)
 
 def _list_deckard_pids():
-    """Best-effort process scan to find deckard-related daemons."""
+    """Best-effort process scan to find sari-related daemons."""
     pids = []
     if IS_WINDOWS:
         try:
@@ -177,7 +177,7 @@ def _list_deckard_pids():
                 for row in reader:
                     cmdline = row.get("Image Name", "") + " " + row.get("Window Title", "")
                     pid = int(row.get("PID", 0))
-                    if "python" in cmdline.lower() and ("mcp.daemon" in cmdline or "deckard" in cmdline.lower()):
+                    if "python" in cmdline.lower() and ("mcp.daemon" in cmdline or "sari" in cmdline.lower()):
                         pids.append(pid)
         except Exception: pass
     else:
@@ -190,7 +190,7 @@ def _list_deckard_pids():
                     pid_str, cmd = line.split(None, 1)
                     pid = int(pid_str)
                 except Exception: continue
-                if "mcp.daemon" in cmd or "horadric-deckard" in cmd or "deckard" in cmd:
+                if "mcp.daemon" in cmd or "sari" in cmd or "sari" in cmd:
                     if str(INSTALL_DIR) in cmd or "mcp.daemon" in cmd:
                         pids.append(pid)
         except Exception: pass
@@ -227,14 +227,14 @@ def _ssot_config_path() -> str:
     if val:
         return str(Path(os.path.expanduser(val)))
     if IS_WINDOWS:
-        return str(Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "deckard" / "config.json")
-    return str(Path.home() / ".config" / "deckard" / "config.json")
+        return str(Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "sari" / "config.json")
+    return str(Path.home() / ".config" / "sari" / "config.json")
 
 def _ensure_deckard_launcher() -> str:
-    """Create a 'deckard' launcher in a standard bin dir."""
+    """Create a 'sari' launcher in a standard bin dir."""
     if IS_WINDOWS:
-        bin_dir = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "deckard"
-        target = bin_dir / "deckard.cmd"
+        bin_dir = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "sari"
+        target = bin_dir / "sari.cmd"
         script = f'@echo off\r\n"{INSTALL_DIR}\\bootstrap.bat" %*\r\n'
         try:
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -244,7 +244,7 @@ def _ensure_deckard_launcher() -> str:
             return str(target)
     else:
         bin_dir = Path.home() / ".local" / "bin"
-        target = bin_dir / "deckard"
+        target = bin_dir / "sari"
         script = f'#!/bin/sh\nexec "{INSTALL_DIR}/bootstrap.sh" "$@"\n'
         try:
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -260,20 +260,20 @@ def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
     lines = cfg_path.read_text(encoding="utf-8").splitlines() if cfg_path.exists() else []
     
     new_lines = []
-    in_deckard = False
+    in_sari = False
     for line in lines:
-        if line.strip() == "[mcp_servers.deckard]":
-            in_deckard = True
+        if line.strip() == "[mcp_servers.sari]":
+            in_sari = True
             continue
-        if in_deckard and line.startswith("[") and line.strip() != "[mcp_servers.deckard]":
-            in_deckard = False
+        if in_sari and line.startswith("[") and line.strip() != "[mcp_servers.sari]":
+            in_sari = False
             new_lines.append(line)
             continue
-        if not in_deckard:
+        if not in_sari:
             new_lines.append(line)
 
-    deckard_block = [
-        "[mcp_servers.deckard]",
+    sari_block = [
+        "[mcp_servers.sari]",
         f"command = \"{command_path}\"",
         "args = [\"--transport\", \"stdio\", \"--format\", \"pack\"]",
         f"env = {{ DECKARD_CONFIG = \"{_ssot_config_path()}\" }}",
@@ -287,12 +287,12 @@ def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
             insert_at = i + 1
             break
             
-    if insert_at == 0 and not new_lines: new_lines = deckard_block
-    elif insert_at == 0: new_lines = deckard_block + new_lines
-    else: new_lines = new_lines[:insert_at] + deckard_block + new_lines[insert_at:]
+    if insert_at == 0 and not new_lines: new_lines = sari_block
+    elif insert_at == 0: new_lines = sari_block + new_lines
+    else: new_lines = new_lines[:insert_at] + sari_block + new_lines[insert_at:]
         
     cfg_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
-    print_step(f"Updated Deckard config in {cfg_path}")
+    print_step(f"Updated Sari config in {cfg_path}")
 
 def _upsert_gemini_settings(cfg_path: Path, command_path: str, workspace_root: str):
     """Upsert MCP server config into Gemini CLI settings.json."""
@@ -305,7 +305,7 @@ def _upsert_gemini_settings(cfg_path: Path, command_path: str, workspace_root: s
             data = {}
 
     mcp_servers = data.get("mcpServers") or {}
-    mcp_servers["deckard"] = {
+    mcp_servers["sari"] = {
         "command": command_path,
         "args": ["--transport", "stdio", "--format", "pack"],
         "env": {"DECKARD_CONFIG": _ssot_config_path()},
@@ -313,7 +313,7 @@ def _upsert_gemini_settings(cfg_path: Path, command_path: str, workspace_root: s
     data["mcpServers"] = mcp_servers
 
     cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print_step(f"Updated Deckard config in {cfg_path}")
+    print_step(f"Updated Sari config in {cfg_path}")
 
 def _remove_mcp_config(cfg_path: Path):
     """Generic MCP server block removal from TOML config (Codex/Gemini)."""
@@ -321,38 +321,38 @@ def _remove_mcp_config(cfg_path: Path):
     try:
         lines = cfg_path.read_text(encoding="utf-8").splitlines()
         new_lines = []
-        in_deckard, removed = False, False
+        in_sari, removed = False, False
         for line in lines:
-            if line.strip() == "[mcp_servers.deckard]":
-                in_deckard = True
+            if line.strip() == "[mcp_servers.sari]":
+                in_sari = True
                 removed = True
                 continue
-            if in_deckard and line.startswith("[") and line.strip() != "[mcp_servers.deckard]":
-                in_deckard = False
+            if in_sari and line.startswith("[") and line.strip() != "[mcp_servers.sari]":
+                in_sari = False
                 new_lines.append(line)
                 continue
-            if not in_deckard:
+            if not in_sari:
                 new_lines.append(line)
         if removed:
-            print_step(f"Removed Deckard config from {cfg_path}")
+            print_step(f"Removed Sari config from {cfg_path}")
             cfg_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     except Exception as e:
         print_warn(f"Failed to update {cfg_path}: {e}")
 
 def _remove_gemini_settings(cfg_path: Path):
-    """Remove Deckard MCP server from Gemini CLI settings.json."""
+    """Remove Sari MCP server from Gemini CLI settings.json."""
     if not cfg_path.exists(): return
     try:
         data = json.loads(cfg_path.read_text(encoding="utf-8"))
         mcp_servers = data.get("mcpServers") or {}
-        if "deckard" in mcp_servers:
-            mcp_servers.pop("deckard", None)
+        if "sari" in mcp_servers:
+            mcp_servers.pop("sari", None)
             if mcp_servers:
                 data["mcpServers"] = mcp_servers
             else:
                 data.pop("mcpServers", None)
             cfg_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-            print_step(f"Removed Deckard config from {cfg_path}")
+            print_step(f"Removed Sari config from {cfg_path}")
     except Exception as e:
         print_warn(f"Failed to update {cfg_path}: {e}")
 
@@ -368,23 +368,23 @@ def do_install(args):
     perform_global_install = False
     version = "dev"
     if args.update:
-        if not args.yes and not confirm(f"Deckard will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
+        if not args.yes and not confirm(f"Sari will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
             print_step("Update cancelled. Workspace will still be configured.")
         else:
-            print_step("Updating Deckard...")
+            print_step("Updating Sari...")
             perform_global_install = True
     elif not INSTALL_DIR.exists():
-        print_step("Deckard not found. Starting first-time installation...")
+        print_step("Sari not found. Starting first-time installation...")
         perform_global_install = True
     else:
-        print_step("Deckard is already installed globally. Skipping global installation.")
+        print_step("Sari is already installed globally. Skipping global installation.")
         print_warn("Use the --update flag to force a re-installation/update.")
 
     if perform_global_install:
         # Stop any running daemons to prevent file locking issues
         pids = _list_deckard_pids()
         if pids:
-            print_step(f"Stopping running deckard processes: {pids}")
+            print_step(f"Stopping running sari processes: {pids}")
             _terminate_pids(pids)
 
         # Remove previous installation if it exists
@@ -400,7 +400,7 @@ def do_install(args):
                 sys.exit(1)
         # Clone the repository
         source_url = os.environ.get("DECKARD_INSTALL_SOURCE", REPO_URL)
-        print_step(f"Cloning latest Deckard from {source_url} to {INSTALL_DIR}...")
+        print_step(f"Cloning latest Sari from {source_url} to {INSTALL_DIR}...")
         try:
             subprocess.run(["git", "clone", source_url, str(INSTALL_DIR)], check=True, capture_output=CONFIG["quiet"])
             source_path = Path(source_url)
@@ -446,13 +446,13 @@ def do_install(args):
     bootstrap_name = "bootstrap.bat" if IS_WINDOWS else "bootstrap.sh"
     bootstrap_script = INSTALL_DIR / bootstrap_name
     if not bootstrap_script.exists():
-        print_error(f"Deckard is not installed correctly. Missing {bootstrap_script}.")
+        print_error(f"Sari is not installed correctly. Missing {bootstrap_script}.")
         print_error("Please run the installer again with the --update flag.")
         sys.exit(1)
 
     workspace_root = _resolve_workspace_root()
     _ensure_deckard_launcher()
-    mcp_command = "deckard"
+    mcp_command = "sari"
     
     # Configure workspace-local CLI files
     _upsert_mcp_config(Path(workspace_root) / ".codex" / "config.toml", mcp_command, workspace_root)
@@ -464,14 +464,14 @@ def do_install(args):
     _remove_mcp_config(Path.home() / ".gemini" / "config.toml")
     _remove_gemini_settings(Path.home() / ".gemini" / "settings.json")
     
-    print_success(f"Workspace '{workspace_root}' is now configured to use Deckard.")
+    print_success(f"Workspace '{workspace_root}' is now configured to use Sari.")
 
     # Do not auto-create marker; roots are managed via config/env.
 
     # Final health check only if we installed/updated something
     if perform_global_install:
         if not _is_daemon_running():
-            print_step("Starting Deckard daemon...")
+            print_step("Starting Sari daemon...")
             start_env = os.environ.copy()
             start_env["DECKARD_WORKSPACE_ROOT"] = workspace_root
             _start_daemon(bootstrap_script, start_env)
@@ -515,10 +515,10 @@ def do_uninstall(args):
             print_warn(f"Failed to schedule uninstall cleanup: {e}")
 
     if not INSTALL_DIR.exists():
-        print_warn("Deckard is not installed.")
+        print_warn("Sari is not installed.")
         # Proceed anyway to clean configs
     
-    if not args.yes and not confirm("Uninstall Deckard? (Deletes DB)", default=False):
+    if not args.yes and not confirm("Uninstall Sari? (Deletes DB)", default=False):
         return
 
     pids = _list_deckard_pids()

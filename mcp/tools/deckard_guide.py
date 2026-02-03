@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Deckard guidance tool for LLMs.
+Sari guidance tool for LLMs.
 Returns a short usage guide to encourage search-first behavior.
 """
 from typing import Any, Dict
@@ -9,7 +9,7 @@ from mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_te
 
 def execute_deckard_guide(args: Dict[str, Any]) -> Dict[str, Any]:
     text = (
-        "💡 Horadric Deckard - Agentic Search Workflow Guide\n\n"
+        "💡 Sari - Agentic Search Workflow Guide\n\n"
         "이 도구는 대규모 코드베이스에서 당신의 '외부 기억' 역할을 합니다. "
         "토큰을 낭비하며 파일을 하나씩 열어보기 전에, 아래 순서를 따르면 훨씬 정확하고 빠르게 임무를 완수할 수 있습니다.\n\n"
         "1. [정찰] `search` 또는 `repo_candidates`를 사용해 맥락을 파악하세요.\n"
@@ -21,12 +21,12 @@ def execute_deckard_guide(args: Dict[str, Any]) -> Dict[str, Any]:
         "주의: 기본 모드는 경고입니다. 필요 시 search-first 모드를 warn/enforce/off로 조정할 수 있습니다."
     )
     def build_pack() -> str:
-        lines = [pack_header("deckard_guide", {}, returned=1)]
+        lines = [pack_header("sari_guide", {}, returned=1)]
         lines.append(pack_line("t", single_value=pack_encode_text(text)))
         return "\n".join(lines)
 
     return mcp_response(
-        "deckard_guide",
+        "sari_guide",
         build_pack,
         lambda: {"content": [{"type": "text", "text": text}]},
     )

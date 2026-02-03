@@ -16,12 +16,12 @@ if os.environ.get("DECKARD_REGISTRY_FILE"):
     REGISTRY_FILE = Path(os.environ["DECKARD_REGISTRY_FILE"]).resolve()
     REGISTRY_DIR = REGISTRY_FILE.parent
 else:
-    REGISTRY_DIR = Path.home() / ".local" / "share" / "horadric-deckard"
+    REGISTRY_DIR = Path.home() / ".local" / "share" / "sari"
     REGISTRY_FILE = REGISTRY_DIR / "server.json"
 
 class ServerRegistry:
     """
-    Manages the 'server.json' registry for Deckard Daemons.
+    Manages the 'server.json' registry for Sari Daemons.
     Maps Workspace Root Paths -> {Port, PID, Status}.
     Thread/Process safe via fcntl locking.
     """

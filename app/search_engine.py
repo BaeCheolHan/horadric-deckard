@@ -1,6 +1,7 @@
 import sqlite3
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import List, Tuple, Optional, Any, Dict
 
@@ -17,6 +18,8 @@ class SearchEngine:
     def search_v2(self, opts: SearchOptions) -> Tuple[List[SearchHit], Dict[str, Any]]:
         """Enhanced search with Hybrid (Symbol + FTS) strategy."""
         q = (opts.query or "").strip()
+        q = unicodedata.normalize("NFKC", q).lower()
+        q = " ".join(q.split())
         if not q:
             return [], {"fallback_used": False, "total_scanned": 0, "total": 0}
 
@@ -548,3 +551,22 @@ class SearchEngine:
         for p in patterns:
             if p in path or fnmatch.fnmatch(path, f"*{p}*"): return True
         return False
+
+
+class SqliteSearchEngineAdapter:
+    """Adapter for the legacy SQLite-backed SearchEngine implementation."""
+
+    def __init__(self, db):
+        self._impl = SearchEngine(db)
+
+    def search_v2(self, opts: SearchOptions):
+        return self._impl.search_v2(opts)
+
+    def repo_candidates(self, q: str, limit: int = 3, root_ids: Optional[List[str]] = None):
+        return self._impl.repo_candidates(q, limit, root_ids=root_ids)
+
+    def _search_like(self, opts: SearchOptions, terms: List[str], meta: Dict[str, Any], no_slice: bool = False):
+        return self._impl._search_like(opts, terms, meta, no_slice=no_slice)
+
+    def _search_fts(self, opts: SearchOptions, terms: List[str], meta: Dict[str, Any], no_slice: bool = False):
+        return self._impl._search_fts(opts, terms, meta, no_slice=no_slice)

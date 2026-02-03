@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Repo candidates tool for Deckard MCP Server.
+Repo candidates tool for Sari MCP Server.
 """
 import json
 from typing import Any, Dict, List

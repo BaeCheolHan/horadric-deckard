@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sari"
+dynamic = ["version"]
+description = "Sari - Local Search MCP Server"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Horadric" }
+]
+dependencies = [
+  "watchdog>=2.0.0",
+]
+
+[project.scripts]
+sari = "deckard.main:main"
+
+[tool.setuptools]
+packages = { find = { include = ["app", "deckard", "sari", "mcp", "mcp.*"] } }
+
+[tool.setuptools.dynamic]
+version = { attr = "deckard.version.__version__" }

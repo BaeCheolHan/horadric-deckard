@@ -1,8 +1,8 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from app.db import LocalSearchDB
 from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text, resolve_root_ids
 
-def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, roots: List[str]) -> Dict[str, Any]:
+def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, roots: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Execute search_symbols tool.
     
@@ -12,7 +12,7 @@ def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, roots: List[
     """
     query = args.get("query", "")
     limit_arg = int(args.get("limit", 20))
-    root_ids = resolve_root_ids(roots)
+    root_ids = resolve_root_ids(list(roots or []))
     
     # --- JSON Builder (Legacy/Debug) ---
     def build_json() -> Dict[str, Any]:

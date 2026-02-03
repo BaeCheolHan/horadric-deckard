@@ -5,7 +5,7 @@
   "scan_interval_seconds": 180,
   "snippet_max_lines": 5,
   "max_file_bytes": 800000,
-  "db_path": "~/Library/Application Support/Deckard/index.db",
+  "db_path": "~/Library/Application Support/Sari/index.db",
   "include_ext": [
     ".py",
     ".js",

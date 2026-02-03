@@ -85,7 +85,7 @@ def start_daemon_if_needed(host, port):
     except (ConnectionRefusedError, OSError):
         pass
 
-    lock_path = os.path.join(tempfile.gettempdir(), f"deckard-daemon-{host}-{port}.lock")
+    lock_path = os.path.join(tempfile.gettempdir(), f"sari-daemon-{host}-{port}.lock")
     with open(lock_path, "w") as lock_file:
         try:
             # Acquire exclusive lock (blocking)

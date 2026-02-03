@@ -19,6 +19,8 @@ def execute_read_file(args: Dict[str, Any], db: LocalSearchDB, roots: List[str])
         )
 
     db_path = resolve_db_path(path, roots)
+    if not db_path and db.has_legacy_paths():
+        db_path = path
     if not db_path:
         return mcp_response(
             "read_file",

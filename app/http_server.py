@@ -7,9 +7,11 @@ from urllib.parse import parse_qs, urlparse
 try:
     from .db import LocalSearchDB  # type: ignore
     from .indexer import Indexer  # type: ignore
+    from .models import SearchOptions  # type: ignore
 except ImportError:
     from db import LocalSearchDB  # type: ignore
     from indexer import Indexer  # type: ignore
+    from models import SearchOptions  # type: ignore
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -64,17 +66,49 @@ class Handler(BaseHTTPRequestHandler):
             q = (qs.get("q") or [""])[0].strip()
             repo = (qs.get("repo") or [""])[0].strip() or None
             limit = int((qs.get("limit") or ["20"])[0])
+            total_mode = (qs.get("total_mode") or [""])[0].strip().lower()
+            root_ids = qs.get("root_ids") or []
             if not q:
                 return self._json({"ok": False, "error": "missing q"}, status=400)
-            hits, meta = self.db.search(
-                q=q,
+            engine = getattr(self.db, "engine", None)
+            engine_mode = "sqlite"
+            index_version = ""
+            if engine and hasattr(engine, "status"):
+                st = engine.status()
+                engine_mode = st.engine_mode
+                index_version = st.index_version
+                if engine_mode == "embedded" and not st.engine_ready:
+                    return self._json({"ok": False, "error": f"engine_ready=false reason={st.reason}", "hint": st.hint}, status=503)
+            req_root_ids: list[str] = []
+            for item in root_ids:
+                if "," in item:
+                    req_root_ids.extend([r for r in item.split(",") if r])
+                elif item:
+                    req_root_ids.append(item)
+            allowed = list(self.root_ids or [])
+            final_root_ids = allowed
+            if req_root_ids:
+                final_root_ids = [r for r in allowed if r in req_root_ids]
+                if req_root_ids and not final_root_ids:
+                    if self.db.has_legacy_paths():
+                        final_root_ids = []
+                    else:
+                        return self._json({"ok": False, "error": "root_ids out of scope"}, status=400)
+            snippet_lines = max(1, min(int(self.indexer.cfg.snippet_max_lines), 20))
+            opts = SearchOptions(
+                query=q,
                 repo=repo,
                 limit=max(1, min(limit, 50)),
-                snippet_max_lines=max(1, min(int(self.indexer.cfg.snippet_max_lines), 20)),
-                root_ids=self.root_ids,
+                snippet_lines=snippet_lines,
+                root_ids=final_root_ids,
+                total_mode=total_mode if total_mode in {"exact", "approx"} else "exact",
             )
+            try:
+                hits, meta = self.db.search_v2(opts)
+            except Exception as e:
+                return self._json({"ok": False, "error": f"engine query failed: {e}"}, status=500)
             return self._json(
-                {"ok": True, "q": q, "repo": repo, "meta": meta, "hits": [h.__dict__ for h in hits]}
+                {"ok": True, "q": q, "repo": repo, "meta": meta, "engine": engine_mode, "index_version": index_version, "hits": [h.__dict__ for h in hits]}
             )
 
         if path == "/repo-candidates":
@@ -145,16 +179,19 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     
     if httpd is None:
         raise RuntimeError("Failed to create HTTP server")
+
+    actual_port = httpd.server_address[1]
+    BoundHandler.server_port = actual_port  # type: ignore
     
     # Register in server.json
     if has_registry and workspace_root:
         try:
             registry.register(workspace_root, actual_port, os.getpid())
         except Exception as e:
-            print(f"[deckard] Registry update failed: {e}", file=sys.stderr)
+            print(f"[sari] Registry update failed: {e}", file=sys.stderr)
 
     if actual_port != port:
-        print(f"[deckard] HTTP API started on port {actual_port} (requested: {port})", file=sys.stderr)
+        print(f"[sari] HTTP API started on port {actual_port} (requested: {port})", file=sys.stderr)
 
     # Clean shutdown hook?
     # HTTP Server runs in thread, so unregistering is tricky if main thread dies hard.

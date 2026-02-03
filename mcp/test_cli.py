@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for Deckard CLI HTTP helpers.
+Unit tests for Sari CLI HTTP helpers.
 """
 import io
 import json
@@ -26,7 +26,7 @@ def _set_env(key: str, value: str):
 
 def test_get_http_host_port_prefers_server_json():
     with tempfile.TemporaryDirectory() as tmpdir:
-        data_dir = Path(tmpdir) / ".codex" / "tools" / "deckard" / "data"
+        data_dir = Path(tmpdir) / ".codex" / "tools" / "sari" / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
         server_json = data_dir / "server.json"
         server_json.write_text(json.dumps({"host": "127.0.0.1", "port": 47788}))

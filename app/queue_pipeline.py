@@ -42,6 +42,8 @@ class DbTask:
     paths: Optional[List[str]] = None
     ts: Optional[int] = None
     repo_meta: Optional[dict] = None
+    engine_docs: Optional[List[dict]] = None
+    engine_deletes: Optional[List[str]] = None
 
 
 def coalesce_action(existing: Optional[TaskAction], incoming: TaskAction) -> TaskAction:

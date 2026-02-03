@@ -9,7 +9,7 @@ v2.5.0 enhancements:
 - Improved UX (root display, fallback reasons)
 
 Usage:
-  python3 .codex/tools/deckard/mcp/server.py
+  python3 .codex/tools/sari/mcp/server.py
 
 Environment:
   LOCAL_SEARCH_WORKSPACE_ROOT - Workspace root directory (default: cwd)
@@ -50,13 +50,14 @@ import mcp.tools.scan_once as scan_once_tool
 import mcp.tools.get_callers as get_callers_tool
 import mcp.tools.get_implementations as get_implementations_tool
 import mcp.tools.deckard_guide as deckard_guide_tool
+from mcp.tools.registry import ToolContext, build_default_registry
 
 
 class LocalSearchMCPServer:
     """MCP Server for Local Search - STDIO mode."""
     
     PROTOCOL_VERSION = "2025-11-25"
-    SERVER_NAME = "deckard"
+    SERVER_NAME = "sari"
     # Version is injected via environment variable by the bootstrapper
     @staticmethod
     def _resolve_version() -> str:
@@ -90,6 +91,7 @@ class LocalSearchMCPServer:
             "last_search_symbols_ts": None,
             "read_without_search": 0,
         }
+        self._tool_registry = build_default_registry()
         
         # Initialize telemetry logger
         self.logger = TelemetryLogger(WorkspaceManager.get_global_log_dir())
@@ -163,6 +165,11 @@ class LocalSearchMCPServer:
 
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 self.db = LocalSearchDB(str(db_path))
+                try:
+                    from app.engine_registry import get_default_engine
+                    self.db.set_engine(get_default_engine(self.db, self.cfg, self.cfg.workspace_roots))
+                except Exception as e:
+                    self.logger.log_error(f"engine init failed: {e}")
                 self.logger.log_info(f"DB path: {db_path}")
                 
                 from app.indexer import resolve_indexer_settings
@@ -225,339 +232,40 @@ class LocalSearchMCPServer:
     
     def handle_tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Handle tools/list request - v2.5.0 enhanced schema."""
-        return {
-            "tools": [
-                {
-                    "name": "deckard_guide",
-                    "description": "Usage guide. Call this if unsure; it enforces search-first workflow.",
-                    "inputSchema": {"type": "object", "properties": {}},
-                },
-                {
-                    "name": "search",
-                    "description": "SEARCH FIRST. Use before opening files to locate relevant paths/symbols.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query (keywords, function names, regex)",
-                            },
-                            "repo": {
-                                "type": "string",
-                                "description": "Limit search to specific repository",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum results (default: 10, max: 50)",
-                                "default": 10,
-                            },
-                            "offset": {
-                                "type": "integer",
-                                "description": "Pagination offset (default: 0)",
-                                "default": 0,
-                            },
-                            "file_types": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Filter by file extensions, e.g., ['py', 'ts']",
-                            },
-                            "path_pattern": {
-                                "type": "string",
-                                "description": "Glob pattern for path matching, e.g., 'src/**/*.ts'",
-                            },
-                            "exclude_patterns": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Patterns to exclude, e.g., ['node_modules']",
-                            },
-                            "recency_boost": {
-                                "type": "boolean",
-                                "description": "Boost recently modified files (default: false)",
-                                "default": False,
-                            },
-                            "use_regex": {
-                                "type": "boolean",
-                                "description": "Treat query as regex pattern (default: false)",
-                                "default": False,
-                            },
-                            "case_sensitive": {
-                                "type": "boolean",
-                                "description": "Case-sensitive search (default: false)",
-                                "default": False,
-                            },
-                            "context_lines": {
-                                "type": "integer",
-                                "description": "Number of context lines in snippet (default: 5)",
-                                "default": 5,
-                             },
-                            "scope": {
-                                "type": "string",
-                                "description": "Alias for 'repo'",
-                            },
-                            "type": {
-                                "type": "string",
-                                "enum": ["docs", "code"],
-                                "description": "Filter by type: 'docs' or 'code'",
-                            },
-                         },
-                        "required": ["query"],
-                    },
-                },
-                {
-                    "name": "status",
-                    "description": "Get indexer status. Use details=true for per-repo stats.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "details": {
-                                "type": "boolean",
-                                "description": "Include detailed repo stats (default: false)",
-                                "default": False,
-                            }
-                        },
-                    },
-                },
-                {
-                    "name": "rescan",
-                    "description": "Trigger an async rescan of the workspace index.",
-                    "inputSchema": {"type": "object", "properties": {}},
-                },
-                {
-                    "name": "scan_once",
-                    "description": "Run a synchronous scan once (blocking).",
-                    "inputSchema": {"type": "object", "properties": {}},
-                },
-                {
-                    "name": "repo_candidates",
-                    "description": "Suggest top repos for a query. Use before search if repo is unknown.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Query to find relevant repositories",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum candidates (default: 3)",
-                                "default": 3,
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-                {
-                    "name": "list_files",
-                    "description": "List indexed files with filters. If repo is omitted, returns repo summary only.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "repo": {
-                                "type": "string",
-                                "description": "Filter by repository name",
-                            },
-                            "path_pattern": {
-                                "type": "string",
-                                "description": "Glob pattern for path matching",
-                            },
-                            "file_types": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Filter by file extensions",
-                            },
-                            "include_hidden": {
-                                "type": "boolean",
-                                "description": "Include hidden directories (default: false)",
-                                "default": False,
-                            },
-                            "summary": {
-                                "type": "boolean",
-                                "description": "Return repo summary only (default: true when repo not specified)",
-                                "default": False,
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum results (default: 100)",
-                                "default": 100,
-                            },
-                            "offset": {
-                                "type": "integer",
-                                "description": "Pagination offset (default: 0)",
-                                "default": 0,
-                            },
-                        },
-                    },
-                },
-                {
-                    "name": "read_file",
-                    "description": "Read full file content by path. Use only after search narrows candidates (policy may warn/reject by mode).",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Absolute path or relative path (if unique) to the file",
-                            }
-                        },
-                        "required": ["path"],
-                    },
-                },
-                {
-                    "name": "search_symbols",
-                    "description": "Search for symbols by name. Prefer this to scanning files.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Symbol name to search for (supports fuzzy matching)",
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "Maximum results (default: 20)",
-                                "default": 20,
-                            },
-                        },
-                        "required": ["query"],
-                    },
-                },
-                {
-                    "name": "read_symbol",
-                    "description": "Read symbol definition block by name/path. Use after search_symbols (policy may warn/reject by mode).",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "File path containing the symbol",
-                            },
-                            "name": {
-                                "type": "string",
-                                "description": "Name of the symbol (function/class name)",
-                            },
-                        },
-                        "required": ["path", "name"],
-                    },
-                },
-                {
-                    "name": "doctor",
-                    "description": "Run health checks and return structured diagnostics.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "include_network": {"type": "boolean", "default": True},
-                            "include_port": {"type": "boolean", "default": True},
-                            "include_db": {"type": "boolean", "default": True},
-                            "include_disk": {"type": "boolean", "default": True},
-                            "include_daemon": {"type": "boolean", "default": True},
-                            "include_venv": {"type": "boolean", "default": True},
-                            "include_marker": {"type": "boolean", "default": False},
-                            "port": {"type": "integer", "default": 47800},
-                            "min_disk_gb": {"type": "number", "default": 1.0},
-                        },
-                    },
-                },
-                {
-                    "name": "search_api_endpoints",
-                    "description": "Search API endpoints by path pattern (search-first for APIs).",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "URL path pattern to search for (e.g., '/api/v1/users')",
-                            }
-                        },
-                        "required": ["path"],
-                    },
-                },
-                {
-                    "name": "index_file",
-                    "description": "Force immediate re-indexing for a file path. Use when content seems stale.",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "path": {
-                                "type": "string",
-                                "description": "Absolute or relative path to the file to re-index",
-                            }
-                        },
-                        "required": ["path"],
-                    },
-                },
-                {
-                    "name": "get_callers",
-                    "description": "Find callers of a symbol (use after search_symbols).",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Name of the symbol to find callers for",
-                            }
-                        },
-                        "required": ["name"],
-                    },
-                },
-                {
-                    "name": "get_implementations",
-                    "description": "Find implementations of a symbol (use after search_symbols).",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Name of the symbol (interface/class) to find implementations for",
-                            }
-                        },
-                        "required": ["name"],
-                    },
-                },
-            ],
-        }
+        return {"tools": self._tool_registry.list_tools()}
     
     def handle_tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
         self._ensure_initialized()
         
         tool_name = params.get("name")
         args = params.get("arguments", {})
-        
-        if tool_name == "deckard_guide":
-            return deckard_guide_tool.execute_deckard_guide(args)
-        elif tool_name == "search":
+        ctx = ToolContext(
+            db=self.db,
+            engine=self.db.engine if self.db else None,
+            indexer=self.indexer,
+            roots=self.cfg.workspace_roots if self.cfg else [],
+            cfg=self.cfg,
+            logger=self.logger,
+            workspace_root=self.workspace_root,
+            server_version=self.SERVER_VERSION,
+        )
+
+        if tool_name == "search":
             return self._tool_search(args)
-        elif tool_name == "status":
-            return self._tool_status(args)
-        elif tool_name == "repo_candidates":
-            return self._tool_repo_candidates(args)
-        elif tool_name == "list_files":
-            return self._tool_list_files(args)
-        elif tool_name == "read_file":
+        if tool_name == "read_file":
             return self._tool_read_file(args)
-        elif tool_name == "search_symbols":
+        if tool_name == "search_symbols":
             return self._tool_search_symbols(args)
-        elif tool_name == "read_symbol":
+        if tool_name == "read_symbol":
             return self._tool_read_symbol(args)
-        elif tool_name == "doctor":
+        if tool_name == "doctor":
             return self._tool_doctor(args)
-        elif tool_name == "search_api_endpoints":
-            return search_api_endpoints_tool.execute_search_api_endpoints(args, self.db, self.cfg.workspace_roots)
-        elif tool_name == "index_file":
-            return index_file_tool.execute_index_file(args, self.indexer, self.cfg.workspace_roots)
-        elif tool_name == "rescan":
-            return rescan_tool.execute_rescan(args, self.indexer)
-        elif tool_name == "scan_once":
-            return scan_once_tool.execute_scan_once(args, self.indexer)
-        elif tool_name == "get_callers":
-            return get_callers_tool.execute_get_callers(args, self.db, self.cfg.workspace_roots)
-        elif tool_name == "get_implementations":
-            return get_implementations_tool.execute_get_implementations(args, self.db, self.cfg.workspace_roots)
-        else:
-            raise ValueError(f"Unknown tool: {tool_name}")
+
+        return self._tool_registry.execute(tool_name, ctx, args)
     
     def _tool_search(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute enhanced search tool (v2.5.0)."""
-        result = search_tool.execute_search(args, self.db, self.logger, self.cfg.workspace_roots)
+        result = search_tool.execute_search(args, self.db, self.logger, self.cfg.workspace_roots, engine=self.db.engine)
         if not result.get("isError"):
             self._mark_search("search")
         return result

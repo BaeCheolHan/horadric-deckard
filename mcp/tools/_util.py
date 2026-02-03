@@ -23,6 +23,12 @@ class ErrorCode(str, Enum):
     ERR_INDEXER_DISABLED = "ERR_INDEXER_DISABLED"
     ERR_ROOT_OUT_OF_SCOPE = "ERR_ROOT_OUT_OF_SCOPE"
     ERR_MCP_HTTP_UNSUPPORTED = "ERR_MCP_HTTP_UNSUPPORTED"
+    ERR_ENGINE_NOT_INSTALLED = "ERR_ENGINE_NOT_INSTALLED"
+    ERR_ENGINE_INIT = "ERR_ENGINE_INIT"
+    ERR_ENGINE_QUERY = "ERR_ENGINE_QUERY"
+    ERR_ENGINE_INDEX = "ERR_ENGINE_INDEX"
+    ERR_ENGINE_UNAVAILABLE = "ERR_ENGINE_UNAVAILABLE"
+    ERR_ENGINE_REBUILD = "ERR_ENGINE_REBUILD"
 
 # --- Format Selection ---
 
@@ -213,6 +219,8 @@ def resolve_db_path(input_path: str, roots: List[str]) -> Optional[str]:
             return input_path
         return None
     if not WorkspaceManager:
+        return None
+    if input_path.startswith("root-") and "/" not in input_path:
         return None
     follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
     try:

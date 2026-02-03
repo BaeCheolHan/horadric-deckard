@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Horadric Doctor - Health Check for Deckard.
+Sari Doctor - Health Check.
 Checks:
 1. DB Connection & FTS5
 2. Port availability
@@ -115,20 +115,20 @@ def check_disk_space(min_gb: float = 1.0):
          return False
 
 def check_daemon():
-    """Check if Deckard Daemon is running."""
+    """Check if Sari Daemon is running."""
     from mcp.cli import get_daemon_address, is_daemon_running, read_pid
     host, port = get_daemon_address()
     running = is_daemon_running(host, port)
     if running:
         pid = read_pid()
-        print_status("Deckard Daemon", True, f"Running on {host}:{port} (PID: {pid})")
+        print_status("Sari Daemon", True, f"Running on {host}:{port} (PID: {pid})")
         return True
     else:
-        print_status("Deckard Daemon", False, "Not running")
+        print_status("Sari Daemon", False, "Not running")
         return False
 
 def run_doctor():
-    print(f"\n{YELLOW}Horadric Deckard Doctor (v{os.environ.get('DECKARD_VERSION', 'dev')}){RESET}")
+    print(f"\n{YELLOW}Sari Doctor (v{os.environ.get('DECKARD_VERSION', 'dev')}){RESET}")
     print("==================================================")
     
     ws_root = WorkspaceManager.resolve_workspace_root()

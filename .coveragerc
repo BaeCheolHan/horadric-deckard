@@ -1,0 +1,10 @@
+[run]
+branch = True
+source =
+    app.engine_runtime
+    app.engine_registry
+    app.http_server
+    app.workspace
+    mcp.tools
+omit =
+    */tests/*

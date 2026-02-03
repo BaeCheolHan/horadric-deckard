@@ -1,287 +1,208 @@
 #!/usr/bin/env python3
 """
-Search tool for Local Search MCP Server.
+Search tool for Local Search MCP Server (SSOT).
 """
 import time
 from typing import Any, Dict, List
 
-from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text, resolve_root_ids, pack_error, ErrorCode
+from mcp.tools._util import (
+    mcp_response,
+    pack_header,
+    pack_line,
+    pack_truncated,
+    pack_encode_id,
+    pack_encode_text,
+    resolve_root_ids,
+    pack_error,
+    ErrorCode,
+)
 
 try:
     from app.db import LocalSearchDB, SearchOptions
+    from app.engine_runtime import EngineError
     from mcp.telemetry import TelemetryLogger
 except ImportError:
-    # Fallback for direct script execution
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from app.db import LocalSearchDB, SearchOptions
+    from app.engine_runtime import EngineError
     from mcp.telemetry import TelemetryLogger
 
 
-def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger, roots: List[str]) -> Dict[str, Any]:
-    """Execute enhanced search tool (v2.5.0) with PACK1 support."""
+def execute_search(
+    args: Dict[str, Any],
+    db: LocalSearchDB,
+    logger: TelemetryLogger,
+    roots: List[str],
+    engine: Any = None,
+) -> Dict[str, Any]:
     start_ts = time.time()
+    engine = engine or getattr(db, "engine", None)
+
     root_ids = resolve_root_ids(roots)
-    query = args.get("query", "")
-    
-    if not query.strip():
+    req_root_ids = args.get("root_ids")
+    if isinstance(req_root_ids, list):
+        req_root_ids = [str(r) for r in req_root_ids if r]
+        if root_ids:
+            root_ids = [r for r in root_ids if r in req_root_ids]
+        else:
+            root_ids = list(req_root_ids)
+        if req_root_ids and not root_ids:
+            if db and db.has_legacy_paths():
+                root_ids = []
+            else:
+                return mcp_response(
+                    "search",
+                    lambda: pack_error("search", ErrorCode.ERR_ROOT_OUT_OF_SCOPE, "root_ids out of scope", hints=["outside final_roots"]),
+                    lambda: {"error": {"code": ErrorCode.ERR_ROOT_OUT_OF_SCOPE.value, "message": "root_ids out of scope"}, "isError": True},
+                )
+
+    query = (args.get("query") or "").strip()
+    if not query:
         return mcp_response(
             "search",
             lambda: pack_error("search", ErrorCode.INVALID_ARGS, "query is required"),
             lambda: {"error": {"code": ErrorCode.INVALID_ARGS.value, "message": "query is required"}, "isError": True},
         )
-    
+
     repo = args.get("scope") or args.get("repo")
     if repo == "workspace":
         repo = None
-    
+
     file_types = list(args.get("file_types", []))
     search_type = args.get("type")
     if search_type == "docs":
         doc_exts = ["md", "txt", "pdf", "docx", "rst", "pdf"]
         file_types.extend([e for e in doc_exts if e not in file_types])
-    
-    # v2.5.4: Robust integer parsing & Strict Policy Enforcement
+
     try:
-        raw_limit = int(args.get("limit", 8))
-        # Default limit logic differs slightly per format, but base input processing is here.
-        # PACK1 will clamp to 20 later. JSON keeps existing logic.
-        limit_arg = min(raw_limit, 20)
+        limit = int(args.get("limit", 8))
     except (ValueError, TypeError):
-        limit_arg = 8
-        
+        limit = 8
+    limit = max(1, min(limit, 50))
+
     try:
         offset = max(int(args.get("offset", 0)), 0)
     except (ValueError, TypeError):
         offset = 0
 
     try:
-        # Policy: Max 20 lines
         raw_lines = int(args.get("context_lines", 5))
-        snippet_lines = min(raw_lines, 20)
+        snippet_lines = min(max(raw_lines, 1), 20)
     except (ValueError, TypeError):
         snippet_lines = 5
 
-    # Determine total_mode based on scale (v2.5.1)
-    # This logic is common for both formats
-    total_mode_hint = "exact"
-    if db:
-        status = db.get_index_status()
-        total_files = status.get("total_files", 0)
-        repo_stats = db.get_repo_stats(root_ids=root_ids)
-        total_repos = len(repo_stats)
-        
-        if total_repos > 50 or total_files > 150000:
-            total_mode_hint = "approx"
-        elif total_repos > 20 or total_files > 50000:
-            if args.get("path_pattern"):
-                total_mode_hint = "approx"
+    total_mode = str(args.get("total_mode") or "").strip().lower()
+    if total_mode not in {"exact", "approx"}:
+        total_mode = "exact"
 
-    # --- Common Search Execution ---
-    # We define a helper to run search with specific limit
-    last_meta: Dict[str, Any] = {}
+    engine_mode = "sqlite"
+    index_version = ""
+    if engine and hasattr(engine, "status"):
+        st = engine.status()
+        engine_mode = st.engine_mode
+        index_version = st.index_version
+        if engine_mode == "embedded" and not st.engine_ready:
+            return mcp_response(
+                "search",
+                lambda: pack_error("search", ErrorCode.ERR_ENGINE_UNAVAILABLE, f"engine_ready=false reason={st.reason}", hints=[st.hint] if st.hint else None),
+                lambda: {
+                    "error": {"code": ErrorCode.ERR_ENGINE_UNAVAILABLE.value, "message": f"engine_ready=false reason={st.reason}", "hint": st.hint},
+                    "isError": True,
+                },
+            )
 
-    def run_search(final_limit: int):
-        nonlocal last_meta
-        opts = SearchOptions(
-            query=query,
-            repo=repo,
-            limit=final_limit,
-            offset=offset,
-            snippet_lines=snippet_lines,
-            file_types=file_types,
-            path_pattern=args.get("path_pattern"),
-            exclude_patterns=args.get("exclude_patterns", []),
-            recency_boost=bool(args.get("recency_boost", False)),
-            use_regex=bool(args.get("use_regex", False)),
-            case_sensitive=bool(args.get("case_sensitive", False)),
-            total_mode=total_mode_hint,
-            root_ids=root_ids,
+    opts = SearchOptions(
+        query=query,
+        repo=repo,
+        limit=limit,
+        offset=offset,
+        snippet_lines=snippet_lines,
+        file_types=file_types,
+        path_pattern=args.get("path_pattern"),
+        exclude_patterns=args.get("exclude_patterns", []),
+        recency_boost=bool(args.get("recency_boost", False)),
+        use_regex=bool(args.get("use_regex", False)),
+        case_sensitive=bool(args.get("case_sensitive", False)),
+        total_mode=total_mode,
+        root_ids=root_ids,
+    )
+
+    try:
+        hits, meta = engine.search_v2(opts) if engine else ([], {})
+    except EngineError as exc:
+        code = getattr(ErrorCode, exc.code, ErrorCode.ERR_ENGINE_QUERY)
+        return mcp_response(
+            "search",
+            lambda: pack_error("search", code, exc.message, hints=[exc.hint] if exc.hint else None),
+            lambda: {"error": {"code": code.value, "message": exc.message, "hint": exc.hint}, "isError": True},
         )
-        hits, meta = db.search_v2(opts)
-        last_meta = meta or {}
-        return hits, meta
+    except Exception as exc:
+        return mcp_response(
+            "search",
+            lambda: pack_error("search", ErrorCode.ERR_ENGINE_QUERY, f"engine query failed: {exc}"),
+            lambda: {"error": {"code": ErrorCode.ERR_ENGINE_QUERY.value, "message": f"engine query failed: {exc}"}, "isError": True},
+        )
 
-    # --- JSON Builder (Legacy) ---
+    latency_ms = int((time.time() - start_ts) * 1000)
+    total = meta.get("total", -1)
+    total_mode = meta.get("total_mode", total_mode)
+
     def build_json() -> Dict[str, Any]:
-        # Legacy JSON limit logic
-        hits, db_meta = run_search(limit_arg)
-        
         results: List[Dict[str, Any]] = []
         for hit in hits:
-            repo_display = hit.repo if hit.repo != "__root__" else "(root)"
-            result = {
+            results.append({
+                "doc_id": hit.path,
                 "repo": hit.repo,
-                "repo_display": repo_display,
                 "path": hit.path,
                 "score": hit.score,
-                "reason": hit.hit_reason,
                 "snippet": hit.snippet,
-            }
-            # Add optional fields
-            for attr in ["mtime", "size", "match_count", "file_type", "context_symbol"]:
-                val = getattr(hit, attr, None)
-                if val: result[attr] = val
-            
-            if hasattr(hit, 'docstring') and hit.docstring:
-                doc_lines = hit.docstring.splitlines()
-                summary = "\n".join(doc_lines[:3])
-                if len(doc_lines) > 3: summary += "\n..."
-                result["docstring"] = summary
-            results.append(result)
-
-        # Result Grouping & Meta (Reuse existing logic structure)
-        repo_groups = {}
-        for r in results:
-            rp = r["repo"]
-            if rp not in repo_groups: repo_groups[rp] = {"count": 0, "top_score": 0.0}
-            repo_groups[rp]["count"] += 1
-            repo_groups[rp]["top_score"] = max(repo_groups[rp]["top_score"], r["score"])
-        top_repos = sorted(repo_groups.keys(), key=lambda k: repo_groups[k]["top_score"], reverse=True)[:2]
-        
-        scope = f"repo:{repo}" if repo else "workspace"
-        
-        total_from_db = db_meta.get("total", 0)
-        total_mode = db_meta.get("total_mode", "exact")
-        
-        if total_mode == "approx" and total_from_db == -1:
-            if len(results) >= limit_arg:
-                total = offset + limit_arg + 1
-                has_more = True
-            else:
-                total = offset + len(results)
-                has_more = False
-        else:
-            total = total_from_db
-            has_more = total > (offset + limit_arg)
-
-        is_exact_total = (total_mode == "exact")
-        filtered_total = None
-        if args.get("exclude_patterns") and total > 0:
-             is_exact_total = False
-             filtered_total = offset + len(results)
-        
-        warnings = []
-        if has_more:
-            next_offset = offset + limit_arg
-            warnings.append(f"More results available. Use offset={next_offset} to see next page.")
-        if total_mode == "approx": warnings.append("Total count is approximate.")
-        if not repo and total > 50: warnings.append("Many results found. Consider specifying 'repo'.")
-
-        fallback_reason_code = None
-        if db_meta.get("fallback_used"): fallback_reason_code = "FTS_FAILED"
-        elif not results and total == 0: fallback_reason_code = "NO_MATCHES"
-
-        output = {
+                "mtime": hit.mtime,
+                "size": hit.size,
+                "match_count": hit.match_count,
+                "file_type": hit.file_type,
+                "hit_reason": hit.hit_reason,
+                "context_symbol": hit.context_symbol,
+                "docstring": hit.docstring,
+                "metadata": hit.metadata,
+            })
+        return {
             "query": query,
-            "scope": scope,
-            "total": total,
-            "total_mode": total_mode,
-            "is_exact_total": is_exact_total,
-            "approx_total": total if total_mode == "approx" else None,
-            "filtered_total": filtered_total,
-            "limit": limit_arg,
+            "limit": limit,
             "offset": offset,
-            "has_more": has_more,
-            "next_offset": offset + limit_arg if has_more else None,
-            "warnings": warnings,
             "results": results,
-            "repo_summary": repo_groups,
-            "top_candidate_repos": top_repos,
             "meta": {
+                "total": total,
                 "total_mode": total_mode,
-                "fallback_used": db_meta.get("fallback_used", False),
-                "fallback_reason_code": fallback_reason_code,
-                "total_scanned": db_meta.get("total_scanned", 0),
-                "regex_mode": db_meta.get("regex_mode", False),
-                "regex_error": db_meta.get("regex_error"),
+                "engine": engine_mode,
+                "latency_ms": latency_ms,
+                "index_version": index_version,
             },
         }
-        
-        if not results:
-            # Hints logic
-            reason = "No matches found."
-            output["meta"]["fallback_reason"] = reason
-            output["hints"] = ["Try a broader query or remove filters."] # Simplified for brevity here
 
-        return output
-
-    # --- PACK1 Builder ---
     def build_pack() -> str:
-        # Hard limit for PACK1: 20
-        pack_limit = min(limit_arg, 20)
-        hits, db_meta = run_search(pack_limit)
-        
         returned = len(hits)
-        total = db_meta.get("total", 0)
-        total_mode = db_meta.get("total_mode", "exact")
-        
-        # Header
-        kv = {"q": pack_encode_text(query)}
-        if repo:
-            kv["repo"] = pack_encode_id(repo)
-            
-        lines = [
-            pack_header("search", kv, returned=returned, total=total, total_mode=total_mode)
-        ]
-        
-        # Records
-        for hit in hits:
-            # Snippet processing
-            # 1. Normalize line endings
-            raw_snip = hit.snippet or ""
-            norm_snip = raw_snip.replace("\r\n", "\n").replace("\r", "\n")
-            # 2. Hard limit 120 chars (raw)
-            trim_snip = norm_snip[:120]
-            # 3. Encode
-            enc_snip = pack_encode_text(trim_snip)
-            
-            # Extract line number from snippet (e.g. "L10: ...")
-            # If parsing fails, default to 0
-            line_num = "0"
-            import re
-            m = re.search(r"L(\d+):", raw_snip)
-            if m:
-                line_num = m.group(1)
-            
-            # r:repo=<repo> path=<path> line=<line> col=<col?> s=<snippet>
-            kv_line = {
-                "repo": pack_encode_id(hit.repo),
-                "path": pack_encode_id(hit.path),
-                "line": line_num,
-                "s": enc_snip
-            }
-            # Column is optional/not always available in Hit object directly depending on DB impl
-            # Assuming hit.column doesn't exist or is not critical for now based on Plan "col=<col?>"
-            
-            lines.append(pack_line("r", kv_line))
-            
-        # Truncation
-        # Calculate next offset logic similar to JSON
-        has_more = False
-        if total_mode == "approx" and total == -1:
-             has_more = (returned >= pack_limit)
-        else:
-             has_more = total > (offset + returned)
-             
-        truncated_state = "true" if (total_mode == "exact" and has_more) else ("maybe" if has_more else "false")
-        
-        if has_more:
-            next_off = offset + returned
-            lines.append(pack_truncated(next_off, pack_limit, truncated_state))
-            
+        header = pack_header("search", {"q": pack_encode_text(query)}, returned=returned)
+        lines = [header]
+        lines.append(pack_line("m", {"total": str(total)}))
+        lines.append(pack_line("m", {"total_mode": total_mode}))
+        lines.append(pack_line("m", {"engine": engine_mode}))
+        lines.append(pack_line("m", {"latency_ms": str(latency_ms)}))
+        if index_version:
+            lines.append(pack_line("m", {"index_version": pack_encode_id(index_version)}))
+        for h in hits:
+            lines.append(pack_line("r", {
+                "path": pack_encode_id(h.path),
+                "repo": pack_encode_id(h.repo),
+                "score": f"{h.score:.3f}",
+                "mtime": str(h.mtime),
+                "size": str(h.size),
+                "file_type": pack_encode_id(h.file_type),
+                "snippet": pack_encode_text(h.snippet),
+            }))
+        if returned >= limit:
+            lines.append(pack_truncated(offset + limit, limit, "maybe"))
         return "\n".join(lines)
 
-    # Execute
-    response = mcp_response("search", build_pack, build_json)
-    
-    # Telemetry logging (Simplified)
-    latency_ms = int((time.time() - start_ts) * 1000)
-    fallback_used = last_meta.get("fallback_used", False)
-    total_mode = last_meta.get("total_mode", "exact")
-    logger.log_telemetry(
-        f"tool=search query='{query}' latency={latency_ms}ms fallback_used={fallback_used} total_mode={total_mode}"
-    )
-    
-    return response
+    return mcp_response("search", build_pack, build_json)

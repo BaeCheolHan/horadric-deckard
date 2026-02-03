@@ -40,12 +40,12 @@ class TelemetryLogger:
     
     def log_error(self, message: str) -> None:
         """Log error message to stderr and file."""
-        print(f"[deckard] ERROR: {message}", file=sys.stderr, flush=True)
+        print(f"[sari] ERROR: {message}", file=sys.stderr, flush=True)
         self._enqueue(f"[ERROR] {message}")
     
     def log_info(self, message: str) -> None:
         """Log info message to stderr and file."""
-        print(f"[deckard] INFO: {message}", file=sys.stderr, flush=True)
+        print(f"[sari] INFO: {message}", file=sys.stderr, flush=True)
         self._enqueue(f"[INFO] {message}")
     
     def log_telemetry(self, message: str) -> None:
@@ -89,13 +89,13 @@ class TelemetryLogger:
         
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = self.log_dir / "deckard.log"
+            log_file = self.log_dir / "sari.log"
             
             timestamp = datetime.now().astimezone().isoformat()
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] {message}\n")
         except Exception as e:
-            print(f"[deckard] ERROR: Failed to log to file: {e}", file=sys.stderr, flush=True)
+            print(f"[sari] ERROR: Failed to log to file: {e}", file=sys.stderr, flush=True)
 
     def stop(self, timeout: float = 2.0) -> None:
         if not self._queue or not self._writer_thread:

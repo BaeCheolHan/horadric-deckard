@@ -16,6 +16,7 @@ try:
     from app.db import LocalSearchDB
     from app.config import Config
     from app.workspace import WorkspaceManager
+    from app.registry import ServerRegistry
     from mcp.cli import get_daemon_address, is_daemon_running, read_pid
 except ImportError:
     import sys
@@ -24,6 +25,7 @@ except ImportError:
     from app.db import LocalSearchDB
     from app.config import Config
     from app.workspace import WorkspaceManager
+    from app.registry import ServerRegistry
     from mcp.cli import get_daemon_address, is_daemon_running, read_pid
 
 
@@ -65,13 +67,13 @@ def _check_db(ws_root: str) -> list[dict[str, Any]]:
     return results
 
 
-def _check_port(port: int) -> dict[str, Any]:
+def _check_port(port: int, label: str) -> dict[str, Any]:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(("127.0.0.1", port))
-        return _result(f"Port {port} Availability", True)
+        return _result(f"{label} Port {port} Availability", True)
     except OSError as e:
-        return _result(f"Port {port} Availability", False, f"Address in use or missing permission: {e}")
+        return _result(f"{label} Port {port} Availability", False, f"Address in use or missing permission: {e}")
     finally:
         try:
             s.close()
@@ -103,8 +105,8 @@ def _check_daemon() -> dict[str, Any]:
     running = is_daemon_running(host, port)
     if running:
         pid = read_pid()
-        return _result("Deckard Daemon", True, f"Running on {host}:{port} (PID: {pid})")
-    return _result("Deckard Daemon", False, "Not running")
+        return _result("Sari Daemon", True, f"Running on {host}:{port} (PID: {pid})")
+    return _result("Sari Daemon", False, "Not running")
 
 
 def _check_search_first_usage(usage: Dict[str, Any], mode: str) -> dict[str, Any]:
@@ -131,7 +133,7 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
     include_daemon = bool(args.get("include_daemon", True))
     include_venv = bool(args.get("include_venv", True))
     include_marker = bool(args.get("include_marker", False))
-    port = int(args.get("port", 47800))
+    port = int(args.get("port", 0))
     min_disk_gb = float(args.get("min_disk_gb", 1.0))
 
     results: list[dict[str, Any]] = []
@@ -147,7 +149,26 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
         results.append(_check_daemon())
 
     if include_port:
-        results.append(_check_port(port))
+        daemon_host, daemon_port = get_daemon_address()
+        results.append(_check_port(daemon_port, "Daemon"))
+        http_port = 0
+        try:
+            inst = ServerRegistry().get_instance(ws_root)
+            if inst and inst.get("port"):
+                http_port = int(inst.get("port"))
+        except Exception:
+            http_port = 0
+        if not http_port:
+            try:
+                cfg_path = WorkspaceManager.resolve_config_path(ws_root)
+                cfg = Config.load(cfg_path, workspace_root_override=ws_root)
+                http_port = int(cfg.http_api_port)
+            except Exception:
+                http_port = 0
+        if port:
+            http_port = port
+        if http_port:
+            results.append(_check_port(http_port, "HTTP"))
 
     if include_network:
         results.append(_check_network())

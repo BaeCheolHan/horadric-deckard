@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_ROOT="$(mktemp -d -t deckard-test-XXXXXX)"
+TMP_ROOT="$(mktemp -d -t sari-test-XXXXXX)"
 
 cleanup() {
   rm -rf "${TMP_ROOT}"

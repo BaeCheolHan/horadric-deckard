@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Workspace Registry for Deckard Daemon.
+Workspace Registry for Sari Daemon.
 
 Manages shared state (server instance) per workspace with refcount-based lifecycle.
 When all clients disconnect from a workspace (refcount=0), resources are cleaned up.
@@ -13,7 +13,7 @@ from typing import Dict, Optional
 from app.http_server import serve_forever
 from app.registry import ServerRegistry
 
-logger = logging.getLogger("deckard.registry")
+logger = logging.getLogger("sari.registry")
 
 
 class SharedState:

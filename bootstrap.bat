@@ -1,15 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: Deckard MCP Bootstrap for Windows
+:: Sari MCP Bootstrap for Windows
 set "DIR=%~dp0"
 set "ROOT_DIR=%DIR:~0,-1%"
 
 :: Determine INSTALL_DIR
 if defined LOCALAPPDATA (
-    set "INSTALL_DIR=%LOCALAPPDATA%\horadric-deckard"
+    set "INSTALL_DIR=%LOCALAPPDATA%\sari"
 ) else (
-    set "INSTALL_DIR=%USERPROFILE%\AppData\Local\horadric-deckard"
+    set "INSTALL_DIR=%USERPROFILE%\AppData\Local\sari"
 )
 
 :: Detect Python
@@ -21,19 +21,19 @@ if %ERRORLEVEL% equ 0 (
     if %ERRORLEVEL% equ 0 (
         set "PY=python3"
     ) else (
-        echo [deckard] ERROR: Python not found. Please install Python. >&2
+        echo [sari] ERROR: Python not found. Please install Python. >&2
         exit /b 1
     )
 )
 
 :: Simple Uninstall (if requested manually)
 if "%~1"=="uninstall" (
-    echo [deckard] uninstalling... >&2
+    echo [sari] uninstalling... >&2
     if exist "%INSTALL_DIR%\bootstrap.bat" (
         call "%INSTALL_DIR%\bootstrap.bat" daemon stop >nul 2>nul
     )
     if exist "%INSTALL_DIR%" rd /s /q "%INSTALL_DIR%"
-    echo [deckard] done. >&2
+    echo [sari] done. >&2
     exit /b 0
 )
 
@@ -56,11 +56,11 @@ if not defined DECKARD_BOOTSTRAP_DONE (
 
         if "!NEED_INSTALL!"=="1" (
             if exist "%ROOT_DIR%\install.py" (
-                echo [deckard] bootstrap: installing to %INSTALL_DIR%... >&2
+                echo [sari] bootstrap: installing to %INSTALL_DIR%... >&2
                 set "DECKARD_BOOTSTRAP_DONE=1"
                 "%PY%" "%ROOT_DIR%\install.py" --no-interactive >&2
                 if !ERRORLEVEL! neq 0 (
-                    echo [deckard] bootstrap: install failed. >&2
+                    echo [sari] bootstrap: install failed. >&2
                 )
             )
         )
@@ -100,9 +100,9 @@ goto argparse
 
 :run
 if "%ARGS%"=="" (
-    "%PY%" -m deckard
+    "%PY%" -m sari
 ) else (
-    "%PY%" -m deckard --cmd %ARGS%
+    "%PY%" -m sari --cmd %ARGS%
 )
 
 endlocal

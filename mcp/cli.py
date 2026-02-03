@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Deckard CLI - Command-line interface for daemon management.
+Sari CLI - Command-line interface for daemon management.
 
 Usage:
-    deckard daemon start [-d]   Start daemon (foreground or daemonized)
-    deckard daemon stop         Stop running daemon
-    deckard daemon status       Check daemon status
-    deckard proxy               Run in proxy mode (stdio ↔ daemon)
+    sari daemon start [-d]   Start daemon (foreground or daemonized)
+    sari daemon stop         Stop running daemon
+    sari daemon status       Check daemon status
+    sari proxy               Run in proxy mode (stdio ↔ daemon)
 """
 import argparse
 import json
@@ -63,7 +63,7 @@ def _load_http_config(workspace_root: str) -> Optional[dict]:
 
 def _load_server_info(workspace_root: str) -> Optional[dict]:
     """Legacy server.json location for backward compatibility."""
-    server_json = Path(workspace_root) / ".codex" / "tools" / "deckard" / "data" / "server.json"
+    server_json = Path(workspace_root) / ".codex" / "tools" / "sari" / "data" / "server.json"
     if not server_json.exists():
         return None
     try:
@@ -87,7 +87,7 @@ def _enforce_loopback(host: str) -> None:
         return
     if not _is_loopback(host):
         raise RuntimeError(
-            f"deckard loopback-only: server_host must be 127.0.0.1/localhost/::1 (got={host}). "
+            f"sari loopback-only: server_host must be 127.0.0.1/localhost/::1 (got={host}). "
             "Set DECKARD_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
         )
 
@@ -368,7 +368,7 @@ def cmd_status(args):
         print(json.dumps(data, ensure_ascii=False, indent=2))
         return 0
     except Exception as e:
-        print(f"❌ Error: Could not connect to Deckard HTTP server.")
+        print(f"❌ Error: Could not connect to Sari HTTP server.")
         print(f"   Details: {e}")
         print(f"   Hint: Make sure the Deamon is running for this workspace.")
         return 1
@@ -385,10 +385,10 @@ def cmd_search(args):
 
 
 def cmd_init(args):
-    """Initialize workspace with Deckard config and marker."""
+    """Initialize workspace with Sari config."""
     workspace_root = Path(args.workspace).expanduser().resolve() if args.workspace else Path(WorkspaceManager.resolve_workspace_root()).resolve()
     cfg_path = Path(WorkspaceManager.resolve_config_path(str(workspace_root)))
-    data_dir = workspace_root / ".codex" / "tools" / "deckard" / "data"
+    data_dir = workspace_root / ".codex" / "tools" / "sari" / "data"
 
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -413,15 +413,15 @@ def cmd_init(args):
     data.setdefault("exclude_dirs", default_cfg["exclude_dirs"])
 
     cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    print(f"✅ Updated Deckard config: {cfg_path}")
+    print(f"✅ Updated Sari config: {cfg_path}")
     print(f"\n🚀 Workspace initialized successfully at {workspace_root}")
     return 0
 
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="deckard",
-        description="Deckard - Local Search MCP Server"
+        prog="sari",
+        description="Sari - Local Search MCP Server"
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -448,10 +448,6 @@ def main():
     proxy_parser = subparsers.add_parser("proxy", help="Run in proxy mode")
     proxy_parser.set_defaults(func=cmd_proxy)
 
-    # auto subcommand
-    auto_parser = subparsers.add_parser("auto", help="Auto: TCP proxy, fallback to STDIO")
-    auto_parser.set_defaults(func=cmd_auto)
-
     # status subcommand (HTTP)
     status_parser = subparsers.add_parser("status", help="Query HTTP status")
     status_parser.set_defaults(func=cmd_status)
@@ -467,7 +463,6 @@ def main():
     init_parser = subparsers.add_parser("init", help="Initialize workspace config")
     init_parser.add_argument("--workspace", default="", help="Workspace root (default: auto-detect)")
     init_parser.add_argument("--force", action="store_true", help="Overwrite existing config")
-    init_parser.add_argument("--no-marker", action="store_true", help="Do not create .codex-root marker")
     init_parser.set_defaults(func=cmd_init)
     
     args = parser.parse_args()

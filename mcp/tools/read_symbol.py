@@ -35,6 +35,8 @@ def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: Telemet
         )
 
     db_path = resolve_db_path(path, roots)
+    if not db_path and db.has_legacy_paths():
+        db_path = path
     if not db_path:
         return mcp_response(
             "read_symbol",

@@ -6,13 +6,14 @@ import ipaddress
 from .session import Session
 
 from pathlib import Path
+from app.workspace import WorkspaceManager
 
 def _resolve_log_dir() -> Path:
     for env_key in ["DECKARD_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
         val = (os.environ.get(env_key) or "").strip()
         if val:
             return Path(os.path.expanduser(val)).resolve()
-    return Path.home() / ".local" / "share" / "deckard"
+    return WorkspaceManager.get_global_data_dir()
 
 def _init_logging() -> None:
     log_dir = _resolve_log_dir()
@@ -23,7 +24,7 @@ def _init_logging() -> None:
     except Exception:
         # Fall back to /tmp if the default log dir is not writable.
         try:
-            tmp_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "deckard"
+            tmp_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "sari"
             tmp_dir.mkdir(parents=True, exist_ok=True)
             handlers.insert(0, logging.FileHandler(tmp_dir / "daemon.log"))
         except Exception:
@@ -40,9 +41,9 @@ logger = logging.getLogger("mcp-daemon")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 47779
-PID_FILE = Path.home() / ".local" / "share" / "deckard" / "daemon.pid"
+PID_FILE = WorkspaceManager.get_global_data_dir() / "daemon.pid"
 
-class DeckardDaemon:
+class SariDaemon:
     def __init__(self):
         self.host = os.environ.get("DECKARD_DAEMON_HOST", DEFAULT_HOST)
         self.port = int(os.environ.get("DECKARD_DAEMON_PORT", DEFAULT_PORT))
@@ -77,7 +78,7 @@ class DeckardDaemon:
 
         if (not is_loopback) and (not allow_non_loopback):
             raise SystemExit(
-                f"deckard daemon refused to start: host must be loopback only (127.0.0.1/localhost/::1). got={host}. "
+                f"sari daemon refused to start: host must be loopback only (127.0.0.1/localhost/::1). got={host}. "
                 "Set DECKARD_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
             )
 
@@ -88,7 +89,7 @@ class DeckardDaemon:
         )
         
         addr = self.server.sockets[0].getsockname()
-        logger.info(f"Deckard Daemon serving on {addr}")
+        logger.info(f"Sari Daemon serving on {addr}")
 
         async with self.server:
             await self.server.serve_forever()
@@ -113,7 +114,7 @@ class DeckardDaemon:
         self._remove_pid()
 
 async def main():
-    daemon = DeckardDaemon()
+    daemon = SariDaemon()
     
     # Handle signals
     loop = asyncio.get_running_loop()

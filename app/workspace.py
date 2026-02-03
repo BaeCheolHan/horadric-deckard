@@ -26,7 +26,8 @@ class WorkspaceManager:
     @staticmethod
     def root_id(path: str) -> str:
         """Stable root id derived from normalized path."""
-        norm = WorkspaceManager._normalize_path(path, follow_symlinks=False)
+        follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+        norm = WorkspaceManager._normalize_path(path, follow_symlinks=follow_symlinks)
         digest = hashlib.sha1(norm.encode("utf-8")).hexdigest()[:8]
         return f"root-{digest}"
 
@@ -197,17 +198,18 @@ class WorkspaceManager:
         
         Priority:
         1. DECKARD_CONFIG environment variable (SSOT)
-        2. Default SSOT path (~/.config/deckard/config.json or %APPDATA%/deckard/config.json)
+        2. Default SSOT path (~/.config/sari/config.json or %APPDATA%/sari/config.json)
         """
         val = (os.environ.get("DECKARD_CONFIG") or "").strip()
         if val:
             p = Path(os.path.expanduser(val))
-            return str(p.resolve())
+            if p.exists():
+                return str(p.resolve())
 
         if os.name == "nt":
-            ssot = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "deckard" / "config.json"
+            ssot = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "sari" / "config.json"
         else:
-            ssot = Path.home() / ".config" / "deckard" / "config.json"
+            ssot = Path.home() / ".config" / "sari" / "config.json"
 
         if ssot.exists():
             return str(ssot.resolve())
@@ -215,9 +217,8 @@ class WorkspaceManager:
         # Legacy migration (one-time copy + backup)
         legacy_candidates = [
             Path(workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json",
+            Path.home() / ".deckard" / "config.json",
         ]
-        legacy_home = Path.home() / ".deckard" / "config.json"
-        legacy_candidates.append(legacy_home)
         for legacy in legacy_candidates:
             if legacy.exists():
                 try:
@@ -229,7 +230,7 @@ class WorkspaceManager:
                     except Exception:
                         marker = legacy.parent / ".migrated"
                         marker.write_text(f"migrated to {ssot}", encoding="utf-8")
-                    print(f"[deckard] migrated legacy config from {legacy} to {ssot}")
+                    print(f"[sari] migrated legacy config from {legacy} to {ssot}")
                 except Exception:
                     pass
                 break
@@ -238,20 +239,20 @@ class WorkspaceManager:
     
     @staticmethod
     def get_global_data_dir() -> Path:
-        """Get global data directory: ~/.local/share/deckard/ (or AppData/Local on Win)"""
-        if os.name == 'nt':
-            return Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "horadric-deckard"
-        return Path.home() / ".local" / "share" / "deckard"
+        """Get global data directory: ~/.local/share/sari/ (or AppData/Local on Win)"""
+        if os.name == "nt":
+            return Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "sari"
+        return Path.home() / ".local" / "share" / "sari"
     
     @staticmethod
     def get_global_db_path() -> Path:
-        """Get global DB path: ~/.local/share/deckard/index.db (Opt-in only)"""
+        """Get global DB path: ~/.local/share/sari/index.db (Opt-in only)"""
         return WorkspaceManager.get_global_data_dir() / "index.db"
 
     @staticmethod
     def get_local_db_path(workspace_root: str) -> Path:
-        """Get workspace-local DB path: .codex/tools/deckard/data/index.db"""
-        return Path(workspace_root) / ".codex" / "tools" / "deckard" / "data" / "index.db"
+        """Get workspace-local DB path: .codex/tools/sari/data/index.db"""
+        return Path(workspace_root) / ".codex" / "tools" / "sari" / "data" / "index.db"
     
     @staticmethod
     def get_global_log_dir() -> Path:
@@ -261,3 +262,25 @@ class WorkspaceManager:
             if val:
                 return Path(os.path.expanduser(val)).resolve()
         return WorkspaceManager.get_global_data_dir() / "logs"
+
+    @staticmethod
+    def roots_hash(root_ids: list[str]) -> str:
+        joined = "|".join(sorted(root_ids))
+        digest = hashlib.sha1(joined.encode("utf-8")).hexdigest()[:12]
+        return digest
+
+    @staticmethod
+    def get_engine_base_dir() -> Path:
+        return WorkspaceManager.get_global_data_dir() / "engine"
+
+    @staticmethod
+    def get_engine_venv_dir() -> Path:
+        return WorkspaceManager.get_engine_base_dir() / ".venv"
+
+    @staticmethod
+    def get_engine_cache_dir() -> Path:
+        return Path(os.path.expanduser("~/.cache")) / "sari" / "engine"
+
+    @staticmethod
+    def get_engine_index_dir(roots_hash: str) -> Path:
+        return WorkspaceManager.get_global_data_dir() / "index" / roots_hash
