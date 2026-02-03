@@ -3,7 +3,7 @@
 Status tool for Local Search MCP Server.
 """
 from typing import Any, Dict, Optional
-from mcp.tools._util import mcp_response, pack_header, pack_line
+from mcp.tools._util import mcp_response, pack_header, pack_line, resolve_root_ids
 
 try:
     from app.db import LocalSearchDB
@@ -36,6 +36,8 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
         "fts_enabled": db.fts_enabled if db else False,
         "workspace_root": workspace_root,
         "server_version": server_version,
+        "http_api_port": cfg.http_api_port if cfg else 0,
+        "indexer_mode": getattr(indexer, "indexer_mode", "auto") if indexer else "off",
     }
     if indexer and hasattr(indexer, "get_queue_depths"):
         status_data["queue_depths"] = indexer.get_queue_depths()
@@ -46,11 +48,13 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
             "exclude_dirs": cfg.exclude_dirs,
             "exclude_globs": getattr(cfg, "exclude_globs", []),
             "max_file_bytes": cfg.max_file_bytes,
+            "http_api_port": cfg.http_api_port,
         }
     
     repo_stats = None
     if details and db:
-        repo_stats = db.get_repo_stats()
+        root_ids = resolve_root_ids(cfg.workspace_roots if cfg else [])
+        repo_stats = db.get_repo_stats(root_ids=root_ids)
         status_data["repo_stats"] = repo_stats
     
     if logger:

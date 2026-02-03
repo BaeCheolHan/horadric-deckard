@@ -51,7 +51,7 @@ def main() -> int:
     # Security hardening: loopback-only by default.
     # Allow opt-in override only when explicitly requested.
     allow_non_loopback = os.environ.get("LOCAL_SEARCH_ALLOW_NON_LOOPBACK") == "1"
-    host = (cfg.server_host or "127.0.0.1").strip()
+    host = (cfg.http_api_host or "127.0.0.1").strip()
     try:
         is_loopback = host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
     except ValueError:
@@ -72,12 +72,14 @@ def main() -> int:
     print(f"[deckard] DB path: {db_path}")
 
     db = LocalSearchDB(db_path)
-    indexer = Indexer(cfg, db)
+    from app.indexer import resolve_indexer_settings
+    mode, enabled, startup_enabled, lock_handle = resolve_indexer_settings(str(db_path))
+    indexer = Indexer(cfg, db, indexer_mode=mode, indexing_enabled=enabled, startup_index_enabled=startup_enabled, lock_handle=lock_handle)
 
     # Start HTTP immediately so health checks don't block on initial indexing.
     # v2.3.3: serve_forever returns (httpd, actual_port) for fallback tracking
     version = os.environ.get("DECKARD_VERSION", "dev")
-    httpd, actual_port = serve_forever(host, cfg.server_port, db, indexer, version=version)
+    httpd, actual_port = serve_forever(host, cfg.http_api_port, db, indexer, version=version, workspace_root=workspace_root)
 
     # Write server.json with actual binding info (single source of truth for port tracking)
     data_dir = Path(workspace_root) / ".codex" / "tools" / "deckard" / "data"
@@ -86,14 +88,20 @@ def main() -> int:
     server_info = {
         "host": host,
         "port": actual_port,  # v2.3.3: use actual bound port, not config port
-        "config_port": cfg.server_port,  # original requested port for reference
+        "config_port": cfg.http_api_port,  # original requested port for reference
         "pid": os.getpid(),
         "started_at": datetime.now().isoformat(),
     }
     server_json.write_text(json.dumps(server_info, indent=2), encoding="utf-8")
-    
-    if actual_port != cfg.server_port:
+
+    if actual_port != cfg.http_api_port:
         print(f"[deckard] server.json updated with fallback port {actual_port}")
+
+    try:
+        port_file = Path(db_path + ".http_api.port")
+        port_file.write_text(str(actual_port) + "\n", encoding="utf-8")
+    except Exception:
+        pass
 
     stop_evt = threading.Event()
 

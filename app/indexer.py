@@ -50,6 +50,96 @@ except ImportError:
         split_moved_event = None
 
 AI_SAFETY_NET_SECONDS = 3.0
+IS_WINDOWS = os.name == "nt"
+if not IS_WINDOWS:
+    import fcntl
+else:
+    import msvcrt
+
+_TEXT_SAMPLE_BYTES = 8192
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+def _parse_size(value: Optional[str], default: int) -> int:
+    if value is None:
+        return default
+    s = str(value).strip().lower()
+    if not s:
+        return default
+    mult = 1
+    if s.endswith("kb"):
+        mult = 1024
+        s = s[:-2]
+    elif s.endswith("mb"):
+        mult = 1024 * 1024
+        s = s[:-2]
+    elif s.endswith("gb"):
+        mult = 1024 * 1024 * 1024
+        s = s[:-2]
+    try:
+        return int(float(s) * mult)
+    except Exception:
+        return default
+
+def _resolve_size_limits() -> tuple[int, int]:
+    profile = (os.environ.get("DECKARD_SIZE_PROFILE") or "default").strip().lower()
+    if profile == "heavy":
+        parse_default = 40 * 1024 * 1024
+        ast_default = 40 * 1024 * 1024
+    else:
+        parse_default = 16 * 1024 * 1024
+        ast_default = 8 * 1024 * 1024
+    parse_limit = _parse_size(os.environ.get("DECKARD_MAX_PARSE_BYTES"), parse_default)
+    ast_limit = _parse_size(os.environ.get("DECKARD_MAX_AST_BYTES"), ast_default)
+    return parse_limit, ast_limit
+
+def _sample_file(path: Path, size: int) -> bytes:
+    try:
+        with path.open("rb") as f:
+            head = f.read(_TEXT_SAMPLE_BYTES)
+            if size <= _TEXT_SAMPLE_BYTES:
+                return head
+            try:
+                f.seek(max(0, size - _TEXT_SAMPLE_BYTES))
+            except Exception:
+                return head
+            tail = f.read(_TEXT_SAMPLE_BYTES)
+            return head + tail
+    except Exception:
+        return b""
+
+def _printable_ratio(sample: bytes, policy: str = "strong") -> float:
+    if not sample:
+        return 1.0
+    if b"\x00" in sample:
+        return 0.0
+    try:
+        text = sample.decode("utf-8") if policy == "strong" else sample.decode("utf-8", errors="ignore")
+    except UnicodeDecodeError:
+        return 0.0
+    printable = 0
+    total = len(sample)
+    for ch in text:
+        o = ord(ch)
+        if ch in ("\t", "\n", "\r") or (0x20 <= o <= 0x7E):
+            printable += 1
+    return printable / max(1, total)
+
+def _is_minified(path: Path, text_sample: str) -> bool:
+    if ".min." in path.name:
+        return True
+    if not text_sample:
+        return False
+    lines = text_sample.splitlines()
+    if not lines:
+        return len(text_sample) > 300
+    total_len = sum(len(l) for l in lines)
+    avg_len = total_len / max(1, len(lines))
+    return avg_len > 300
 
 # Redaction patterns for secrets in logs and indexed content.
 _REDACT_ASSIGNMENTS_QUOTED = re.compile(
@@ -81,6 +171,65 @@ def _redact(text: str) -> str:
     text = _REDACT_ASSIGNMENTS_QUOTED.sub(_replace_quoted, text)
     text = _REDACT_ASSIGNMENTS_BARE.sub(_replace_bare, text)
     return text
+
+
+class IndexerLock:
+    def __init__(self, path: str):
+        self.path = path
+        self._fh = None
+
+    def acquire(self) -> bool:
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            self._fh = open(self.path, "a+")
+            if IS_WINDOWS:
+                try:
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError:
+                    return False
+            else:
+                try:
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    return False
+            return True
+        except Exception:
+            return False
+
+    def release(self) -> None:
+        try:
+            if self._fh:
+                if IS_WINDOWS:
+                    try:
+                        msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                    except Exception:
+                        pass
+                self._fh.close()
+        except Exception:
+            pass
+
+
+def resolve_indexer_settings(db_path: str) -> tuple[str, bool, bool, Any]:
+    mode = (os.environ.get("DECKARD_INDEXER_MODE") or "auto").strip().lower()
+    if mode not in {"auto", "leader", "follower", "off"}:
+        mode = "auto"
+    startup_index_enabled = (os.environ.get("DECKARD_STARTUP_INDEX", "1").strip().lower() not in ("0", "false", "no", "off"))
+
+    if mode in {"off", "follower"}:
+        return mode, False, startup_index_enabled, None
+
+    lock = IndexerLock(db_path + ".lock")
+    if lock.acquire():
+        return "leader", True, startup_index_enabled, lock
+
+    if mode == "leader":
+        raise RuntimeError("Failed to acquire indexer lock for leader mode")
+    return "follower", False, startup_index_enabled, None
 
 
 @dataclass
@@ -606,7 +755,13 @@ class DBWriter:
             self.db.delete_path_tx(cur, p)
 
         if upsert_files_rows:
-            rows = [(r[0], r[1], r[2], r[3], r[4], commit_ts) for r in upsert_files_rows]
+            rows = [
+                (
+                    r[0], r[1], r[2], r[3], r[4], commit_ts,
+                    r[5], r[6], r[7], r[8], r[9], r[10], r[11], r[12]
+                )
+                for r in upsert_files_rows
+            ]
             self.db.upsert_files_tx(cur, rows)
         if upsert_symbols_rows:
             self.db.upsert_symbols_tx(cur, upsert_symbols_rows)
@@ -631,9 +786,13 @@ class DBWriter:
 
 
 class Indexer:
-    def __init__(self, cfg: Config, db: LocalSearchDB, logger=None):
+    def __init__(self, cfg: Config, db: LocalSearchDB, logger=None, indexer_mode: str = "auto", indexing_enabled: bool = True, startup_index_enabled: bool = True, lock_handle: Any = None):
         self.cfg, self.db, self.logger = cfg, db, logger
         self.status = IndexStatus()
+        self.indexer_mode = indexer_mode
+        self.indexing_enabled = indexing_enabled
+        self.startup_index_enabled = startup_index_enabled
+        self._lock_handle = lock_handle
         self._stop, self._rescan = threading.Event(), threading.Event()
         self._pipeline_started = False
         self._drain_timeout = 2.0
@@ -677,6 +836,11 @@ class Indexer:
                 self.logger.stop(timeout=self._drain_timeout)
             except Exception:
                 pass
+        if self._lock_handle:
+            try:
+                self._lock_handle.release()
+            except Exception:
+                pass
 
     def request_rescan(self): self._rescan.set()
 
@@ -686,6 +850,9 @@ class Indexer:
         self._scan_once()
 
     def run_forever(self):
+        if not self.indexing_enabled:
+            self.status.index_ready = True
+            return
         self._start_pipeline()
         # v2.7.0: Start watcher if available and not already running
         if FileWatcher and not self.watcher:
@@ -699,7 +866,9 @@ class Indexer:
             except Exception as e:
                 if self.logger: self.logger.log_error(f"Failed to start FileWatcher: {e}")
 
-        self._scan_once(); self.status.index_ready = True
+        if self.startup_index_enabled:
+            self._scan_once()
+        self.status.index_ready = True
         while not self._stop.is_set():
             timeout = max(1, int(getattr(self.cfg, "scan_interval_seconds", 30)))
             self._rescan.wait(timeout=timeout)
@@ -934,9 +1103,23 @@ class Indexer:
             return
 
         self._enqueue_db_tasks(
-            [(res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"])],
-            list(res["symbols"]),
-            list(res["relations"]),
+            [(
+                res["rel"],
+                res["repo"],
+                res["mtime"],
+                res["size"],
+                res["content"],
+                res["parse_status"],
+                res["parse_reason"],
+                res["ast_status"],
+                res["ast_reason"],
+                int(res["is_binary"]),
+                int(res["is_minified"]),
+                int(res["sampled"]),
+                int(res["content_bytes"]),
+            )],
+            list(res.get("symbols") or []),
+            list(res.get("relations") or []),
             enqueue_ts=task.enqueue_ts,
         )
 
@@ -954,33 +1137,142 @@ class Indexer:
         t.daemon = True
         t.start()
 
-    def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, raise_on_error: bool = False) -> Optional[dict]:
+    def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, excluded: bool, raise_on_error: bool = False) -> Optional[dict]:
         try:
-            # Calculate repo name from root-relative path
             rel_to_root = str(file_path.relative_to(root))
             repo = rel_to_root.split(os.sep, 1)[0] if os.sep in rel_to_root else "__root__"
-            
-            # DB path: root_id + rel path (relative, no absolute)
             db_path = self._encode_db_path(root, file_path)
 
             prev = self.db.get_file_meta(db_path)
             if prev and int(st.st_mtime) == int(prev[0]) and int(st.st_size) == int(prev[1]):
-                if now - st.st_mtime > AI_SAFETY_NET_SECONDS: return {"type": "unchanged", "rel": db_path}
-            max_bytes = int(getattr(self.cfg, "max_file_bytes", 0) or 0)
-            if max_bytes and int(getattr(st, "st_size", 0) or 0) > max_bytes:
-                return None
-            text = file_path.read_text(encoding="utf-8", errors="ignore")
-            
-            # v2.7.0: Handle large file body storage control
-            original_size = len(text)
-            exclude_bytes = getattr(self.cfg, "exclude_content_bytes", 104857600)
-            if original_size > exclude_bytes:
-                text = text[:exclude_bytes] + f"\n\n... [CONTENT TRUNCATED (File size: {original_size} bytes, limit: {exclude_bytes})] ..."
+                if now - st.st_mtime > AI_SAFETY_NET_SECONDS:
+                    return {"type": "unchanged", "rel": db_path}
 
-            if getattr(self.cfg, "redact_enabled", True):
-                text = _redact(text)
-            symbols, relations = _extract_symbols_with_relations(db_path, text)
-            return {"type": "changed", "rel": db_path, "repo": repo, "mtime": int(st.st_mtime), "size": int(st.st_size), "content": text, "scan_ts": scan_ts, "symbols": symbols, "relations": relations}
+            parse_limit, ast_limit = _resolve_size_limits()
+            exclude_parse = _env_flag("DECKARD_EXCLUDE_APPLIES_TO_PARSE", True)
+            exclude_ast = _env_flag("DECKARD_EXCLUDE_APPLIES_TO_AST", True)
+            sample_large = _env_flag("DECKARD_SAMPLE_LARGE_FILES", False)
+            decode_policy = (os.environ.get("DECKARD_UTF8_DECODE_POLICY") or "strong").strip().lower()
+
+            include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
+            include_files = set(getattr(self.cfg, "include_files", []))
+            include_files_abs = {str(Path(p).expanduser().absolute()) for p in include_files if os.path.isabs(p)}
+            include_files_rel = {p for p in include_files if not os.path.isabs(p)}
+            include_all_ext = not include_ext and not include_files
+
+            parse_status = "none"
+            parse_reason = "none"
+            ast_status = "none"
+            ast_reason = "none"
+            is_binary = 0
+            is_minified = 0
+            sampled = 0
+            content = ""
+            content_bytes = 0
+            symbols: List[Tuple] = []
+            relations: List[Tuple] = []
+
+            size = int(getattr(st, "st_size", 0) or 0)
+            # Determine include eligibility for parse/ast
+            is_included = include_all_ext
+            if not is_included:
+                rel = str(file_path.absolute().relative_to(root))
+                is_included = (rel in include_files_rel) or (str(file_path.absolute()) in include_files_abs)
+                if not is_included and include_ext:
+                    is_included = file_path.suffix.lower() in include_ext
+
+            # Exclude rules for parse/ast
+            if excluded and exclude_parse:
+                parse_status, parse_reason = "skipped", "excluded"
+                ast_status, ast_reason = "skipped", "excluded"
+            elif not is_included:
+                parse_status, parse_reason = "skipped", "excluded"
+                ast_status, ast_reason = "skipped", "parse_skipped"
+            else:
+                sample = _sample_file(file_path, size)
+                printable_ratio = _printable_ratio(sample, policy=decode_policy)
+                if printable_ratio < 0.80 or b"\x00" in sample:
+                    is_binary = 1
+                    parse_status, parse_reason = "skipped", "binary"
+                    ast_status, ast_reason = "skipped", "binary"
+                else:
+                    try:
+                        text_sample = sample.decode("utf-8") if decode_policy == "strong" else sample.decode("utf-8", errors="ignore")
+                    except UnicodeDecodeError:
+                        is_binary = 1
+                        parse_status, parse_reason = "skipped", "binary"
+                        ast_status, ast_reason = "skipped", "binary"
+                        text_sample = ""
+                    if not is_binary:
+                        if _is_minified(file_path, text_sample):
+                            is_minified = 1
+                            parse_status, parse_reason = "skipped", "minified"
+                            ast_status, ast_reason = "skipped", "minified"
+                        elif size > parse_limit:
+                            if sample_large:
+                                sampled = 1
+                                parse_status, parse_reason = "skipped", "sampled"
+                                ast_status, ast_reason = "skipped", "no_parse"
+                                try:
+                                    if decode_policy == "strong":
+                                        content = sample.decode("utf-8")
+                                    else:
+                                        content = sample.decode("utf-8", errors="ignore")
+                                except Exception:
+                                    content = ""
+                                content_bytes = len(content.encode("utf-8")) if content else 0
+                            else:
+                                parse_status, parse_reason = "skipped", "too_large"
+                                ast_status, ast_reason = "skipped", "no_parse"
+                        else:
+                            raw = file_path.read_bytes()
+                            try:
+                                text = raw.decode("utf-8") if decode_policy == "strong" else raw.decode("utf-8", errors="ignore")
+                            except UnicodeDecodeError:
+                                is_binary = 1
+                                parse_status, parse_reason = "skipped", "binary"
+                                ast_status, ast_reason = "skipped", "binary"
+                                text = ""
+                            if not is_binary:
+                                parse_status, parse_reason = "ok", "none"
+                                # Storage cap
+                                exclude_bytes = getattr(self.cfg, "exclude_content_bytes", 104857600)
+                                if len(text) > exclude_bytes:
+                                    text = text[:exclude_bytes] + f"\n\n... [CONTENT TRUNCATED (File size: {len(text)} bytes, limit: {exclude_bytes})] ..."
+                                if getattr(self.cfg, "redact_enabled", True):
+                                    text = _redact(text)
+                                content = text
+                                content_bytes = len(content.encode("utf-8")) if content else 0
+                                if excluded and exclude_ast:
+                                    ast_status, ast_reason = "skipped", "excluded"
+                                elif size > ast_limit:
+                                    ast_status, ast_reason = "skipped", "too_large"
+                                else:
+                                    try:
+                                        symbols, relations = _extract_symbols_with_relations(db_path, content)
+                                        ast_status, ast_reason = "ok", "none"
+                                    except Exception:
+                                        ast_status, ast_reason = "error", "error"
+
+            return {
+                "type": "changed",
+                "rel": db_path,
+                "repo": repo,
+                "mtime": int(st.st_mtime),
+                "size": size,
+                "content": content,
+                "scan_ts": scan_ts,
+                "symbols": symbols,
+                "relations": relations,
+                "parse_status": parse_status,
+                "parse_reason": parse_reason,
+                "ast_status": ast_status,
+                "ast_reason": ast_reason,
+                "is_binary": is_binary,
+                "is_minified": is_minified,
+                "sampled": sampled,
+                "content_bytes": content_bytes,
+            }
         except Exception:
             self.status.errors += 1
             if raise_on_error:
@@ -1015,18 +1307,12 @@ class Indexer:
         tags_str = ",".join(tags)
         self._enqueue_repo_meta(repo, tags_str, description)
 
-    def _iter_file_entries_stream(self, root: Path):
-        include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
-        include_all_ext = not include_ext
-        include_files = set(getattr(self.cfg, "include_files", []))
-        include_files_abs = {str(Path(p).expanduser().absolute()) for p in include_files if os.path.isabs(p)}
-        include_files_rel = {p for p in include_files if not os.path.isabs(p)}
+    def _iter_file_entries_stream(self, root: Path, apply_exclude: bool = True):
         exclude_dirs = set(getattr(self.cfg, "exclude_dirs", []))
         exclude_globs = list(getattr(self.cfg, "exclude_globs", []))
-        max_file_bytes = int(getattr(self.cfg, "max_file_bytes", 0)) or None
 
         for dirpath, dirnames, filenames in os.walk(root):
-            if dirnames:
+            if dirnames and apply_exclude:
                 kept = []
                 for d in dirnames:
                     if d in exclude_dirs:
@@ -1042,23 +1328,27 @@ class Indexer:
                     rel = str(p.absolute().relative_to(root))
                 except Exception:
                     continue
-                if any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(fn, pat) for pat in exclude_globs):
-                    continue
-                is_included = (rel in include_files_rel) or (str(p.absolute()) in include_files_abs)
-                if not is_included:
-                    if not include_all_ext and p.suffix.lower() not in include_ext:
-                        continue
+                excluded = any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(fn, pat) for pat in exclude_globs)
+                if not excluded and exclude_dirs:
+                    rel_parts = rel.split(os.sep)
+                    for part in rel_parts:
+                        if part in exclude_dirs:
+                            excluded = True
+                            break
+                        if any(fnmatch.fnmatch(part, pat) for pat in exclude_dirs):
+                            excluded = True
+                            break
                 try:
                     st = p.stat()
                 except Exception:
                     self.status.errors += 1
                     continue
-                if max_file_bytes is not None and st.st_size > max_file_bytes:
+                if apply_exclude and excluded:
                     continue
-                yield p, st
+                yield p, st, excluded
 
     def _iter_file_entries(self, root: Path) -> List[Tuple[Path, os.stat_result]]:
-        return list(self._iter_file_entries_stream(root))
+        return [(p, st) for p, st, _ in self._iter_file_entries_stream(root)]
 
     def _iter_files(self, root: Path) -> List[Path]:
         """Return candidate file paths (legacy tests expect Path objects)."""
@@ -1090,8 +1380,9 @@ class Indexer:
         chunk_size = 100
         chunk = []
         
+        exclude_meta = _env_flag("DECKARD_EXCLUDE_APPLIES_TO_META", True)
         for root in valid_roots:
-            for entry in self._iter_file_entries_stream(root):
+            for entry in self._iter_file_entries_stream(root, apply_exclude=exclude_meta):
                 chunk.append(entry)
                 self.status.scanned_files += 1
                 if len(chunk) < chunk_size:
@@ -1115,9 +1406,9 @@ class Indexer:
             self.status.errors += 1
 
     def _process_chunk(self, root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged):
-        futures = [self._executor.submit(self._process_file_task, root, f, s, scan_ts, now) for f, s in chunk]
+        futures = [self._executor.submit(self._process_file_task, root, f, s, scan_ts, now, excluded) for f, s, excluded in chunk]
             
-        for f, s in chunk:
+        for f, s, _ in chunk:
             if f.name == "package.json":
                 rel = str(f.relative_to(root))
                 repo = rel.split(os.sep, 1)[0] if os.sep in rel else "__root__"
@@ -1134,8 +1425,27 @@ class Indexer:
                     unchanged.clear()
                 continue
                 
-            batch_files.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
-            batch_syms.extend(res["symbols"]); batch_rels.extend(res["relations"])
+            batch_files.append(
+                (
+                    res["rel"],
+                    res["repo"],
+                    res["mtime"],
+                    res["size"],
+                    res["content"],
+                    res["parse_status"],
+                    res["parse_reason"],
+                    res["ast_status"],
+                    res["ast_reason"],
+                    int(res["is_binary"]),
+                    int(res["is_minified"]),
+                    int(res["sampled"]),
+                    int(res["content_bytes"]),
+                )
+            )
+            if res.get("symbols"):
+                batch_syms.extend(res["symbols"])
+            if res.get("relations"):
+                batch_rels.extend(res["relations"])
                 
             if len(batch_files) >= 50:
                 self._enqueue_db_tasks(batch_files, batch_syms, batch_rels)

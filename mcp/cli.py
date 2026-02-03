@@ -53,19 +53,13 @@ def _package_config_path() -> Path:
 
 
 def _load_http_config(workspace_root: str) -> Optional[dict]:
-    cfg_path = Path(workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
-    if cfg_path.exists():
-        try:
-            return json.loads(cfg_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-    fallback = _package_config_path()
-    if fallback.exists():
-        try:
-            return json.loads(fallback.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-    return None
+    try:
+        from app.workspace import WorkspaceManager
+        from app.config import Config
+        cfg_path = WorkspaceManager.resolve_config_path(workspace_root)
+        return json.loads(Path(cfg_path).read_text(encoding="utf-8")) if Path(cfg_path).exists() else None
+    except Exception:
+        return None
 
 def _load_server_info(workspace_root: str) -> Optional[dict]:
     """Legacy server.json location for backward compatibility."""
@@ -102,12 +96,14 @@ def _get_http_host_port() -> tuple[str, int]:
     """Get active HTTP server address with Environment priority (v2.7.0)."""
     # 0. Environment Override (Highest Priority for testing/isolation)
     env_host = (
-        os.environ.get("DECKARD_HTTP_HOST")
+        os.environ.get("DECKARD_HTTP_API_HOST")
+        or os.environ.get("DECKARD_HTTP_HOST")
         or os.environ.get("LOCAL_SEARCH_HTTP_HOST")
         or os.environ.get("DECKARD_HOST")
     )
     env_port_raw = (
-        os.environ.get("DECKARD_HTTP_PORT")
+        os.environ.get("DECKARD_HTTP_API_PORT")
+        or os.environ.get("DECKARD_HTTP_PORT")
         or os.environ.get("LOCAL_SEARCH_HTTP_PORT")
         or os.environ.get("DECKARD_PORT")
     )
@@ -135,8 +131,8 @@ def _get_http_host_port() -> tuple[str, int]:
 
     # 3. Fallback to Config
     cfg = _load_http_config(workspace_root) or {}
-    host = str(cfg.get("server_host", DEFAULT_HTTP_HOST))
-    port = int(cfg.get("server_port", DEFAULT_HTTP_PORT))
+    host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
+    port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
     return host, port
 
 
@@ -391,34 +387,33 @@ def cmd_search(args):
 def cmd_init(args):
     """Initialize workspace with Deckard config and marker."""
     workspace_root = Path(args.workspace).expanduser().resolve() if args.workspace else Path(WorkspaceManager.resolve_workspace_root()).resolve()
-    codex_root = workspace_root / ".codex-root"
-    cfg_path = workspace_root / ".codex" / "tools" / "deckard" / "config" / "config.json"
+    cfg_path = Path(WorkspaceManager.resolve_config_path(str(workspace_root)))
     data_dir = workspace_root / ".codex" / "tools" / "deckard" / "data"
 
-    if not args.no_marker:
-        if not codex_root.exists():
-            codex_root.touch()
-            print(f"✅ Created workspace marker: {codex_root}")
-        else:
-            print(f"ℹ️  Workspace marker already exists: {codex_root}")
-
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    data_dir.mkdir(parents=True, exist_ok=True) # Ensure data directory exists
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    if not cfg_path.exists() or args.force:
-        # Default config content
-        from app.config import Config
-        default_cfg = {
-            "workspace_root": str(workspace_root),
-            "exclude_dirs": ["node_modules", ".git", "venv", "__pycache__"],
-            "db_path": Config.get_defaults(str(workspace_root))["db_path"],
-        }
-        with open(cfg_path, "w") as f:
-            json.dump(default_cfg, f, indent=2)
-        print(f"✅ Created Deckard config: {cfg_path}")
-    else:
-        print(f"ℹ️  Deckard config already exists: {cfg_path}")
+    from app.config import Config
+    default_cfg = Config.get_defaults(str(workspace_root))
 
+    data = {}
+    if cfg_path.exists() and not args.force:
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            data = {}
+
+    roots = data.get("roots") or data.get("workspace_roots") or []
+    if not isinstance(roots, list):
+        roots = []
+    if str(workspace_root) not in roots:
+        roots.append(str(workspace_root))
+    data["roots"] = roots
+    data.setdefault("db_path", default_cfg["db_path"])
+    data.setdefault("exclude_dirs", default_cfg["exclude_dirs"])
+
+    cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    print(f"✅ Updated Deckard config: {cfg_path}")
     print(f"\n🚀 Workspace initialized successfully at {workspace_root}")
     return 0
 

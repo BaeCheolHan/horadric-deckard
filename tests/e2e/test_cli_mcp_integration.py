@@ -68,9 +68,11 @@ def run_mcp_command(command_str, workspace_root):
     # The command_str might have paths. We split it safely.
     import shlex
     cmd_parts = shlex.split(command_str)
+
+    if cmd_parts and cmd_parts[0] == "deckard":
+        cmd_parts = [sys.executable, "-m", "deckard"]
     
-    # We add --workspace-root argument as the editor would
-    cmd_parts.extend(["--workspace-root", str(workspace_root)])
+    # Preserve legacy --workspace-root if present, but avoid injecting roots by default.
     
     # Run the process
     env = os.environ.copy()
@@ -130,9 +132,6 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
     codex_cfg_path = workspace / ".codex" / "config.toml"
     gemini_cfg_path = workspace / ".gemini" / "config.toml"
     
-    # install.py should have automatically run 'init', creating the marker
-    assert (workspace / ".codex-root").exists(), "Auto-init failed: .codex-root marker missing"
-    
     assert codex_cfg_path.exists(), "Codex config missing"
     assert gemini_cfg_path.exists(), "Gemini config missing"
     
@@ -178,7 +177,7 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
         resp = send_mcp_request(mcp_proc, scan_req)
         assert resp and "result" in resp, "Tool 'scan_once' call failed"
         scan_text = resp["result"]["content"][0]["text"]
-        assert "PACK1 scan_once" in scan_text
+        assert "PACK1 tool=scan_once ok=true" in scan_text
         scan_metrics = parse_pack_metrics(scan_text)
         assert int(scan_metrics.get("scanned_files", "0")) >= 0
         
@@ -196,7 +195,7 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
         assert resp and "result" in resp, "Tool 'status' call failed"
         content_text = resp["result"]["content"][0]["text"]
         # PACK1 default: expect header + index_ready metric
-        assert "PACK1 status" in content_text
+        assert "PACK1 tool=status ok=true" in content_text
         assert "m:index_ready=true" in content_text.lower() or "active" in content_text.lower()
         
     finally:

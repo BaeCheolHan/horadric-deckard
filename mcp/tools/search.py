@@ -5,7 +5,7 @@ Search tool for Local Search MCP Server.
 import time
 from typing import Any, Dict, List
 
-from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text, resolve_root_ids, pack_error, ErrorCode
 
 try:
     from app.db import LocalSearchDB, SearchOptions
@@ -19,21 +19,18 @@ except ImportError:
     from mcp.telemetry import TelemetryLogger
 
 
-def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger) -> Dict[str, Any]:
+def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger, roots: List[str]) -> Dict[str, Any]:
     """Execute enhanced search tool (v2.5.0) with PACK1 support."""
     start_ts = time.time()
+    root_ids = resolve_root_ids(roots)
     query = args.get("query", "")
     
     if not query.strip():
-        # PACK1 Error format will be handled by exception handler usually, 
-        # but here we return JSON error manually as per original logic.
-        # But for PACK1 consistency, we should ideally use pack_error, 
-        # yet mcp_response expects success path. 
-        # Let's keep existing error return for now, as it's an input error.
-        return {
-            "content": [{"type": "text", "text": "Error: query is required"}],
-            "isError": True,
-        }
+        return mcp_response(
+            "search",
+            lambda: pack_error("search", ErrorCode.INVALID_ARGS, "query is required"),
+            lambda: {"error": {"code": ErrorCode.INVALID_ARGS.value, "message": "query is required"}, "isError": True},
+        )
     
     repo = args.get("scope") or args.get("repo")
     if repo == "workspace":
@@ -72,7 +69,7 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
     if db:
         status = db.get_index_status()
         total_files = status.get("total_files", 0)
-        repo_stats = db.get_repo_stats()
+        repo_stats = db.get_repo_stats(root_ids=root_ids)
         total_repos = len(repo_stats)
         
         if total_repos > 50 or total_files > 150000:
@@ -100,6 +97,7 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
             use_regex=bool(args.get("use_regex", False)),
             case_sensitive=bool(args.get("case_sensitive", False)),
             total_mode=total_mode_hint,
+            root_ids=root_ids,
         )
         hits, meta = db.search_v2(opts)
         last_meta = meta or {}

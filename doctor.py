@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from app.db import LocalSearchDB
 from app.workspace import WorkspaceManager
+from app.registry import ServerRegistry
 
 RED = "\033[31m"
 GREEN = "\033[32m"
@@ -82,16 +83,16 @@ def check_network():
         print_status("Network Check", False, f"Unreachable: {e}")
         return False
 
-def check_port(port: int = 47777):
+def check_port(port: int = 47777, label: str = "Port"):
     """Check if port is available."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(("127.0.0.1", port))
         s.close()
-        print_status(f"Port {port} Availability", True)
+        print_status(f"{label} {port} Availability", True)
         return True
     except OSError as e:
-         print_status(f"Port {port} Availability", False, f"Address in use or missing permission: {e}")
+         print_status(f"{label} {port} Availability", False, f"Address in use or missing permission: {e}")
          return False
     finally:
         s.close()
@@ -112,17 +113,6 @@ def check_disk_space(min_gb: float = 1.0):
     except Exception as e:
          print_status("Disk Space", False, str(e))
          return False
-
-def check_marker():
-    """Check if workspace marker exists."""
-    ws_root = WorkspaceManager.resolve_workspace_root()
-    marker = Path(ws_root) / ".codex-root"
-    if marker.exists():
-        print_status("Workspace Marker (.codex-root)", True)
-        return True
-    else:
-        print_status("Workspace Marker (.codex-root)", False, f"Marker missing at {ws_root}. Run 'init' first.")
-        return False
 
 def check_daemon():
     """Check if Deckard Daemon is running."""
@@ -147,14 +137,20 @@ def run_doctor():
     # 1. Environment & Setup
     print(f"{YELLOW}[Setup]{RESET}")
     in_venv = sys.prefix != sys.base_prefix
-    print_status("Virtualenv", in_venv, "" if in_venv else "Not running in venv")
-    check_marker()
+    print_status("Virtualenv", True, "" if in_venv else "Not running in venv (ok)")
     
     # 2. Daemon & Network
     print(f"\n{YELLOW}[Runtime]{RESET}")
     check_daemon()
-    check_port(47800) # TCP Daemon port
+    daemon_host, daemon_port = get_daemon_address()
+    check_port(daemon_port, label="Daemon port")
     check_network()
+    try:
+        inst = ServerRegistry().get_instance(ws_root)
+        if inst and inst.get("port"):
+            check_port(int(inst.get("port")), label="HTTP API port")
+    except Exception:
+        pass
     
     # 3. DB & Storage
     print(f"\n{YELLOW}[Storage]{RESET}")

@@ -13,18 +13,21 @@ def parse_pack1(text):
         raise ValueError(f"Invalid PACK1 header: {header}")
 
     header_parts = header.split(" ")
-    tool = header_parts[1]
-    
     # Extract header KVs
     header_kv = {}
-    for part in header_parts[2:]:
+    for part in header_parts[1:]:
         if "=" in part:
             k, v = part.split("=", 1)
             header_kv[k] = urllib.parse.unquote(v)
+    tool = header_kv.get("tool", "")
 
     records = []
     meta = {}
     
+    # Error metadata from header (single-line errors)
+    if header_kv.get("ok") == "false":
+        meta["error"] = {k: v for k, v in header_kv.items() if k not in {"tool", "ok"}}
+
     for line in lines[1:]:
         if ":" not in line:
             continue
@@ -39,7 +42,7 @@ def parse_pack1(text):
                     t_kv[k] = urllib.parse.unquote(v)
             meta["truncation"] = t_kv
         elif kind == "e":
-            # Error line
+            # Legacy error line
             e_kv = {}
             for part in payload.split(" "):
                 if "=" in part:

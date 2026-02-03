@@ -40,7 +40,7 @@ class TestIntegrationPortability(unittest.TestCase):
             "file_types": ["py"],
             "path_pattern": "src"
         }
-        result = execute_list_files(args, self.db, MagicMock())
+        result = execute_list_files(args, self.db, MagicMock(), [])
         data = parse_pack1(result["content"][0]["text"])
         
         # In PACK1, records are under "records"
@@ -55,7 +55,7 @@ class TestIntegrationPortability(unittest.TestCase):
             ts = int(time.time())
             self.db.upsert_files([("test.py", "repo1", 0, 0, "content", ts)])
             args = {"repo": "repo1"}
-            result = execute_list_files(args, self.db, MagicMock())
+            result = execute_list_files(args, self.db, MagicMock(), [])
             data = json.loads(result["content"][0]["text"])
             self.assertIn("files", data)
             self.assertEqual(data["files"][0]["path"], "test.py")
@@ -70,7 +70,7 @@ class TestIntegrationPortability(unittest.TestCase):
         ])
         
         args = {"query": "target"}
-        result = execute_repo_candidates(args, self.db)
+        result = execute_repo_candidates(args, self.db, MagicMock(), [])
         data = parse_pack1(result["content"][0]["text"])
         
         candidates = [r["data"] for r in data["records"] if r["kind"] == "r"]
@@ -87,7 +87,7 @@ class TestIntegrationPortability(unittest.TestCase):
         cfg = Config(
             workspace_roots=[str(self.workspace)],
             workspace_root=str(self.workspace),
-            server_host="127.0.0.1", server_port=47777,
+            server_host="127.0.0.1", server_port=47777, http_api_host="127.0.0.1", http_api_port=7331,
             scan_interval_seconds=180, snippet_max_lines=5,
             max_file_bytes=800000, db_path=self.db_path,
             include_ext=[".txt"], include_files=[],
@@ -108,7 +108,7 @@ class TestIntegrationPortability(unittest.TestCase):
         """Case 2: server.json tracks actual port"""
         import app.main
         with patch("app.main.serve_forever", return_value=(MagicMock(), 48888)), \
-             patch("app.main.Config.load", return_value=MagicMock(server_port=47777, db_path=self.db_path, server_host="127.0.0.1")):
+             patch("app.main.Config.load", return_value=MagicMock(http_api_port=7331, db_path=self.db_path, http_api_host="127.0.0.1", server_host="127.0.0.1", server_port=47777)):
             
             with patch("app.main.WorkspaceManager.resolve_workspace_root", return_value=str(self.workspace)), \
                  patch("app.main.Indexer"), patch("app.main.LocalSearchDB"), \

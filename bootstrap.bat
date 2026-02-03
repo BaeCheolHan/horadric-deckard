@@ -100,9 +100,9 @@ goto argparse
 
 :run
 if "%ARGS%"=="" (
-    "%PY%" -m mcp.cli proxy
+    "%PY%" -m deckard
 ) else (
-    "%PY%" -m mcp.cli %ARGS%
+    "%PY%" -m deckard --cmd %ARGS%
 )
 
 endlocal

@@ -84,7 +84,8 @@ def test_start_daemon_if_needed_success(monkeypatch, tmp_path):
         return DummySock()
 
     monkeypatch.setattr(proxy_mod.socket, "create_connection", fake_conn)
-    monkeypatch.setattr(proxy_mod.fcntl, "flock", lambda *_: None)
+    monkeypatch.setattr(proxy_mod, "_lock_file", lambda *_: None)
+    monkeypatch.setattr(proxy_mod, "_unlock_file", lambda *_: None)
     monkeypatch.setattr(proxy_mod.subprocess, "Popen", lambda *args, **kwargs: None)
     monkeypatch.setattr(proxy_mod.time, "sleep", lambda *_: None)
     assert proxy_mod.start_daemon_if_needed("127.0.0.1", 1) is True
@@ -92,7 +93,8 @@ def test_start_daemon_if_needed_success(monkeypatch, tmp_path):
 
 def test_start_daemon_if_needed_failure(monkeypatch):
     monkeypatch.setattr(proxy_mod.socket, "create_connection", lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionRefusedError()))
-    monkeypatch.setattr(proxy_mod.fcntl, "flock", lambda *_: None)
+    monkeypatch.setattr(proxy_mod, "_lock_file", lambda *_: None)
+    monkeypatch.setattr(proxy_mod, "_unlock_file", lambda *_: None)
     monkeypatch.setattr(proxy_mod.subprocess, "Popen", lambda *args, **kwargs: None)
     monkeypatch.setattr(proxy_mod.time, "sleep", lambda *_: None)
     assert proxy_mod.start_daemon_if_needed("127.0.0.1", 1) is False
@@ -112,14 +114,14 @@ def test_start_daemon_detect_workspace_root(monkeypatch, tmp_path):
         calls["n"] += 1
         raise ConnectionRefusedError()
     monkeypatch.setattr(proxy_mod.socket, "create_connection", fake_conn)
-    monkeypatch.setattr(proxy_mod.fcntl, "flock", lambda *_: None)
+    monkeypatch.setattr(proxy_mod, "_lock_file", lambda *_: None)
+    monkeypatch.setattr(proxy_mod, "_unlock_file", lambda *_: None)
     monkeypatch.setattr(proxy_mod.subprocess, "Popen", lambda *args, **kwargs: None)
     monkeypatch.setattr(proxy_mod.time, "sleep", lambda *_: None)
 
     root = tmp_path / "root"
     child = root / "child"
     child.mkdir(parents=True)
-    (root / ".codex-root").write_text("")
     monkeypatch.setattr(proxy_mod.Path, "cwd", lambda: child)
     monkeypatch.delenv("DECKARD_WORKSPACE_ROOT", raising=False)
     monkeypatch.delenv("LOCAL_SEARCH_WORKSPACE_ROOT", raising=False)

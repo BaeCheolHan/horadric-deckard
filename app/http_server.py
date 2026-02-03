@@ -19,6 +19,7 @@ class Handler(BaseHTTPRequestHandler):
     server_host: str = "127.0.0.1"
     server_port: int = 47777
     server_version: str = "dev"
+    root_ids: list[str] = []
 
     def _json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -70,6 +71,7 @@ class Handler(BaseHTTPRequestHandler):
                 repo=repo,
                 limit=max(1, min(limit, 50)),
                 snippet_max_lines=max(1, min(int(self.indexer.cfg.snippet_max_lines), 20)),
+                root_ids=self.root_ids,
             )
             return self._json(
                 {"ok": True, "q": q, "repo": repo, "meta": meta, "hits": [h.__dict__ for h in hits]}
@@ -80,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
             limit = int((qs.get("limit") or ["3"])[0])
             if not q:
                 return self._json({"ok": False, "error": "missing q"}, status=400)
-            cands = self.db.repo_candidates(q=q, limit=max(1, min(limit, 5)))
+            cands = self.db.repo_candidates(q=q, limit=max(1, min(limit, 5)), root_ids=self.root_ids)
             return self._json({"ok": True, "q": q, "candidates": cands})
 
         if path == "/rescan":
@@ -118,33 +120,28 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     BoundHandler.indexer = indexer  # type: ignore
     BoundHandler.server_host = host  # type: ignore
     BoundHandler.server_version = version  # type: ignore
+    try:
+        from app.workspace import WorkspaceManager
+        BoundHandler.root_ids = [WorkspaceManager.root_id(r) for r in indexer.cfg.workspace_roots]  # type: ignore
+    except Exception:
+        BoundHandler.root_ids = []  # type: ignore
 
-    # Allocation Strategy
+    strategy = (os.environ.get("DECKARD_HTTP_API_PORT_STRATEGY") or "auto").strip().lower()
     actual_port = port
-    if has_registry:
-        try:
-            # Find a truly free port (checking OS & Registry)
-            actual_port = registry.find_free_port(start_port=port)
-        except RuntimeError:
-            print("[deckard] Warning: No free ports found via registry, trying fallback.", file=sys.stderr)
-            pass
-
     httpd = None
     try:
         BoundHandler.server_port = actual_port  # type: ignore
         httpd = HTTPServer((host, actual_port), BoundHandler)
     except OSError as e:
-        # Fallback to simple retry if exact binding failed (race condition?)
-        print(f"[deckard] Port {actual_port} binding failed: {e}. Retrying...", file=sys.stderr)
-        for i in range(10):
-            p = actual_port + 1 + i
-            try:
-                BoundHandler.server_port = p
-                httpd = HTTPServer((host, p), BoundHandler)
-                actual_port = p
-                break
-            except OSError:
-                continue
+        if strategy == "strict":
+            raise RuntimeError(f"HTTP API port {actual_port} unavailable: {e}")
+        # auto strategy: retry with port=0 (OS-assigned)
+        try:
+            BoundHandler.server_port = 0  # type: ignore
+            httpd = HTTPServer((host, 0), BoundHandler)
+            actual_port = httpd.server_address[1]
+        except OSError:
+            raise RuntimeError("Failed to create HTTP server")
     
     if httpd is None:
         raise RuntimeError("Failed to create HTTP server")
@@ -157,7 +154,7 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
             print(f"[deckard] Registry update failed: {e}", file=sys.stderr)
 
     if actual_port != port:
-        print(f"[deckard] Started on port {actual_port} (requested: {port})", file=sys.stderr)
+        print(f"[deckard] HTTP API started on port {actual_port} (requested: {port})", file=sys.stderr)
 
     # Clean shutdown hook?
     # HTTP Server runs in thread, so unregistering is tricky if main thread dies hard.

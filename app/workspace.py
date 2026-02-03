@@ -41,31 +41,28 @@ class WorkspaceManager:
         Resolve multiple workspace roots with priority, normalization, and deduplication.
         
         Priority (Union & Merge):
-        1. root_uri (MCP initialize param) - highest priority
+        1. config.roots
         2. DECKARD_ROOTS_JSON
         3. DECKARD_ROOT_1..N
-        4. config.roots
-        5. DECKARD_WORKSPACE_ROOT (legacy)
-        6. LOCAL_SEARCH_WORKSPACE_ROOT (legacy)
-        7. .codex-root marker search (from cwd upward)
-        8. Fallback to cwd
+        4. DECKARD_WORKSPACE_ROOT (legacy)
+        5. LOCAL_SEARCH_WORKSPACE_ROOT (legacy)
+        6. root_uri (MCP initialize param, ephemeral)
+        7. Fallback to cwd (only if no candidates)
         
         Returns:
             List of absolute, normalized paths.
         """
-        candidates = []
+        candidates: list[tuple[str, str]] = []
         env_vars = roots_env if roots_env is not None else os.environ
         follow_symlinks = (env_vars.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+        keep_nested = (env_vars.get("DECKARD_KEEP_NESTED_ROOTS", "0").strip().lower() in ("1", "true", "yes", "on"))
 
-        # 1. root_uri (override)
-        if root_uri:
-            uri_path = root_uri[7:] if root_uri.startswith("file://") else root_uri
-            try:
-                if uri_path and Path(os.path.expanduser(uri_path)).exists():
-                    candidates.append(uri_path)
-            except Exception:
-                pass
-        
+        # 1. config.roots
+        if config_roots:
+            for x in config_roots:
+                if x:
+                    candidates.append((str(x), "config"))
+
         # 2. DECKARD_ROOTS_JSON
         import json
         json_str = roots_json or env_vars.get("DECKARD_ROOTS_JSON", "")
@@ -73,7 +70,9 @@ class WorkspaceManager:
             try:
                 loaded = json.loads(json_str)
                 if isinstance(loaded, list):
-                    candidates.extend(str(x) for x in loaded if x)
+                    for x in loaded:
+                        if x:
+                            candidates.append((str(x), "env"))
             except Exception:
                 pass
                 
@@ -81,67 +80,84 @@ class WorkspaceManager:
         for k, v in env_vars.items():
             if k.startswith("DECKARD_ROOT_") and k[13:].isdigit():
                 if v and v.strip():
-                    candidates.append(v.strip())
+                    candidates.append((v.strip(), "env"))
                     
-        # 4. config.roots
-        if config_roots:
-            candidates.extend(str(x) for x in config_roots if x)
-            
-        # 5. Legacy DECKARD_WORKSPACE_ROOT (Higher priority than LOCAL_SEARCH)
+        # 4. Legacy DECKARD_WORKSPACE_ROOT (Higher priority than LOCAL_SEARCH)
         legacy_val = (env_vars.get("DECKARD_WORKSPACE_ROOT") or "").strip()
         if legacy_val:
             if legacy_val == "${cwd}":
-                candidates.append(os.getcwd())
+                candidates.append((os.getcwd(), "env"))
             else:
-                candidates.append(legacy_val)
+                candidates.append((legacy_val, "env"))
 
-        # 6. Legacy LOCAL_SEARCH_WORKSPACE_ROOT
+        # 5. Legacy LOCAL_SEARCH_WORKSPACE_ROOT
         ls_val = (env_vars.get("LOCAL_SEARCH_WORKSPACE_ROOT") or "").strip()
         if ls_val:
             if ls_val == "${cwd}":
-                candidates.append(os.getcwd())
+                candidates.append((os.getcwd(), "env"))
             else:
-                candidates.append(ls_val)
-                
-        # 7. Search for .codex-root marker (If no candidates found yet)
-        if not candidates:
-            cwd = Path.cwd()
-            for parent in [cwd] + list(cwd.parents):
-                if (parent / ".codex-root").exists():
-                    candidates.append(str(parent))
-                    break
+                candidates.append((ls_val, "env"))
         
-        # 8. Fallback to cwd
+        # 6. root_uri (ephemeral)
+        if root_uri:
+            uri_path = root_uri[7:] if root_uri.startswith("file://") else root_uri
+            try:
+                if uri_path:
+                    candidate = os.path.expanduser(uri_path)
+                    if os.path.exists(candidate):
+                        candidates.append((candidate, "root_uri"))
+            except Exception:
+                pass
+        
+        # 7. Fallback to cwd
         if not candidates:
-            candidates.append(os.getcwd())
+            candidates.append((os.getcwd(), "fallback"))
             
         # Normalization
-        resolved_paths = []
-        for p in candidates:
+        resolved_paths: list[tuple[str, str]] = []
+        seen = set()
+        for p, src in candidates:
             try:
                 abs_path = WorkspaceManager._normalize_path(p, follow_symlinks=follow_symlinks)
-                if abs_path not in resolved_paths:
-                    resolved_paths.append(abs_path)
+                if abs_path not in seen:
+                    resolved_paths.append((abs_path, src))
+                    seen.add(abs_path)
             except Exception:
                 continue
                 
         # Inclusion check while preserving priority order (first seen wins)
         final_roots: list[str] = []
-        for p in resolved_paths:
-            is_covered = False
-            p_path = Path(p)
-            for existing in final_roots:
-                try:
-                    if p_path == Path(existing) or Path(existing) in p_path.parents:
-                        is_covered = True
-                        break
-                    if p.startswith(existing + os.sep):
-                        is_covered = True
-                        break
-                except Exception:
-                    continue
-            if not is_covered:
+        final_meta: list[tuple[str, str]] = []
+        if keep_nested:
+            for p, src in resolved_paths:
                 final_roots.append(p)
+                final_meta.append((p, src))
+        else:
+            for p, src in resolved_paths:
+                p_path = Path(p)
+                is_covered = False
+                for existing, ex_src in final_meta:
+                    try:
+                        existing_path = Path(existing)
+                        # If root_uri is a child of config/env, drop root_uri
+                        if src == "root_uri" and ex_src in {"config", "env"}:
+                            if p_path == existing_path or existing_path in p_path.parents or p.startswith(existing + os.sep):
+                                is_covered = True
+                                break
+                        # If root_uri is parent of config/env, keep both (skip collapse)
+                        if ex_src == "root_uri" and src in {"config", "env"}:
+                            if p_path == existing_path or p.startswith(existing + os.sep) or existing_path in p_path.parents:
+                                is_covered = False
+                                continue
+                        # Default: collapse nested roots (parent keeps, child removed)
+                        if p_path == existing_path or existing_path in p_path.parents or p.startswith(existing + os.sep):
+                            is_covered = True
+                            break
+                    except Exception:
+                        continue
+                if not is_covered:
+                    final_meta.append((p, src))
+                    final_roots.append(p)
 
         return final_roots
 
@@ -180,25 +196,45 @@ class WorkspaceManager:
         Resolve config path with unified priority.
         
         Priority:
-        1. DECKARD_CONFIG environment variable
-        2. LOCAL_SEARCH_CONFIG environment variable
-        3. <workspace_root>/.codex/tools/deckard/config/config.json
-        4. Packaged default config
+        1. DECKARD_CONFIG environment variable (SSOT)
+        2. Default SSOT path (~/.config/deckard/config.json or %APPDATA%/deckard/config.json)
         """
-        for env_key in ["DECKARD_CONFIG", "LOCAL_SEARCH_CONFIG"]:
-            val = (os.environ.get(env_key) or "").strip()
-            if val:
-                p = Path(os.path.expanduser(val))
-                if p.exists():
-                    return str(p.resolve())
-        
-        workspace_cfg = Path(workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json"
-        if workspace_cfg.exists():
-            return str(workspace_cfg)
-            
-        # Fallback to packaged config (install dir)
-        package_root = Path(__file__).resolve().parents[1]
-        return str(package_root / "config" / "config.json")
+        val = (os.environ.get("DECKARD_CONFIG") or "").strip()
+        if val:
+            p = Path(os.path.expanduser(val))
+            return str(p.resolve())
+
+        if os.name == "nt":
+            ssot = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "deckard" / "config.json"
+        else:
+            ssot = Path.home() / ".config" / "deckard" / "config.json"
+
+        if ssot.exists():
+            return str(ssot.resolve())
+
+        # Legacy migration (one-time copy + backup)
+        legacy_candidates = [
+            Path(workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json",
+        ]
+        legacy_home = Path.home() / ".deckard" / "config.json"
+        legacy_candidates.append(legacy_home)
+        for legacy in legacy_candidates:
+            if legacy.exists():
+                try:
+                    ssot.parent.mkdir(parents=True, exist_ok=True)
+                    ssot.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+                    bak = legacy.with_suffix(legacy.suffix + ".bak")
+                    try:
+                        legacy.rename(bak)
+                    except Exception:
+                        marker = legacy.parent / ".migrated"
+                        marker.write_text(f"migrated to {ssot}", encoding="utf-8")
+                    print(f"[deckard] migrated legacy config from {legacy} to {ssot}")
+                except Exception:
+                    pass
+                break
+
+        return str(ssot.resolve())
     
     @staticmethod
     def get_global_data_dir() -> Path:

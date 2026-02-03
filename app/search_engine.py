@@ -30,7 +30,7 @@ class SearchEngine:
         # 1. Symbol Search (Priority Layer)
         symbol_hits_data = []
         if opts.total_mode != "approx":
-             symbol_hits_data = self.db.search_symbols(q, repo=opts.repo, limit=50)
+             symbol_hits_data = self.db.search_symbols(q, repo=opts.repo, limit=50, root_ids=list(opts.root_ids or []))
 
         # Convert symbol hits to SearchHit objects
         symbol_hits = []
@@ -450,7 +450,7 @@ class SearchEngine:
         hits.sort(key=lambda h: (-h.score, -h.mtime, h.path))
         return hits
 
-    def repo_candidates(self, q: str, limit: int = 3) -> List[Dict[str, Any]]:
+    def repo_candidates(self, q: str, limit: int = 3, root_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         q = (q or "").strip()
         if not q: return []
         limit = max(1, min(int(limit), 5))
@@ -468,7 +468,7 @@ class SearchEngine:
                 for r in rows:
                     repo = str(r["repo"])
                     c = int(r["c"])
-                    hits, _ = self.search_v2(SearchOptions(query=q, repo=repo, limit=1))
+                    hits, _ = self.search_v2(SearchOptions(query=q, repo=repo, limit=1, root_ids=list(root_ids or [])))
                     evidence = hits[0].snippet.replace("\n", " ")[:200] if hits else ""
                     out.append({"repo": repo, "score": c, "evidence": evidence})
                 return out
@@ -481,13 +481,20 @@ class SearchEngine:
         out = []
         for r in rows:
             repo, c = str(r["repo"]), int(r["c"])
-            hits, _ = self.search_v2(SearchOptions(query=q, repo=repo, limit=1))
+            hits, _ = self.search_v2(SearchOptions(query=q, repo=repo, limit=1, root_ids=list(root_ids or [])))
             evidence = hits[0].snippet.replace("\n", " ")[:200] if hits else ""
             out.append({"repo": repo, "score": c, "evidence": evidence})
         return out
 
     def _build_filter_clauses(self, opts: SearchOptions) -> Tuple[List[str], List[Any]]:
         clauses, params = [], []
+        if opts.root_ids:
+            root_clauses = []
+            for rid in opts.root_ids:
+                root_clauses.append("f.path LIKE ?")
+                params.append(f"{rid}/%")
+            if root_clauses:
+                clauses.append("(" + " OR ".join(root_clauses) + ")")
         if opts.repo:
             clauses.append("f.repo = ?")
             params.append(opts.repo)

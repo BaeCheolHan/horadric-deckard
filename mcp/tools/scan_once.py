@@ -4,7 +4,7 @@ Scan-once tool for Local Search MCP Server.
 """
 from typing import Any, Dict
 
-from mcp.tools._util import mcp_response, pack_header, pack_line
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_error, ErrorCode
 
 try:
     from app.indexer import Indexer
@@ -18,10 +18,20 @@ except ImportError:
 def execute_scan_once(args: Dict[str, Any], indexer: Indexer) -> Dict[str, Any]:
     """Run a synchronous scan once."""
     if not indexer:
-        return {
-            "content": [{"type": "text", "text": "Error: indexer not available"}],
-            "isError": True,
-        }
+        return mcp_response(
+            "scan_once",
+            lambda: pack_error("scan_once", ErrorCode.INTERNAL, "indexer not available"),
+            lambda: {"error": {"code": ErrorCode.INTERNAL.value, "message": "indexer not available"}, "isError": True},
+        )
+
+    if not getattr(indexer, "indexing_enabled", True):
+        mode = getattr(indexer, "indexer_mode", "off")
+        code = ErrorCode.ERR_INDEXER_DISABLED if mode == "off" else ErrorCode.ERR_INDEXER_FOLLOWER
+        return mcp_response(
+            "scan_once",
+            lambda: pack_error("scan_once", code, "Indexer is not available in follower/off mode", fields={"mode": mode}),
+            lambda: {"error": {"code": code.value, "message": "Indexer is not available in follower/off mode", "data": {"mode": mode}}, "isError": True},
+        )
 
     indexer.scan_once()
     try:

@@ -3,6 +3,12 @@ import os
 import urllib.parse
 from enum import Enum
 from typing import Any, Dict, Optional, List, Callable
+from pathlib import Path
+
+try:
+    from app.workspace import WorkspaceManager
+except Exception:
+    WorkspaceManager = None
 
 # --- Constants & Enums ---
 
@@ -13,6 +19,10 @@ class ErrorCode(str, Enum):
     IO_ERROR = "IO_ERROR"
     DB_ERROR = "DB_ERROR"
     INTERNAL = "INTERNAL"
+    ERR_INDEXER_FOLLOWER = "ERR_INDEXER_FOLLOWER"
+    ERR_INDEXER_DISABLED = "ERR_INDEXER_DISABLED"
+    ERR_ROOT_OUT_OF_SCOPE = "ERR_ROOT_OUT_OF_SCOPE"
+    ERR_MCP_HTTP_UNSUPPORTED = "ERR_MCP_HTTP_UNSUPPORTED"
 
 # --- Format Selection ---
 
@@ -48,13 +58,13 @@ def pack_encode_id(s: Any) -> str:
 
 # --- PACK1 Builders ---
 
-def pack_header(tool: str, kv: Dict[str, Any], returned: Optional[int] = None, 
+def pack_header(tool: str, kv: Dict[str, Any], returned: Optional[int] = None,
                 total: Optional[int] = None, total_mode: Optional[str] = None) -> str:
     """
     Builds the PACK1 header line.
-    PACK1 <tool> k=v ... [returned=<N>] [total=<M>] [total_mode=<mode>]
+    PACK1 tool=<tool> ok=true k=v ... [returned=<N>] [total=<M>] [total_mode=<mode>]
     """
-    parts = ["PACK1", tool]
+    parts = ["PACK1", f"tool={tool}", "ok=true"]
     
     # Add custom KV pairs
     for k, v in kv.items():
@@ -86,24 +96,27 @@ def pack_line(kind: str, kv: Optional[Dict[str, str]] = None, single_value: Opti
         
     return f"{kind}:"
 
-def pack_error(tool: str, code: ErrorCode, msg: str, hints: List[str] = None, trace: str = None) -> str:
+def pack_error(tool: str, code: Any, msg: str, hints: List[str] = None, trace: str = None, fields: Dict[str, Any] = None) -> str:
     """
     Generates PACK1 error response.
-    PACK1 <tool> ok=false
-    e:code=<CODE> msg=<ENCODED_MSG>
-    d:hint=...
+    PACK1 tool=<tool> ok=false code=<CODE> msg=<ENCODED_MSG> [hint=<ENC>] [trace=<ENC>]
     """
-    lines = [f"PACK1 {tool} ok=false"]
-    lines.append(f"e:code={code.value} msg={pack_encode_text(msg)}")
-    
+    parts = [
+        "PACK1",
+        f"tool={tool}",
+        "ok=false",
+        f"code={code.value if isinstance(code, ErrorCode) else str(code)}",
+        f"msg={pack_encode_text(msg)}",
+    ]
     if hints:
-        for h in hints:
-            lines.append(f"d:hint={pack_encode_text(h)}")
-            
+        joined = " | ".join(hints)
+        parts.append(f"hint={pack_encode_text(joined)}")
     if trace:
-        lines.append(f"d:trace={pack_encode_text(trace)}")
-        
-    return "\n".join(lines)
+        parts.append(f"trace={pack_encode_text(trace)}")
+    if fields:
+        for k, v in fields.items():
+            parts.append(f"{k}={pack_encode_text(v)}")
+    return " ".join(parts)
 
 def pack_truncated(next_offset: int, limit: int, truncated_state: str) -> str:
     """
@@ -173,3 +186,51 @@ def mcp_json(obj):
     if isinstance(obj, dict):
         res.update(obj)
     return res
+
+
+def resolve_root_ids(roots: List[str]) -> List[str]:
+    if not roots or not WorkspaceManager:
+        return []
+    out: List[str] = []
+    for r in roots:
+        try:
+            out.append(WorkspaceManager.root_id(r))
+        except Exception:
+            continue
+    return out
+
+
+def resolve_db_path(input_path: str, roots: List[str]) -> Optional[str]:
+    """
+    Accepts either db-path (root-xxxx/rel) or filesystem path.
+    Returns normalized db-path if allowed, else None.
+    """
+    if not input_path:
+        return None
+    if "/" in input_path and input_path.startswith("root-"):
+        root_id = input_path.split("/", 1)[0]
+        if root_id in resolve_root_ids(roots):
+            return input_path
+        return None
+    if not WorkspaceManager:
+        return None
+    follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+    try:
+        p = Path(os.path.expanduser(input_path))
+        if not p.is_absolute():
+            p = (Path.cwd() / p).resolve()
+        else:
+            p = p.resolve()
+    except Exception:
+        return None
+
+    for root in roots:
+        try:
+            root_norm = WorkspaceManager._normalize_path(root, follow_symlinks=follow_symlinks)  # type: ignore
+            root_path = Path(root_norm)
+            if p == root_path or root_path in p.parents:
+                rel = p.relative_to(root_path).as_posix()
+                return f"{WorkspaceManager.root_id(str(root_path))}/{rel}"
+        except Exception:
+            continue
+    return None

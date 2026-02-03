@@ -27,17 +27,16 @@ def test_init_ux(workspace):
     res = run_cli(["init"], workspace)
     
     assert res.returncode == 0
-    assert "✅ Created workspace marker" in res.stdout
-    assert "✅ Created Deckard config" in res.stdout
+    assert "✅ Updated Deckard config" in res.stdout
     assert "🚀 Workspace initialized successfully" in res.stdout
-    
-    assert (workspace / ".codex-root").exists()
-    assert (workspace / ".codex/tools/deckard/config/config.json").exists()
+
+    from app.workspace import WorkspaceManager
+    cfg_path = Path(WorkspaceManager.resolve_config_path(str(workspace)))
+    assert cfg_path.exists()
     
     # Run again without force
     res2 = run_cli(["init"], workspace)
-    assert "ℹ️  Workspace marker already exists" in res2.stdout
-    assert "ℹ️  Deckard config already exists" in res2.stdout
+    assert "✅ Updated Deckard config" in res2.stdout
 
 def test_status_no_daemon_ux(workspace):
     """Verify status command feedback when daemon is missing."""
@@ -55,21 +54,13 @@ def test_status_no_daemon_ux(workspace):
     assert "Daemon is not running" in res.stdout or "Could not connect" in res.stdout
 
 def test_doctor_ux(workspace):
-    """Verify doctor command output structure and marker check."""
+    """Verify doctor command output structure."""
     project_root = Path(__file__).resolve().parent.parent.parent
     doctor_path = str(project_root / "doctor.py")
     
-    # 1. Fail Case (No marker)
     cmd = [sys.executable, doctor_path]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(project_root)
     
     res = subprocess.run(cmd, cwd=str(workspace), env=env, capture_output=True, text=True)
-    assert "FAIL" in res.stdout
-    assert "Workspace Marker (.codex-root)" in res.stdout
-    
-    # 2. Pass Case (After init)
-    run_cli(["init"], workspace)
-    res2 = subprocess.run(cmd, cwd=str(workspace), env=env, capture_output=True, text=True)
-    assert "PASS" in res2.stdout
-    assert "Workspace Marker (.codex-root)" in res2.stdout
+    assert "Workspace Root" in res.stdout

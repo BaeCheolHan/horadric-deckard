@@ -105,23 +105,42 @@ class LocalSearchDB:
     # Transaction-safe *_tx methods (no commit/rollback here)
     # ----------------------------
 
-    def upsert_files_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple[str, str, int, int, str, int]]) -> int:
+    def upsert_files_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple]) -> int:
         rows_list = []
         for r in rows:
-            compressed_content = _compress(r[4])
-            rows_list.append((r[0], r[1], r[2], r[3], compressed_content, r[5]))
+            r_list = list(r)
+            # Pad legacy rows (path, repo, mtime, size, content, last_seen)
+            if len(r_list) < 14:
+                while len(r_list) < 6:
+                    r_list.append(0)
+                defaults = ["none", "none", "none", "none", 0, 0, 0, 0]
+                r_list.extend(defaults[: (14 - len(r_list))])
+            compressed_content = _compress(r_list[4])
+            rows_list.append((
+                r_list[0], r_list[1], r_list[2], r_list[3], compressed_content,
+                r_list[5], r_list[6], r_list[7], r_list[8], r_list[9],
+                r_list[10], r_list[11], r_list[12], r_list[13]
+            ))
         if not rows_list:
             return 0
         cur.executemany(
             """
-            INSERT INTO files(path, repo, mtime, size, content, last_seen)
-            VALUES(?,?,?,?,?,?)
+            INSERT INTO files(path, repo, mtime, size, content, last_seen, parse_status, parse_reason, ast_status, ast_reason, is_binary, is_minified, sampled, content_bytes)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(path) DO UPDATE SET
               repo=excluded.repo,
               mtime=excluded.mtime,
               size=excluded.size,
               content=excluded.content,
-              last_seen=excluded.last_seen
+              last_seen=excluded.last_seen,
+              parse_status=excluded.parse_status,
+              parse_reason=excluded.parse_reason,
+              ast_status=excluded.ast_status,
+              ast_reason=excluded.ast_reason,
+              is_binary=excluded.is_binary,
+              is_minified=excluded.is_minified,
+              sampled=excluded.sampled,
+              content_bytes=excluded.content_bytes
             WHERE excluded.mtime >= files.mtime;
             """,
             rows_list,
@@ -243,7 +262,15 @@ class LocalSearchDB:
                   mtime INTEGER NOT NULL,
                   size INTEGER NOT NULL,
                   content BLOB NOT NULL,
-                  last_seen INTEGER DEFAULT 0
+                  last_seen INTEGER DEFAULT 0,
+                  parse_status TEXT NOT NULL DEFAULT 'none',
+                  parse_reason TEXT NOT NULL DEFAULT 'none',
+                  ast_status TEXT NOT NULL DEFAULT 'none',
+                  ast_reason TEXT NOT NULL DEFAULT 'none',
+                  is_binary INTEGER NOT NULL DEFAULT 0,
+                  is_minified INTEGER NOT NULL DEFAULT 0,
+                  sampled INTEGER NOT NULL DEFAULT 0,
+                  content_bytes INTEGER NOT NULL DEFAULT 0
                 );
                 """
             )
@@ -323,6 +350,22 @@ class LocalSearchDB:
             except sqlite3.OperationalError:
                 # Column already exists or table doesn't exist yet
                 pass
+
+            # v2.10.0: 3-stage collection columns
+            for stmt in [
+                "ALTER TABLE files ADD COLUMN parse_status TEXT NOT NULL DEFAULT 'none'",
+                "ALTER TABLE files ADD COLUMN parse_reason TEXT NOT NULL DEFAULT 'none'",
+                "ALTER TABLE files ADD COLUMN ast_status TEXT NOT NULL DEFAULT 'none'",
+                "ALTER TABLE files ADD COLUMN ast_reason TEXT NOT NULL DEFAULT 'none'",
+                "ALTER TABLE files ADD COLUMN is_binary INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE files ADD COLUMN is_minified INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE files ADD COLUMN sampled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE files ADD COLUMN content_bytes INTEGER NOT NULL DEFAULT 0",
+            ]:
+                try:
+                    cur.execute(stmt)
+                except sqlite3.OperationalError:
+                    pass
 
             cur.execute("CREATE INDEX IF NOT EXISTS idx_files_last_seen ON files(last_seen);")
             
@@ -528,9 +571,11 @@ class LocalSearchDB:
         self._stats_cache.clear()
         self._stats_cache_ts = 0.0
 
-    def get_repo_stats(self, force_refresh: bool = False) -> dict[str, int]:
+    def get_repo_stats(self, force_refresh: bool = False, root_ids: Optional[list[str]] = None) -> dict[str, int]:
         """Get file counts per repo with TTL cache (v2.5.1)."""
         now = time.time()
+        if root_ids:
+            force_refresh = True
         if not force_refresh and (now - self._stats_cache_ts < self._stats_cache_ttl):
             cached = self._stats_cache.get("repo_stats")
             if cached is not None:
@@ -538,7 +583,13 @@ class LocalSearchDB:
 
         try:
             with self._read_lock:
-                rows = self._read.execute("SELECT repo, COUNT(1) as c FROM files GROUP BY repo").fetchall()
+                if root_ids:
+                    root_clauses = " OR ".join(["path LIKE ?"] * len(root_ids))
+                    sql = f"SELECT repo, COUNT(1) as c FROM files WHERE {root_clauses} GROUP BY repo"
+                    params = [f"{rid}/%" for rid in root_ids]
+                    rows = self._read.execute(sql, params).fetchall()
+                else:
+                    rows = self._read.execute("SELECT repo, COUNT(1) as c FROM files GROUP BY repo").fetchall()
             stats = {r["repo"]: r["c"] for r in rows}
             self._stats_cache["repo_stats"] = stats
             self._stats_cache_ts = now
@@ -582,6 +633,7 @@ class LocalSearchDB:
         include_hidden: bool = False,
         limit: int = 100,
         offset: int = 0,
+        root_ids: Optional[list[str]] = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """List indexed files for debugging (v2.4.0)."""
         limit = min(int(limit), 500)
@@ -590,6 +642,15 @@ class LocalSearchDB:
         where_clauses = []
         params: list[Any] = []
         
+        # 0. Root filter
+        if root_ids:
+            root_clauses = []
+            for rid in root_ids:
+                root_clauses.append("f.path LIKE ?")
+                params.append(f"{rid}/%")
+            if root_clauses:
+                where_clauses.append("(" + " OR ".join(root_clauses) + ")")
+
         # 1. Repo filter
         if repo:
             where_clauses.append("f.repo = ?")
@@ -648,16 +709,18 @@ class LocalSearchDB:
         # Count query params (no limit/offset)
         count_sql = f"SELECT COUNT(1) AS c FROM files f WHERE {where}"
         
-        repo_sql = """
+        repo_where = where if where else "1=1"
+        repo_sql = f"""
             SELECT repo, COUNT(1) AS file_count
-            FROM files
+            FROM files f
+            WHERE {repo_where}
             GROUP BY repo
             ORDER BY file_count DESC;
         """
         with self._read_lock:
             count_res = self._read.execute(count_sql, params).fetchone()
             total = count_res["c"] if count_res else 0
-            repo_rows = self._read.execute(repo_sql).fetchall()
+            repo_rows = self._read.execute(repo_sql, params).fetchall()
             
         repos = [{"repo": r["repo"], "file_count": r["file_count"]} for r in repo_rows]
         
@@ -679,7 +742,7 @@ class LocalSearchDB:
     # ========== Main Search Methods ========== 
 
 
-    def search_symbols(self, query: str, repo: Optional[str] = None, limit: int = 20) -> list[dict[str, Any]]:
+    def search_symbols(self, query: str, repo: Optional[str] = None, limit: int = 20, root_ids: Optional[list[str]] = None) -> list[dict[str, Any]]:
         """Search for symbols by name (v2.6.0)."""
         limit = min(limit, 100)
         query = query.strip()
@@ -693,7 +756,15 @@ class LocalSearchDB:
             WHERE s.name LIKE ?
         """
         params = [f"%{query}%"]
-        
+
+        if root_ids:
+            root_clauses = []
+            for rid in root_ids:
+                root_clauses.append("f.path LIKE ?")
+                params.append(f"{rid}/%")
+            if root_clauses:
+                sql += " AND (" + " OR ".join(root_clauses) + ")"
+
         if repo:
             sql += " AND f.repo = ?"
             params.append(repo)
@@ -744,12 +815,14 @@ class LocalSearchDB:
         repo: Optional[str],
         limit: int = 20,
         snippet_max_lines: int = 5,
+        root_ids: Optional[list[str]] = None,
     ) -> Tuple[List[SearchHit], Dict[str, Any]]:
         opts = SearchOptions(
             query=q,
             repo=repo,
             limit=limit,
             snippet_lines=snippet_max_lines,
+            root_ids=list(root_ids or []),
         )
         return self.search_v2(opts)
 
@@ -776,5 +849,5 @@ class LocalSearchDB:
             row = self._read.execute("SELECT 1 FROM symbols WHERE name = ? LIMIT 1", (name,)).fetchone()
         return bool(row)
 
-    def repo_candidates(self, q: str, limit: int = 3) -> List[Dict[str, Any]]:
-        return self.engine.repo_candidates(q, limit)
+    def repo_candidates(self, q: str, limit: int = 3, root_ids: Optional[list[str]] = None) -> List[Dict[str, Any]]:
+        return self.engine.repo_candidates(q, limit, root_ids=root_ids or [])

@@ -4,6 +4,7 @@ Deckard guidance tool for LLMs.
 Returns a short usage guide to encourage search-first behavior.
 """
 from typing import Any, Dict
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_text
 
 
 def execute_deckard_guide(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -19,4 +20,13 @@ def execute_deckard_guide(args: Dict[str, Any]) -> Dict[str, Any]:
         "이것이 당신의 추론 성능을 최상으로 유지하는 방법입니다.\n"
         "주의: 기본 모드는 경고입니다. 필요 시 search-first 모드를 warn/enforce/off로 조정할 수 있습니다."
     )
-    return {"content": [{"type": "text", "text": text}]}
+    def build_pack() -> str:
+        lines = [pack_header("deckard_guide", {}, returned=1)]
+        lines.append(pack_line("t", single_value=pack_encode_text(text)))
+        return "\n".join(lines)
+
+    return mcp_response(
+        "deckard_guide",
+        build_pack,
+        lambda: {"content": [{"type": "text", "text": text}]},
+    )

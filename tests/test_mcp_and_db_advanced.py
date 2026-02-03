@@ -42,19 +42,13 @@ class TestMCPAndDBAdvanced(unittest.IsolatedAsyncioTestCase):
         # process_request for initialized calls shared_state.server.handle_initialized
         self.assertFalse(writer.write.called)
 
-    def test_workspace_priority_env_over_marker(self):
-        """Verify ENV var takes precedence over .codex-root marker."""
+    def test_workspace_priority_env(self):
+        """Verify ENV var takes precedence for workspace root."""
         old_cwd = os.getcwd()
         try:
-            marker_ws = Path(self.tmp_dir) / "marker_ws"
-            marker_ws.mkdir()
-            (marker_ws / ".codex-root").touch()
-            
             env_ws = Path(self.tmp_dir) / "env_ws"
             env_ws.mkdir()
-            
-            os.chdir(marker_ws) # Current dir has marker
-            
+
             with patch.dict("os.environ", {"DECKARD_WORKSPACE_ROOT": str(env_ws)}):
                 detected = WorkspaceManager.resolve_workspace_root()
                 self.assertEqual(detected, str(env_ws.absolute()))

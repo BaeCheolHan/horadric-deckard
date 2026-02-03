@@ -49,10 +49,9 @@ def test_get_http_host_port_from_workspace_config(monkeypatch, tmp_path):
     ws.mkdir()
     monkeypatch.setattr(WorkspaceManager, "resolve_workspace_root", lambda: str(ws))
 
-    cfg_dir = ws / ".codex" / "tools" / "deckard" / "config"
-    cfg_dir.mkdir(parents=True)
-    cfg_file = cfg_dir / "config.json"
-    cfg_file.write_text(json.dumps({"server_host": "127.0.0.1", "server_port": 50077}))
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({"http_api_host": "127.0.0.1", "http_api_port": 50077}))
+    monkeypatch.setenv("DECKARD_CONFIG", str(cfg_file))
 
     with patch.object(ServerRegistry, "get_instance", return_value=None):
         host, port = cli._get_http_host_port()

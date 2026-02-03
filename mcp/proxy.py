@@ -6,8 +6,8 @@ import os
 import time
 import subprocess
 import logging
-import fcntl
 import sys
+import tempfile
 from pathlib import Path
 
 # Add project root to sys.path for absolute imports
@@ -18,6 +18,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from mcp.telemetry import TelemetryLogger
 from app.workspace import WorkspaceManager
+
+try:
+    import fcntl  # type: ignore
+except Exception:
+    fcntl = None
 
 # Configure logging to stderr so it doesn't interfere with MCP STDIO
 logging.basicConfig(
@@ -50,6 +55,28 @@ _HEADER_SEP = b"\r\n\r\n"
 _MODE_FRAMED = "framed"
 _MODE_JSONL = "jsonl"
 
+def _lock_file(lock_file) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        return
+    try:
+        import msvcrt
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+    except Exception:
+        pass
+
+def _unlock_file(lock_file) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        return
+    try:
+        import msvcrt
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+    except Exception:
+        pass
+
 def start_daemon_if_needed(host, port):
     """Checks if daemon is running, if not starts it."""
     try:
@@ -58,11 +85,11 @@ def start_daemon_if_needed(host, port):
     except (ConnectionRefusedError, OSError):
         pass
 
-    lock_path = f"/tmp/deckard-daemon-{host}-{port}.lock"
+    lock_path = os.path.join(tempfile.gettempdir(), f"deckard-daemon-{host}-{port}.lock")
     with open(lock_path, "w") as lock_file:
         try:
             # Acquire exclusive lock (blocking)
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            _lock_file(lock_file)
             
             # Double-check if daemon started while waiting for lock
             try:
@@ -76,19 +103,8 @@ def start_daemon_if_needed(host, port):
             # Assume we are in mcp/proxy.py, so parent of parent is repo root
             repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-            def _detect_workspace_root_from_cwd():
-                cwd = Path.cwd()
-                for parent in [cwd] + list(cwd.parents):
-                    if (parent / ".codex-root").exists():
-                        return str(parent)
-                return None
-
             env = os.environ.copy()
-            if not env.get("DECKARD_WORKSPACE_ROOT") and not env.get("LOCAL_SEARCH_WORKSPACE_ROOT"):
-                detected = _detect_workspace_root_from_cwd()
-                if detected:
-                    env["DECKARD_WORKSPACE_ROOT"] = detected
-                    _log_info(f"Using workspace root from cwd marker: {detected}")
+            # Do not infer workspace root from marker; rely on explicit roots/env/config.
             
             # Detach process
             subprocess.Popen(
@@ -113,7 +129,7 @@ def start_daemon_if_needed(host, port):
             return False
             
         finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
+            _unlock_file(lock_file)
 
 def forward_socket_to_stdout(sock, mode_holder):
     try:

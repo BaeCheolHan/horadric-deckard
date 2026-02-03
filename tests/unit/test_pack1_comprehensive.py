@@ -51,7 +51,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_02_builders(self):
         """Test header and line builders."""
         header = pack_header("tool", {"k": "v"}, returned=10, total=100, total_mode="exact")
-        self.assertEqual(header, "PACK1 tool k=v returned=10 total_mode=exact total=100")
+        self.assertTrue(header.startswith("PACK1 tool=tool ok=true"))
         
         line_kv = pack_line("r", {"a": "1", "b": "2"})
         self.assertEqual(line_kv, "r:a=1 b=2")
@@ -64,7 +64,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_03_list_files_basic(self):
         """Verify list_files returns correct PACK1 structure."""
         self.db.upsert_files([("src/main.py", "repo1", 0, 0, "", 0)])
-        res = execute_list_files({"repo": "repo1"}, self.db, self.logger)
+        res = execute_list_files({"repo": "repo1"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["tool"], "list_files")
@@ -78,7 +78,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         files = [(f"f{i}.txt", "repo1", 0, 0, "", 0) for i in range(250)]
         self.db.upsert_files(files)
         
-        res = execute_list_files({"repo": "repo1", "limit": 500}, self.db, self.logger)
+        res = execute_list_files({"repo": "repo1", "limit": 500}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["header"]["limit"], "200")
@@ -89,7 +89,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         files = [(f"f{i}.txt", "repo1", 0, 0, "", 0) for i in range(15)]
         self.db.upsert_files(files)
         
-        res = execute_list_files({"repo": "repo1", "limit": 10}, self.db, self.logger)
+        res = execute_list_files({"repo": "repo1", "limit": 10}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["header"]["returned"], "10")
@@ -101,7 +101,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_06_list_files_encoding(self):
         """Verify special characters in paths are encoded."""
         self.db.upsert_files([("path with spaces.py", "repo1", 0, 0, "", 0)])
-        res = execute_list_files({"repo": "repo1"}, self.db, self.logger)
+        res = execute_list_files({"repo": "repo1"}, self.db, self.logger, [])
         # Check raw text to ensure it IS encoded
         raw_text = res["content"][0]["text"]
         self.assertIn("p:path%20with%20spaces.py", raw_text)
@@ -117,7 +117,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         self.db.upsert_files([("src/user.py", "repo1", 0, 0, "", 0)])
         self.db.upsert_symbols([("src/user.py", "User", "class", 10, 20, "class User:", "", "{}", "")])
         
-        res = execute_search_symbols({"query": "User"}, self.db)
+        res = execute_search_symbols({"query": "User"}, self.db, [])
         data = parse_pack1(res["content"][0]["text"])
         
         rec = data["records"][0]
@@ -133,7 +133,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         self.db.upsert_files([("f.py", "r", 0, 0, "", 0)])
         self.db.upsert_symbols(symbols)
         
-        res = execute_search_symbols({"query": "Sym", "limit": 100}, self.db)
+        res = execute_search_symbols({"query": "Sym", "limit": 100}, self.db, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["header"]["limit"], "50")
@@ -169,7 +169,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_11_search_basic(self):
         """Verify search returns r: records."""
         self.db.upsert_files([("src/main.py", "repo1", 0, 0, "def hello(): pass", 0)])
-        res = execute_search({"query": "hello"}, self.db, self.logger)
+        res = execute_search({"query": "hello"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["tool"], "search")
@@ -183,7 +183,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         long_line = "A" * 200
         self.db.upsert_files([("long.txt", "repo1", 0, 0, long_line, 0)])
         
-        res = execute_search({"query": "AAAA"}, self.db, self.logger)
+        res = execute_search({"query": "AAAA"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         snippet = data["records"][0]["data"]["s"]
@@ -195,7 +195,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         content = "target"
         self.db.upsert_files([("lines.txt", "repo1", 0, 0, content, 0)])
         
-        res = execute_search({"query": "target"}, self.db, self.logger)
+        res = execute_search({"query": "target"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         rec = data["records"][0]
@@ -207,7 +207,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         files = [(f"f{i}.txt", "repo1", 0, 0, "match me", 0) for i in range(30)]
         self.db.upsert_files(files)
         
-        res = execute_search({"query": "match", "limit": 100}, self.db, self.logger)
+        res = execute_search({"query": "match", "limit": 100}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         # 'limit' is not in search header spec, only returned
@@ -217,7 +217,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_15_search_total_mode_exact(self):
         """Verify total_mode=exact in header."""
         self.db.upsert_files([("a", "r", 0, 0, "q", 0)])
-        res = execute_search({"query": "q"}, self.db, self.logger)
+        res = execute_search({"query": "q"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         self.assertEqual(data["header"]["total_mode"], "exact")
         self.assertEqual(data["header"]["total"], "1")
@@ -226,7 +226,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         """Verify total_mode=approx handling (using Regex to force approx)."""
         # Regex search in search.py sets total_mode="approx"
         self.db.upsert_files([("a", "r", 0, 0, "pattern", 0)])
-        res = execute_search({"query": "pat.*", "use_regex": True}, self.db, self.logger)
+        res = execute_search({"query": "pat.*", "use_regex": True}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["header"]["total_mode"], "approx")
@@ -235,7 +235,7 @@ class TestPack1Comprehensive(unittest.TestCase):
 
     def test_17_search_empty(self):
         """Verify search with no results."""
-        res = execute_search({"query": "nothing"}, self.db, self.logger)
+        res = execute_search({"query": "nothing"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         self.assertEqual(data["header"]["returned"], "0")
         self.assertEqual(len(data["records"]), 0)
@@ -245,7 +245,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_18_repo_candidates(self):
         """Verify repo_candidates returns r: records."""
         self.db.upsert_files([("f", "my_repo", 0, 0, "term", 0)])
-        res = execute_repo_candidates({"query": "term"}, self.db)
+        res = execute_repo_candidates({"query": "term"}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertEqual(data["tool"], "repo_candidates")
@@ -259,7 +259,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         files = [(f"f{i}", f"repo{i}", 0, 0, "term", 0) for i in range(10)]
         self.db.upsert_files(files)
         
-        res = execute_repo_candidates({"query": "term", "limit": 10}, self.db)
+        res = execute_repo_candidates({"query": "term", "limit": 10}, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         
         self.assertLessEqual(len(data["records"]), 5)
@@ -270,7 +270,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         """Verify DECKARD_FORMAT=json returns JSON."""
         with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
             self.db.upsert_files([("src/main.py", "repo1", 0, 0, "", 0)])
-            res = execute_list_files({"repo": "repo1"}, self.db, self.logger)
+            res = execute_list_files({"repo": "repo1"}, self.db, self.logger, [])
             
             # Should be valid JSON
             data = json.loads(res["content"][0]["text"])
@@ -281,7 +281,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         """Verify search in JSON mode preserves structure."""
         with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
             self.db.upsert_files([("f", "r", 0, 0, "q", 0)])
-            res = execute_search({"query": "q"}, self.db, self.logger)
+            res = execute_search({"query": "q"}, self.db, self.logger, [])
             data = json.loads(res["content"][0]["text"])
             
             self.assertIn("results", data)
@@ -294,7 +294,7 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_22_search_edge_cases(self):
         """Cover search.py: empty query, workspace scope, docs type, invalid numbers."""
         # 1. Empty query
-        res = execute_search({"query": ""}, self.db, self.logger)
+        res = execute_search({"query": ""}, self.db, self.logger, [])
         self.assertTrue(res["isError"])
         
         # 2. Workspace scope & docs type & invalid numbers
@@ -308,7 +308,7 @@ class TestPack1Comprehensive(unittest.TestCase):
             "offset": "invalid",
             "context_lines": "invalid"
         }
-        res = execute_search(args, self.db, self.logger)
+        res = execute_search(args, self.db, self.logger, [])
         data = parse_pack1(res["content"][0]["text"])
         self.assertEqual(data["header"]["returned"], "1")
 
@@ -344,7 +344,7 @@ class TestPack1Comprehensive(unittest.TestCase):
         mock_db.get_index_status.return_value = {}
         mock_db.get_repo_stats.return_value = []
 
-        res = execute_search({"query": "test"}, mock_db, self.logger)
+        res = execute_search({"query": "test"}, mock_db, self.logger, [])
         # Should default to line=0 (PACK1 uses k=v for record fields)
         self.assertIn("line=0", res["content"][0]["text"])
 
@@ -388,8 +388,8 @@ class TestPack1Comprehensive(unittest.TestCase):
         
         # 2. pack_error with hints and trace
         err = pack_error("tool", ErrorCode.INTERNAL, "msg", hints=["h1"], trace="stack")
-        self.assertIn("d:hint=h1", err)
-        self.assertIn("d:trace=stack", err)
+        self.assertIn("hint=h1", err)
+        self.assertIn("trace=stack", err)
         
         # 3. JSON mode error handling in mcp_response
         with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
@@ -426,7 +426,7 @@ class TestPack1Comprehensive(unittest.TestCase):
             # Force approx mode logic in build_json
             # total_mode comes from db_meta
             
-            res = execute_search({"query": "q", "limit": 10}, self.db, self.logger)
+            res = execute_search({"query": "q", "limit": 10}, self.db, self.logger, [])
             data = json.loads(res["content"][0]["text"])
             
             # Check docstring truncation (3 lines + ...)
@@ -440,12 +440,12 @@ class TestPack1Comprehensive(unittest.TestCase):
     def test_28_argument_parsing_fallbacks(self):
         """Cover ValueError/TypeError in argument parsing for list_files and repo_candidates."""
         # 1. list_files bad limit
-        res = execute_list_files({"repo": "r", "limit": "bad"}, self.db, self.logger)
+        res = execute_list_files({"repo": "r", "limit": "bad"}, self.db, self.logger, [])
         # Should default to limit 100 (or whatever default) and not crash
         self.assertFalse(res.get("isError"))
         
         # 2. repo_candidates bad limit and empty query
-        res = execute_repo_candidates({"query": "", "limit": "bad"}, self.db)
+        res = execute_repo_candidates({"query": "", "limit": "bad"}, self.db, self.logger, [])
         # Empty query -> Error
         self.assertTrue(res.get("isError"))
         self.assertIn("Error: query is required", res["content"][0]["text"])

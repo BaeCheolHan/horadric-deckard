@@ -37,11 +37,3 @@ class TestRound12DoctorLogic:
         """TC4: Disk space check fails if space < 1GB."""
         with patch("shutil.disk_usage", return_value=(10**10, 10**9, 0.5 * 10**9)): # 0.5GB free
             assert doctor.check_disk_space() is False
-
-    def test_tc5_marker_check_fail(self, tmp_path):
-        """TC5: Marker check fails if .codex-root is missing."""
-        with patch("app.workspace.WorkspaceManager.resolve_workspace_root", return_value=str(tmp_path)):
-            assert doctor.check_marker() is False
-            
-            (tmp_path / ".codex-root").touch()
-            assert doctor.check_marker() is True

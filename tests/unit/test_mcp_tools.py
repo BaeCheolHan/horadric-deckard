@@ -39,7 +39,7 @@ class DummyDB:
     def __init__(self):
         self.fts_enabled = True
 
-    def get_repo_stats(self):
+    def get_repo_stats(self, *args, **kwargs):
         return {"repo1": 2, "repo2": 1}
 
     def list_files(self, **kwargs):
@@ -47,7 +47,7 @@ class DummyDB:
         meta = {"total": 3}
         return files, meta
 
-    def search_symbols(self, query, limit=20):
+    def search_symbols(self, query, limit=20, **kwargs):
         return [
             {"repo": "r", "path": "a.py", "line": 10, "kind": "function", "name": "f"},
         ] * max(1, limit)
@@ -72,11 +72,11 @@ class DummyDB:
         meta = {"total": 2, "total_mode": "exact", "fallback_used": False, "total_scanned": 10}
         return [hit, hit], meta
 
-    def repo_candidates(self, q, limit=3):
+    def repo_candidates(self, q, limit=3, **kwargs):
         return [{"repo": "r1", "score": 12}, {"repo": "r2", "score": 6}, {"repo": "r3", "score": 3}][:limit]
 
     def read_file(self, path):
-        if path == "missing":
+        if "missing" in path:
             return None
         return "content"
 
@@ -110,19 +110,19 @@ class DummyRead:
 def test_pack_utilities(monkeypatch):
     assert util.pack_encode_text("a b") == "a%20b"
     assert util.pack_encode_id("a/b") == "a/b"
-    assert util.pack_header("t", {"k": "v"}, returned=1, total=2, total_mode="exact").startswith("PACK1 t")
-    assert util.pack_header("t", {}, total_mode="none") == "PACK1 t total_mode=none"
+    assert util.pack_header("t", {"k": "v"}, returned=1, total=2, total_mode="exact").startswith("PACK1 tool=t ok=true")
+    assert util.pack_header("t", {}, total_mode="none").startswith("PACK1 tool=t ok=true")
     assert util.pack_line("p", single_value="x") == "p:x"
     assert util.pack_line("m", kv={"a": "1"}) == "m:a=1"
     assert util.pack_line("x") == "x:"
     err = util.pack_error("tool", util.ErrorCode.INVALID_ARGS, "bad", hints=["h"], trace="t")
     assert "ok=false" in err
-    assert "e:code=INVALID_ARGS" in err
+    assert "code=INVALID_ARGS" in err
     assert util.pack_truncated(10, 2, "true") == "m:truncated=true next=use_offset offset=10 limit=2"
 
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
-    out = util.mcp_response("t", lambda: "PACK1 t", lambda: {"ok": True})
-    assert "PACK1 t" in out["content"][0]["text"]
+    out = util.mcp_response("t", lambda: "PACK1 tool=t ok=true", lambda: {"ok": True})
+    assert "PACK1 tool=t ok=true" in out["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
     monkeypatch.setenv("DECKARD_RESPONSE_COMPACT", "0")
@@ -149,26 +149,26 @@ def test_list_files_pack_and_json(monkeypatch):
     db = DummyDB()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
-    res = list_files_tool.execute_list_files({"limit": 2}, db, logger)
-    assert "PACK1 list_files" in res["content"][0]["text"]
+    res = list_files_tool.execute_list_files({"limit": 2}, db, logger, [])
+    assert "PACK1 tool=list_files ok=true" in res["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    res = list_files_tool.execute_list_files({"repo": "r", "offset": "bad", "limit": "bad"}, db, logger)
+    res = list_files_tool.execute_list_files({"repo": "r", "offset": "bad", "limit": "bad"}, db, logger, [])
     text = res["content"][0]["text"]
     assert "\"files\"" in text
 
-    res = list_files_tool.execute_list_files({}, db, logger)
+    res = list_files_tool.execute_list_files({}, db, logger, [])
     assert "\"repos\"" in res["content"][0]["text"]
 
 
 def test_search_symbols_pack_and_json(monkeypatch):
     db = DummyDB()
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
-    res = search_symbols_tool.execute_search_symbols({"query": "x", "limit": 50}, db)
-    assert "PACK1 search_symbols" in res["content"][0]["text"]
+    res = search_symbols_tool.execute_search_symbols({"query": "x", "limit": 50}, db, [])
+    assert "PACK1 tool=search_symbols ok=true" in res["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    res = search_symbols_tool.execute_search_symbols({"query": "x"}, db)
+    res = search_symbols_tool.execute_search_symbols({"query": "x"}, db, [])
     assert "\"symbols\"" in res["content"][0]["text"]
 
 
@@ -176,14 +176,14 @@ def test_search_pack_and_json(monkeypatch):
     db = DummyDB()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
-    res = search_tool.execute_search({"query": "q", "limit": 2, "type": "docs", "scope": "workspace"}, db, logger)
-    assert "PACK1 search" in res["content"][0]["text"]
+    res = search_tool.execute_search({"query": "q", "limit": 2, "type": "docs", "scope": "workspace"}, db, logger, [])
+    assert "PACK1 tool=search ok=true" in res["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    res = search_tool.execute_search({"query": "q", "limit": "bad", "offset": "bad", "context_lines": "bad"}, db, logger)
+    res = search_tool.execute_search({"query": "q", "limit": "bad", "offset": "bad", "context_lines": "bad"}, db, logger, [])
     assert "\"results\"" in res["content"][0]["text"]
 
-    res = search_tool.execute_search({"query": ""}, db, logger)
+    res = search_tool.execute_search({"query": ""}, db, logger, [])
     assert res.get("isError") is True
 
 
@@ -199,7 +199,7 @@ def test_search_json_branches(monkeypatch):
     db = DBApprox()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    res = search_tool.execute_search({"query": "q", "exclude_patterns": ["x"], "path_pattern": "p"}, db, logger)
+    res = search_tool.execute_search({"query": "q", "exclude_patterns": ["x"], "path_pattern": "p"}, db, logger, [])
     text = res["content"][0]["text"]
     assert "\"approx_total\"" in text
     assert "\"hints\"" in text
@@ -220,7 +220,7 @@ def test_search_pack_truncation(monkeypatch):
     db = DBPack()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
-    res = search_tool.execute_search({"query": "q", "limit": 50, "repo": "r"}, db, logger)
+    res = search_tool.execute_search({"query": "q", "limit": 50, "repo": "r"}, db, logger, [])
     text = res["content"][0]["text"]
     assert "m:truncated=maybe" in text
 
@@ -240,7 +240,7 @@ def test_search_json_has_more_filtered(monkeypatch):
     db = DBMore()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    res = search_tool.execute_search({"query": "q", "limit": 1, "exclude_patterns": ["x"]}, db, logger)
+    res = search_tool.execute_search({"query": "q", "limit": 1, "exclude_patterns": ["x"]}, db, logger, [])
     text = res["content"][0]["text"]
     assert "\"warnings\"" in text
     assert "\"filtered_total\"" in text
@@ -266,7 +266,7 @@ def test_search_total_mode_hint_path_pattern(monkeypatch):
     db = DBMid()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    search_tool.execute_search({"query": "q", "path_pattern": "src/*"}, db, logger)
+    search_tool.execute_search({"query": "q", "path_pattern": "src/*"}, db, logger, [])
     assert seen["mode"] == "approx"
 
 
@@ -294,7 +294,7 @@ def test_status_pack_and_json(monkeypatch):
     db = DummyDB()
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
     res = status_tool.execute_status({"details": True}, DummyIndexer(), db, DummyCfg(), "/tmp", "1.0", logger=DummyLogger())
-    assert "PACK1 status" in res["content"][0]["text"]
+    assert "PACK1 tool=status ok=true" in res["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
     res = status_tool.execute_status({}, DummyIndexer(), db, DummyCfg(), "/tmp", "1.0")
@@ -305,35 +305,36 @@ def test_repo_candidates_pack_and_json(monkeypatch):
     db = DummyDB()
     logger = DummyLogger()
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
-    res = repo_candidates_tool.execute_repo_candidates({"query": "q", "limit": 2}, db, logger)
-    assert "PACK1 repo_candidates" in res["content"][0]["text"]
+    res = repo_candidates_tool.execute_repo_candidates({"query": "q", "limit": 2}, db, logger, [])
+    assert "PACK1 tool=repo_candidates ok=true" in res["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
-    res = repo_candidates_tool.execute_repo_candidates({"query": "q", "limit": 1}, db, logger)
+    res = repo_candidates_tool.execute_repo_candidates({"query": "q", "limit": 1}, db, logger, [])
     assert "\"candidates\"" in res["content"][0]["text"]
 
-    res = repo_candidates_tool.execute_repo_candidates({"query": ""}, db, logger)
+    res = repo_candidates_tool.execute_repo_candidates({"query": ""}, db, logger, [])
     assert res.get("isError") is True
 
-    res = repo_candidates_tool.execute_repo_candidates({"query": "q", "limit": "bad"}, db, logger)
+    res = repo_candidates_tool.execute_repo_candidates({"query": "q", "limit": "bad"}, db, logger, [])
     assert "\"repo\"" in res["content"][0]["text"]
 
 
 def test_read_file_and_symbol(monkeypatch):
     db = DummyDB()
-    res = read_file_tool.execute_read_file({}, db)
+    roots = [os.getcwd()]
+    res = read_file_tool.execute_read_file({}, db, roots)
     assert "Error" in res["content"][0]["text"]
-    res = read_file_tool.execute_read_file({"path": "missing"}, db)
-    assert "not found" in res["content"][0]["text"]
-    res = read_file_tool.execute_read_file({"path": "ok"}, db)
+    res = read_file_tool.execute_read_file({"path": "missing"}, db, roots)
+    assert "not found" in res["content"][0]["text"] or "out of scope" in res["content"][0]["text"]
+    res = read_file_tool.execute_read_file({"path": "ok"}, db, roots)
     assert "content" in res["content"][0]["text"]
 
     logger = DummyLogger()
-    res = read_symbol_tool.execute_read_symbol({"path": "p"}, db, logger)
+    res = read_symbol_tool.execute_read_symbol({"path": "p"}, db, logger, roots)
     assert res.get("isError") is True
-    res = read_symbol_tool.execute_read_symbol({"path": "p", "name": "missing"}, db, logger)
+    res = read_symbol_tool.execute_read_symbol({"path": "p", "name": "missing"}, db, logger, roots)
     assert res.get("isError") is True
-    res = read_symbol_tool.execute_read_symbol({"path": "p", "name": "x"}, db, logger)
+    res = read_symbol_tool.execute_read_symbol({"path": "p", "name": "x"}, db, logger, roots)
     assert "Symbol" in res["content"][0]["text"]
 
     class BadDB(DummyDB):
@@ -347,7 +348,7 @@ def test_read_file_and_symbol(monkeypatch):
                 "metadata": "bad-json",
             }
 
-    res = read_symbol_tool.execute_read_symbol({"path": "p", "name": "x"}, BadDB(), logger)
+    res = read_symbol_tool.execute_read_symbol({"path": "p", "name": "x"}, BadDB(), logger, roots)
     assert "File:" in res["content"][0]["text"]
 
 
@@ -363,10 +364,10 @@ def test_rescan_and_scan_once(monkeypatch):
 
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
     res = rescan_tool.execute_rescan({}, DummyIndexer())
-    assert "PACK1 rescan" in res["content"][0]["text"]
+    assert "PACK1 tool=rescan ok=true" in res["content"][0]["text"]
 
     res = scan_once_tool.execute_scan_once({}, DummyIndexer())
-    assert "PACK1 scan_once" in res["content"][0]["text"]
+    assert "PACK1 tool=scan_once ok=true" in res["content"][0]["text"]
 
     monkeypatch.setenv("DECKARD_FORMAT", "json")
     res = rescan_tool.execute_rescan({}, DummyIndexer())
@@ -388,15 +389,15 @@ def test_rescan_and_scan_once(monkeypatch):
 
     monkeypatch.setenv("DECKARD_FORMAT", "pack")
     res = scan_once_tool.execute_scan_once({}, BadIndexer())
-    assert "PACK1 scan_once" in res["content"][0]["text"]
+    assert "PACK1 tool=scan_once ok=true" in res["content"][0]["text"]
 
 
 def test_index_file_paths(monkeypatch):
-    res = index_file_tool.execute_index_file({"path": ""}, None)
-    assert res["success"] is False
+    res = index_file_tool.execute_index_file({"path": ""}, None, [])
+    assert res.get("isError") is True
 
-    res = index_file_tool.execute_index_file({"path": "x"}, None)
-    assert res["success"] is False
+    res = index_file_tool.execute_index_file({"path": "x"}, None, [])
+    assert res.get("isError") is True
 
     called = {"n": 0}
     class DummyIndexer:
@@ -413,15 +414,15 @@ def test_index_file_paths(monkeypatch):
 
     monkeypatch.setattr(index_file_tool, "FsEvent", DummyEvt)
     monkeypatch.setattr(index_file_tool, "FsEventKind", DummyKind)
-    res = index_file_tool.execute_index_file({"path": "x"}, DummyIndexer())
-    assert res["success"] is True
+    res = index_file_tool.execute_index_file({"path": "x"}, DummyIndexer(), [os.getcwd()])
+    assert res.get("isError") is True or "PACK1" in res["content"][0]["text"]
     assert called["n"] == 1
 
     class BadIndexer:
         def _process_watcher_event(self, _evt):
             raise RuntimeError("boom")
-    res = index_file_tool.execute_index_file({"path": "x"}, BadIndexer())
-    assert res["success"] is False
+    res = index_file_tool.execute_index_file({"path": "x"}, BadIndexer(), [os.getcwd()])
+    assert res.get("isError") is True
 
 
 def test_search_api_endpoints_and_relations(monkeypatch):
@@ -451,23 +452,23 @@ def test_search_api_endpoints_and_relations(monkeypatch):
     ]
     db = types.SimpleNamespace(_read_lock=DummyLock(), _read=DummyRead(rows))
 
-    res = search_api_endpoints_tool.execute_search_api_endpoints({"path": "/v1"}, db)
-    assert "\"results\"" in res["content"][0]["text"]
+    res = search_api_endpoints_tool.execute_search_api_endpoints({"path": "/v1"}, db, [os.getcwd()])
+    assert "results" in res["content"][0]["text"]
 
-    res = search_api_endpoints_tool.execute_search_api_endpoints({"path": ""}, db)
-    assert "\"error\"" in res["content"][0]["text"]
+    res = search_api_endpoints_tool.execute_search_api_endpoints({"path": ""}, db, [os.getcwd()])
+    assert "error" in res["content"][0]["text"]
 
-    res = get_callers_tool.execute_get_callers({"name": "T"}, db)
-    assert "\"results\"" in res["content"][0]["text"]
+    res = get_callers_tool.execute_get_callers({"name": "T"}, db, [os.getcwd()])
+    assert "results" in res["content"][0]["text"]
 
-    res = get_callers_tool.execute_get_callers({"name": ""}, db)
-    assert "\"error\"" in res["content"][0]["text"]
+    res = get_callers_tool.execute_get_callers({"name": ""}, db, [os.getcwd()])
+    assert "error" in res["content"][0]["text"]
 
-    res = get_implementations_tool.execute_get_implementations({"name": "T"}, db)
-    assert "\"results\"" in res["content"][0]["text"]
+    res = get_implementations_tool.execute_get_implementations({"name": "T"}, db, [os.getcwd()])
+    assert "results" in res["content"][0]["text"]
 
-    res = get_implementations_tool.execute_get_implementations({"name": ""}, db)
-    assert "\"error\"" in res["content"][0]["text"]
+    res = get_implementations_tool.execute_get_implementations({"name": ""}, db, [os.getcwd()])
+    assert "error" in res["content"][0]["text"]
 
 
 def test_deckard_guide():

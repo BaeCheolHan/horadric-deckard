@@ -220,10 +220,39 @@ def _resolve_workspace_root():
             if val == "${cwd}": return str(Path.cwd())
             p = Path(os.path.expanduser(val))
             if p.exists(): return str(p.resolve())
-    cwd = Path.cwd()
-    for parent in [cwd] + list(cwd.parents):
-        if (parent / ".codex-root").exists(): return str(parent)
     return str(cwd)
+
+def _ssot_config_path() -> str:
+    val = os.environ.get("DECKARD_CONFIG", "").strip()
+    if val:
+        return str(Path(os.path.expanduser(val)))
+    if IS_WINDOWS:
+        return str(Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "deckard" / "config.json")
+    return str(Path.home() / ".config" / "deckard" / "config.json")
+
+def _ensure_deckard_launcher() -> str:
+    """Create a 'deckard' launcher in a standard bin dir."""
+    if IS_WINDOWS:
+        bin_dir = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "deckard"
+        target = bin_dir / "deckard.cmd"
+        script = f'@echo off\r\n"{INSTALL_DIR}\\bootstrap.bat" %*\r\n'
+        try:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            target.write_text(script, encoding="utf-8")
+            return str(target)
+        except Exception:
+            return str(target)
+    else:
+        bin_dir = Path.home() / ".local" / "bin"
+        target = bin_dir / "deckard"
+        script = f'#!/bin/sh\nexec "{INSTALL_DIR}/bootstrap.sh" "$@"\n'
+        try:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            target.write_text(script, encoding="utf-8")
+            os.chmod(target, 0o755)
+            return str(target)
+        except Exception:
+            return str(target)
 
 def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
     """Generic MCP server block upsert into TOML config (Codex)."""
@@ -246,8 +275,8 @@ def _upsert_mcp_config(cfg_path: Path, command_path: str, workspace_root: str):
     deckard_block = [
         "[mcp_servers.deckard]",
         f"command = \"{command_path}\"",
-        f"args = [\"--workspace-root\", \"{workspace_root}\"]",
-        f"env = {{ DECKARD_WORKSPACE_ROOT = \"{workspace_root}\", DECKARD_RESPONSE_COMPACT = \"1\" }}",
+        "args = [\"--transport\", \"stdio\", \"--format\", \"pack\"]",
+        f"env = {{ DECKARD_CONFIG = \"{_ssot_config_path()}\" }}",
         "startup_timeout_sec = 60",
     ]
 
@@ -278,8 +307,8 @@ def _upsert_gemini_settings(cfg_path: Path, command_path: str, workspace_root: s
     mcp_servers = data.get("mcpServers") or {}
     mcp_servers["deckard"] = {
         "command": command_path,
-        "args": ["--workspace-root", workspace_root],
-        "env": {"DECKARD_WORKSPACE_ROOT": workspace_root, "DECKARD_RESPONSE_COMPACT": "1"},
+        "args": ["--transport", "stdio", "--format", "pack"],
+        "env": {"DECKARD_CONFIG": _ssot_config_path()},
     }
     data["mcpServers"] = mcp_servers
 
@@ -422,7 +451,8 @@ def do_install(args):
         sys.exit(1)
 
     workspace_root = _resolve_workspace_root()
-    mcp_command = str(bootstrap_script)
+    _ensure_deckard_launcher()
+    mcp_command = "deckard"
     
     # Configure workspace-local CLI files
     _upsert_mcp_config(Path(workspace_root) / ".codex" / "config.toml", mcp_command, workspace_root)
@@ -436,17 +466,7 @@ def do_install(args):
     
     print_success(f"Workspace '{workspace_root}' is now configured to use Deckard.")
 
-    # Auto-initialize the workspace to ensure marker exists
-    print_step(f"Initializing workspace at {workspace_root}...")
-    try:
-        init_cmd = [str(bootstrap_script), "init"]
-        # Pass workspace root via env to be safe, though init usually uses cwd
-        init_env = os.environ.copy()
-        init_env["DECKARD_WORKSPACE_ROOT"] = workspace_root
-        subprocess.run(init_cmd, env=init_env, check=True, capture_output=CONFIG["quiet"])
-        print_success("Workspace initialized.")
-    except Exception as e:
-        print_warn(f"Failed to automatically initialize workspace: {e}")
+    # Do not auto-create marker; roots are managed via config/env.
 
     # Final health check only if we installed/updated something
     if perform_global_install:

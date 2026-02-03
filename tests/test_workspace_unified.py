@@ -48,15 +48,12 @@ class TestWorkspaceUnified(unittest.TestCase):
         uri = f"file://{self.tmp_dir}"
         self.assertEqual(WorkspaceManager.resolve_workspace_root(uri), str(Path(self.tmp_dir).absolute()))
 
-    def test_marker_detection(self):
-        """Case 5: .codex-root marker detection in parents"""
+    def test_fallback_to_cwd(self):
+        """Case 5: fallback to cwd when no roots specified"""
         sub_dir = Path(self.tmp_dir) / "sub"
         sub_dir.mkdir()
-        marker = Path(self.tmp_dir) / ".codex-root"
-        marker.touch()
-
         os.chdir(str(sub_dir))
-        self.assertEqual(WorkspaceManager.resolve_workspace_root(), str(Path(self.tmp_dir).resolve()))
+        self.assertEqual(WorkspaceManager.resolve_workspace_root(), str(Path(sub_dir).resolve()))
 
 if __name__ == "__main__":
     unittest.main()

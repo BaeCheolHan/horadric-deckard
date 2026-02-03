@@ -3,12 +3,12 @@
 List files tool for Local Search MCP Server.
 """
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 try:
     from app.db import LocalSearchDB
     from mcp.telemetry import TelemetryLogger
-    from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id
+    from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, resolve_root_ids
 except ImportError:
     # Fallback for direct script execution
     import sys
@@ -16,12 +16,13 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
     from app.db import LocalSearchDB
     from mcp.telemetry import TelemetryLogger
-    from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id
+    from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, resolve_root_ids
 
 
-def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger) -> Dict[str, Any]:
+def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger, roots: List[str]) -> Dict[str, Any]:
     """Execute list_files tool."""
     start_ts = time.time()
+    root_ids = resolve_root_ids(roots)
     
     # Parse args
     repo = args.get("repo")
@@ -43,7 +44,7 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
         summary_only = bool(args.get("summary", False)) or (not repo and not path_pattern and not file_types)
         
         if summary_only:
-            repo_stats = db.get_repo_stats()
+            repo_stats = db.get_repo_stats(root_ids=root_ids)
             repos = [{"repo": k, "file_count": v} for k, v in repo_stats.items()]
             repos.sort(key=lambda r: r["file_count"], reverse=True)
             total = sum(repo_stats.values())
@@ -67,6 +68,7 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
                 include_hidden=include_hidden,
                 limit=limit_arg,
                 offset=offset,
+                root_ids=root_ids,
             )
             return {
                 "files": files,
@@ -85,6 +87,7 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
             include_hidden=include_hidden,
             limit=pack_limit,
             offset=offset,
+            root_ids=root_ids,
         )
         
         total = meta.get("total", 0)

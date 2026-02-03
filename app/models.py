@@ -34,5 +34,6 @@ class SearchOptions:
     recency_boost: bool = False
     use_regex: bool = False
     case_sensitive: bool = False
+    root_ids: List[str] = field(default_factory=list)
     # Pagination & Performance (v2.5.1)
     total_mode: str = "exact"  # "exact" | "approx"

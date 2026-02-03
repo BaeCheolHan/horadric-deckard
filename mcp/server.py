@@ -75,6 +75,7 @@ class LocalSearchMCPServer:
     
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
+        self._root_uri: Optional[str] = None
         self.cfg: Optional[Config] = None
         self.db: Optional[LocalSearchDB] = None
         self.indexer: Optional[Indexer] = None
@@ -124,13 +125,12 @@ class LocalSearchMCPServer:
             )
         except Exception:
             pass
-        return {
-            "content": [{
-                "type": "text",
-                "text": "Error: search-first policy active. Call search/search_symbols before read_file/read_symbol.",
-            }],
-            "isError": True,
-        }
+        from mcp.tools._util import mcp_response, pack_error, ErrorCode
+        return mcp_response(
+            "search_first",
+            lambda: pack_error("search_first", ErrorCode.INVALID_ARGS, "search-first policy active. Call search/search_symbols before read_file/read_symbol."),
+            lambda: {"error": {"code": ErrorCode.INVALID_ARGS.value, "message": "search-first policy active. Call search/search_symbols before read_file/read_symbol."}, "isError": True},
+        )
 
     def _search_first_warning(self, result: Dict[str, Any]) -> Dict[str, Any]:
         self._search_usage["read_without_search"] += 1
@@ -157,7 +157,7 @@ class LocalSearchMCPServer:
 
             try:
                 config_path = WorkspaceManager.resolve_config_path(self.workspace_root)
-                self.cfg = Config.load(str(config_path), workspace_root_override=self.workspace_root)
+                self.cfg = Config.load(str(config_path), workspace_root_override=self.workspace_root, root_uri=self._root_uri)
                 
                 db_path = Path(self.cfg.db_path)
 
@@ -165,7 +165,9 @@ class LocalSearchMCPServer:
                 self.db = LocalSearchDB(str(db_path))
                 self.logger.log_info(f"DB path: {db_path}")
                 
-                self.indexer = Indexer(self.cfg, self.db, self.logger)
+                from app.indexer import resolve_indexer_settings
+                mode, enabled, startup_enabled, lock_handle = resolve_indexer_settings(str(db_path))
+                self.indexer = Indexer(self.cfg, self.db, self.logger, indexer_mode=mode, indexing_enabled=enabled, startup_index_enabled=startup_enabled, lock_handle=lock_handle)
                 
                 self._indexer_thread = threading.Thread(target=self.indexer.run_forever, daemon=True)
                 self._indexer_thread.start()
@@ -195,12 +197,15 @@ class LocalSearchMCPServer:
             self.logger.log_error(f"Initialize params log failed: {e}")
         
         # Parse rootUri from client or detect fallback
-        new_workspace = WorkspaceManager.resolve_workspace_root(params.get("rootUri") or params.get("rootPath"))
+        root_uri = params.get("rootUri") or params.get("rootPath")
+        roots = WorkspaceManager.resolve_workspace_roots(root_uri=root_uri)
+        new_workspace = roots[0] if roots else WorkspaceManager.resolve_workspace_root()
         
         # Thread-safe workspace change
         with self._init_lock:
             if new_workspace != self.workspace_root:
                 self.workspace_root = new_workspace
+                self._root_uri = root_uri
                 self._initialized = False  # Force re-initialization with new workspace
                 self.logger.log_info(f"Workspace set to: {self.workspace_root}")
         
@@ -446,7 +451,7 @@ class LocalSearchMCPServer:
                             "include_disk": {"type": "boolean", "default": True},
                             "include_daemon": {"type": "boolean", "default": True},
                             "include_venv": {"type": "boolean", "default": True},
-                            "include_marker": {"type": "boolean", "default": True},
+                            "include_marker": {"type": "boolean", "default": False},
                             "port": {"type": "integer", "default": 47800},
                             "min_disk_gb": {"type": "number", "default": 1.0},
                         },
@@ -536,23 +541,23 @@ class LocalSearchMCPServer:
         elif tool_name == "doctor":
             return self._tool_doctor(args)
         elif tool_name == "search_api_endpoints":
-            return search_api_endpoints_tool.execute_search_api_endpoints(args, self.db)
+            return search_api_endpoints_tool.execute_search_api_endpoints(args, self.db, self.cfg.workspace_roots)
         elif tool_name == "index_file":
-            return index_file_tool.execute_index_file(args, self.indexer)
+            return index_file_tool.execute_index_file(args, self.indexer, self.cfg.workspace_roots)
         elif tool_name == "rescan":
             return rescan_tool.execute_rescan(args, self.indexer)
         elif tool_name == "scan_once":
             return scan_once_tool.execute_scan_once(args, self.indexer)
         elif tool_name == "get_callers":
-            return get_callers_tool.execute_get_callers(args, self.db)
+            return get_callers_tool.execute_get_callers(args, self.db, self.cfg.workspace_roots)
         elif tool_name == "get_implementations":
-            return get_implementations_tool.execute_get_implementations(args, self.db)
+            return get_implementations_tool.execute_get_implementations(args, self.db, self.cfg.workspace_roots)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
     
     def _tool_search(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute enhanced search tool (v2.5.0)."""
-        result = search_tool.execute_search(args, self.db, self.logger)
+        result = search_tool.execute_search(args, self.db, self.logger, self.cfg.workspace_roots)
         if not result.get("isError"):
             self._mark_search("search")
         return result
@@ -561,21 +566,21 @@ class LocalSearchMCPServer:
         return status_tool.execute_status(args, self.indexer, self.db, self.cfg, self.workspace_root, self.SERVER_VERSION)
     
     def _tool_repo_candidates(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        return repo_candidates_tool.execute_repo_candidates(args, self.db)
+        return repo_candidates_tool.execute_repo_candidates(args, self.db, self.logger, self.cfg.workspace_roots)
     
     def _tool_list_files(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        return list_files_tool.execute_list_files(args, self.db, self.logger)
+        return list_files_tool.execute_list_files(args, self.db, self.logger, self.cfg.workspace_roots)
 
     def _tool_read_file(self, args: Dict[str, Any]) -> Dict[str, Any]:
         if self._search_first_mode != "off" and not self._has_search_context():
             if self._search_first_mode == "enforce":
                 return self._search_first_error()
-            result = read_file_tool.execute_read_file(args, self.db)
+            result = read_file_tool.execute_read_file(args, self.db, self.cfg.workspace_roots)
             return self._search_first_warning(result)
-        return read_file_tool.execute_read_file(args, self.db)
+        return read_file_tool.execute_read_file(args, self.db, self.cfg.workspace_roots)
 
     def _tool_search_symbols(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        result = search_symbols_tool.execute_search_symbols(args, self.db)
+        result = search_symbols_tool.execute_search_symbols(args, self.db, self.cfg.workspace_roots)
         if not result.get("isError"):
             self._mark_search("search_symbols")
         return result
@@ -584,9 +589,9 @@ class LocalSearchMCPServer:
         if self._search_first_mode != "off" and not self._has_search_context():
             if self._search_first_mode == "enforce":
                 return self._search_first_error()
-            result = read_symbol_tool.execute_read_symbol(args, self.db, self.logger)
+            result = read_symbol_tool.execute_read_symbol(args, self.db, self.logger, self.cfg.workspace_roots)
             return self._search_first_warning(result)
-        return read_symbol_tool.execute_read_symbol(args, self.db, self.logger)
+        return read_symbol_tool.execute_read_symbol(args, self.db, self.logger, self.cfg.workspace_roots)
 
     def _tool_doctor(self, args: Dict[str, Any]) -> Dict[str, Any]:
         payload = dict(args)

@@ -3,8 +3,8 @@
 Repo candidates tool for Deckard MCP Server.
 """
 import json
-from typing import Any, Dict
-from mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_id, pack_encode_text
+from typing import Any, Dict, List
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_id, pack_encode_text, pack_error, ErrorCode, resolve_root_ids
 
 try:
     from app.db import LocalSearchDB
@@ -18,7 +18,7 @@ except ImportError:
     from mcp.telemetry import TelemetryLogger
 
 
-def execute_repo_candidates(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger = None) -> Dict[str, Any]:
+def execute_repo_candidates(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger = None, roots: List[str] = None) -> Dict[str, Any]:
     """Execute repo_candidates tool."""
     query = args.get("query", "")
     try:
@@ -27,13 +27,15 @@ def execute_repo_candidates(args: Dict[str, Any], db: LocalSearchDB, logger: Tel
         limit_arg = 3
     
     if not query.strip():
-        return {
-            "content": [{"type": "text", "text": "Error: query is required"}],
-            "isError": True,
-        }
+        return mcp_response(
+            "repo_candidates",
+            lambda: pack_error("repo_candidates", ErrorCode.INVALID_ARGS, "query is required"),
+            lambda: {"error": {"code": ErrorCode.INVALID_ARGS.value, "message": "query is required"}, "isError": True},
+        )
     
     def get_candidates():
-        candidates = db.repo_candidates(q=query, limit=limit_arg)
+        root_ids = resolve_root_ids(list(roots or []))
+        candidates = db.repo_candidates(q=query, limit=limit_arg, root_ids=root_ids)
         for candidate in candidates:
             score = candidate.get("score", 0)
             if score >= 10:

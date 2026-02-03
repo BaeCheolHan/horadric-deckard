@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
 from app.workspace import WorkspaceManager
 
 
-def test_root_uri_over_env(tmp_path, monkeypatch):
+def test_root_uri_does_not_override_env(tmp_path, monkeypatch):
     env_root = tmp_path / "env"
     env_root.mkdir()
     uri_root = tmp_path / "uri"
@@ -19,7 +19,7 @@ def test_root_uri_over_env(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DECKARD_WORKSPACE_ROOT", str(env_root))
     resolved = WorkspaceManager.resolve_workspace_root(f"file://{uri_root}")
-    assert resolved == str(uri_root.absolute())
+    assert resolved == str(env_root.absolute())
 
 
 def test_env_over_cwd(monkeypatch, tmp_path):
@@ -28,21 +28,6 @@ def test_env_over_cwd(monkeypatch, tmp_path):
     monkeypatch.setenv("DECKARD_WORKSPACE_ROOT", str(env_root))
     resolved = WorkspaceManager.resolve_workspace_root(None)
     assert resolved == str(env_root.absolute())
-
-
-def test_codex_root_marker_detection(monkeypatch, tmp_path):
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / ".codex-root").write_text("")
-    child = ws / "child"
-    child.mkdir()
-
-    monkeypatch.chdir(child)
-    monkeypatch.delenv("DECKARD_WORKSPACE_ROOT", raising=False)
-    monkeypatch.delenv("LOCAL_SEARCH_WORKSPACE_ROOT", raising=False)
-
-    resolved = WorkspaceManager.resolve_workspace_root(None)
-    assert resolved == str(ws.absolute())
 
 
 def test_invalid_root_uri_falls_back(tmp_path, monkeypatch):

@@ -145,11 +145,11 @@ if [ $# -gt 0 ]; then
 fi
 
 # Announce version to stderr (visible in host logs/console)
-echo "[Deckard] Starting Daemon (v${DECKARD_VERSION:-dev})..." >&2
+echo "[Deckard] Starting (v${DECKARD_VERSION:-dev})..." >&2
 
-# Run CLI (default to auto mode if no args)
+# Run entrypoint (default to MCP stdio server if no args)
 if [ $# -eq 0 ]; then
-    exec python3 -m mcp.cli auto
+    exec python3 -m deckard
 else
-    exec python3 -m mcp.cli "$@"
+    exec python3 -m deckard "$@"
 fi

@@ -9,12 +9,8 @@ from typing import Dict, List, Optional, Tuple
 
 
 def _repo_root() -> Path:
-    """Robust repo root detection (v2.7.0)."""
+    """Repo root detection (no marker)."""
     curr = Path(__file__).resolve().parent
-    for parent in [curr] + list(curr.parents):
-        if (parent / ".codex-root").exists():
-            return parent
-    # Fallback to REPO_ROOT (parent of scripts/)
     return curr.parent
 
 
@@ -37,22 +33,21 @@ def _load_server_info() -> Optional[Dict]:
 
 
 def _load_cfg() -> Dict:
-    root = _repo_root()
-    paths = [
-        root / ".codex" / "tools" / "deckard" / "config" / "config.json",
-        root / "tools" / "deckard" / "config" / "config.json"
-    ]
-    
-    env_cfg = os.environ.get("LOCAL_SEARCH_CONFIG")
+    env_cfg = os.environ.get("DECKARD_CONFIG")
     if env_cfg:
-        with open(env_cfg, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    for cfg_path in paths:
-        if cfg_path.exists():
-            with open(cfg_path, "r", encoding="utf-8") as f:
+        try:
+            with open(env_cfg, "r", encoding="utf-8") as f:
                 return json.load(f)
-    
+        except Exception:
+            return {}
+
+    if os.name == "nt":
+        ssot = Path(os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))) / "deckard" / "config.json"
+    else:
+        ssot = Path.home() / ".config" / "deckard" / "config.json"
+    if ssot.exists():
+        with open(ssot, "r", encoding="utf-8") as f:
+            return json.load(f)
     return {}
 
 
@@ -62,7 +57,7 @@ def _get_host_port() -> Tuple[str, int]:
     if server_info:
         return server_info.get("host", "127.0.0.1"), int(server_info.get("port", 47777))
     cfg = _load_cfg()
-    return cfg.get("server_host", "127.0.0.1"), int(cfg.get("server_port", 47777))
+    return cfg.get("http_api_host", "127.0.0.1"), int(cfg.get("http_api_port", 7331))
 
 
 def _is_loopback(host: str) -> bool:

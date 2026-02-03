@@ -15,25 +15,13 @@ def test_resolve_config_path_deckard_env(tmp_path, monkeypatch):
     cfg = tmp_path / "deckard.json"
     cfg.write_text("{}")
     monkeypatch.setenv("DECKARD_CONFIG", str(cfg))
-    monkeypatch.delenv("LOCAL_SEARCH_CONFIG", raising=False)
     assert WorkspaceManager.resolve_config_path(str(tmp_path)) == str(cfg)
 
 
-def test_resolve_config_path_local_search_env(tmp_path, monkeypatch):
-    cfg = tmp_path / "ls.json"
-    cfg.write_text("{}")
+def test_resolve_config_path_default_ssot(tmp_path, monkeypatch):
     monkeypatch.delenv("DECKARD_CONFIG", raising=False)
-    monkeypatch.setenv("LOCAL_SEARCH_CONFIG", str(cfg))
-    assert WorkspaceManager.resolve_config_path(str(tmp_path)) == str(cfg)
-
-
-def test_resolve_config_path_workspace_file(tmp_path, monkeypatch):
-    monkeypatch.delenv("DECKARD_CONFIG", raising=False)
-    monkeypatch.delenv("LOCAL_SEARCH_CONFIG", raising=False)
-    cfg = tmp_path / ".codex" / "tools" / "deckard" / "config" / "config.json"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text("{}")
-    assert WorkspaceManager.resolve_config_path(str(tmp_path)) == str(cfg)
+    cfg_path = WorkspaceManager.resolve_config_path(str(tmp_path))
+    assert cfg_path.endswith("deckard/config.json")
 
 
 def test_resolve_workspace_root_from_root_uri(tmp_path):

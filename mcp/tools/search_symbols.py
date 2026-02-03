@@ -1,8 +1,8 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 from app.db import LocalSearchDB
-from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text, resolve_root_ids
 
-def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB) -> Dict[str, Any]:
+def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, roots: List[str]) -> Dict[str, Any]:
     """
     Execute search_symbols tool.
     
@@ -12,10 +12,11 @@ def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB) -> Dict[str,
     """
     query = args.get("query", "")
     limit_arg = int(args.get("limit", 20))
+    root_ids = resolve_root_ids(roots)
     
     # --- JSON Builder (Legacy/Debug) ---
     def build_json() -> Dict[str, Any]:
-        results = db.search_symbols(query, limit=limit_arg)
+        results = db.search_symbols(query, limit=limit_arg, root_ids=root_ids)
         return {
             "query": query,
             "count": len(results),
@@ -27,7 +28,7 @@ def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB) -> Dict[str,
         # Hard limit for PACK1: 50
         pack_limit = min(limit_arg, 50)
         
-        results = db.search_symbols(query, limit=pack_limit)
+        results = db.search_symbols(query, limit=pack_limit, root_ids=root_ids)
         returned = len(results)
         
         # Header

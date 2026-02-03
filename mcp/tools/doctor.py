@@ -98,13 +98,6 @@ def _check_disk_space(ws_root: str, min_gb: float) -> dict[str, Any]:
         return _result("Disk Space", False, str(e))
 
 
-def _check_marker(ws_root: str) -> dict[str, Any]:
-    marker = Path(ws_root) / ".codex-root"
-    if marker.exists():
-        return _result("Workspace Marker (.codex-root)", True)
-    return _result("Workspace Marker (.codex-root)", False, f"Marker missing at {ws_root}. Run 'init' first.")
-
-
 def _check_daemon() -> dict[str, Any]:
     host, port = get_daemon_address()
     running = is_daemon_running(host, port)
@@ -137,7 +130,7 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
     include_disk = bool(args.get("include_disk", True))
     include_daemon = bool(args.get("include_daemon", True))
     include_venv = bool(args.get("include_venv", True))
-    include_marker = bool(args.get("include_marker", True))
+    include_marker = bool(args.get("include_marker", False))
     port = int(args.get("port", 47800))
     min_disk_gb = float(args.get("min_disk_gb", 1.0))
 
@@ -145,10 +138,10 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
 
     if include_venv:
         in_venv = sys.prefix != sys.base_prefix
-        results.append(_result("Virtualenv", in_venv, "Not running in venv" if not in_venv else ""))
+        results.append(_result("Virtualenv", True, "" if in_venv else "Not running in venv (ok)"))
 
     if include_marker:
-        results.append(_check_marker(ws_root))
+        results.append(_result("Workspace Marker (.codex-root)", True, "Marker check deprecated"))
 
     if include_daemon:
         results.append(_check_daemon())
@@ -177,6 +170,18 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
 
     compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
     payload = json.dumps(output, ensure_ascii=False, separators=(",", ":")) if compact else json.dumps(output, ensure_ascii=False, indent=2)
-    return {
-        "content": [{"type": "text", "text": payload}],
-    }
+    try:
+        from mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_text
+    except Exception:
+        from _util import mcp_response, pack_header, pack_line, pack_encode_text
+
+    def build_pack() -> str:
+        lines = [pack_header("doctor", {}, returned=1)]
+        lines.append(pack_line("t", single_value=pack_encode_text(payload)))
+        return "\n".join(lines)
+
+    return mcp_response(
+        "doctor",
+        build_pack,
+        lambda: {"content": [{"type": "text", "text": payload}]},
+    )

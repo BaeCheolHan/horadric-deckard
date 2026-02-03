@@ -23,6 +23,8 @@ class Config:
     workspace_root: str # Primary root
     server_host: str
     server_port: int
+    http_api_host: str
+    http_api_port: int
     scan_interval_seconds: int
     snippet_max_lines: int
     max_file_bytes: int
@@ -52,6 +54,8 @@ class Config:
             "workspace_root": workspace_root,
             "server_host": "127.0.0.1",
             "server_port": 47777,
+            "http_api_host": "127.0.0.1",
+            "http_api_port": 7331,
             "scan_interval_seconds": 180,
             "snippet_max_lines": 5,
             "max_file_bytes": 1000000, # Increased to 1MB
@@ -77,7 +81,7 @@ class Config:
             "exclude_content_bytes": 104857600, # 100MB default for full content storage
         }
 
-    def save_paths_only(self, path: str, extra_paths: dict | None = None) -> None:
+    def save_paths_only(self, path: str, extra_paths: dict = None) -> None:
         """Persist resolved path-related configuration to disk (Write-back)."""
         extra_paths = extra_paths or {}
         data = {}
@@ -106,7 +110,7 @@ class Config:
             logger.error(f"Failed to save configuration to {path}: {e}")
 
     @staticmethod
-    def load(path: str, workspace_root_override: str = None) -> "Config":
+    def load(path: str, workspace_root_override: str = None, root_uri: str = None) -> "Config":
         raw = {}
         if path and os.path.exists(path):
             try:
@@ -136,14 +140,9 @@ class Config:
         if not config_roots and raw.get("workspace_root"):
             config_roots = [raw.get("workspace_root")]
              
-        # Resolve final roots using WorkspaceManager (handles Env, JSON, Legacy, Merging)
-        # Pass override as root_uri (highest priority in resolution logic if we mapped it)
-        # But resolve_workspace_roots prioritizes JSON env var. 
-        # Let's map override to root_uri for consistency.
-        
-        # Resolve base roots (env + config + legacy). Override is handled explicitly.
+        # Resolve base roots (env + config + legacy + optional root_uri).
         final_roots = WorkspaceManager.resolve_workspace_roots(
-            root_uri=None,
+            root_uri=root_uri,
             config_roots=config_roots
         )
         if workspace_root_override:
@@ -162,9 +161,17 @@ class Config:
         
         defaults = Config.get_defaults(primary_root)
 
-        # Support port override
+        # Support port override (legacy)
         port_override = os.environ.get("DECKARD_PORT") or os.environ.get("LOCAL_SEARCH_PORT_OVERRIDE")
         server_port = int(port_override) if port_override else int(raw.get("server_port", defaults["server_port"]))
+
+        # HTTP API port override (SSOT)
+        http_port_override = (
+            os.environ.get("DECKARD_HTTP_API_PORT")
+            or os.environ.get("DECKARD_HTTP_PORT")
+            or os.environ.get("LOCAL_SEARCH_HTTP_PORT")
+        )
+        http_api_port = int(http_port_override) if http_port_override else int(raw.get("http_api_port", defaults["http_api_port"]))
 
         # Unified DB path resolution
         # Priority: Env > Config File > Default(primary_root)
@@ -196,6 +203,8 @@ class Config:
             workspace_root=primary_root,
             server_host=raw.get("server_host", defaults["server_host"]),
             server_port=server_port,
+            http_api_host=raw.get("http_api_host", defaults["http_api_host"]),
+            http_api_port=http_api_port,
             scan_interval_seconds=int(raw.get("scan_interval_seconds", defaults["scan_interval_seconds"])),
             snippet_max_lines=int(raw.get("snippet_max_lines", defaults["snippet_max_lines"])),
             max_file_bytes=int(raw.get("max_file_bytes", defaults["max_file_bytes"])),
@@ -210,7 +219,7 @@ class Config:
         )
         
         # --- Write-back (Persist) Logic ---
-        persist_flag = os.environ.get("DECKARD_PERSIST_PATHS", "0").strip().lower()
+        persist_flag = os.environ.get("DECKARD_PERSIST_ROOTS", os.environ.get("DECKARD_PERSIST_PATHS", "0")).strip().lower()
         should_persist = persist_flag in ("1", "true", "yes", "on")
         
         if should_persist and path:
