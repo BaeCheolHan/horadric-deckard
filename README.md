@@ -59,12 +59,21 @@ irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python 
     - **Windows**: `%LOCALAPPDATA%\sari` (창문이 달린 비밀 창고)
 3.  **통역기 연결**: AI 에이전트들이 사리 선생님께 "헬프!"를 외칠 수 있도록 MCP 통역기를 연결합니다.
 
-### 설정은 어디에 숨겨지나요? (쌍둥이 CLI 지원)
-설치 스크립트(`install.py`)는 **설정이 지옥의 촉수처럼 흩어져 충돌**나는 것을 막기 위해 다음처럼 엄격하게 동작합니다.
+### 설정은 어디에 숨겨지나요? (수동 등록 방식)
+이제 **설정 파일은 자동으로 수정하지 않습니다.**  
+원하는 MCP 설정 파일에 아래 블록을 **직접 추가**하면, 실행 시 자동으로 Sari가 설치됩니다.
 
-- **쌍둥이의 축복**: 현재 작업 폴더의 `.codex/config.toml`과 `.gemini/config.toml` 양쪽에 사리 선생님의 영혼 인장을 동시에 찍습니다. (하나만 하면 섭섭하니까요.)
-- **부정한 유산 정화**: `~/.codex/config.toml`과 `~/.gemini/config.toml`에 남아있던 케케묵은 설정들은 자비 없이 불태워 소멸시킵니다. (오직 깨끗한 것만이 살아남으리!)
-- **성역의 예절**: Claude/Cursor 설정은 **함부로 발을 들이지 않습니다.** (남의 집 안방 가구는 집주인이 직접 옮기는 게 도리죠.) 필요하면 아래 비급 예시를 보고 직접 수련하여 옮기시게나.
+```toml
+[mcp_servers.sari]
+command = "bash"
+args = ["-lc", "curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y; exec ~/.local/share/sari/bootstrap.sh --transport stdio"]
+env = { DECKARD_WORKSPACE_ROOT = "/path/to/workspace", DECKARD_RESPONSE_COMPACT = "1" }
+startup_timeout_sec = 60
+```
+
+주의:
+- Codex/Gemini는 위 방식으로 동작합니다.
+- Cursor/Claude는 설정 형식이 다르므로 수동으로 맞춰 넣어야 합니다.
 
 ### 여러 워크스페이스를 동시에? (분신술의 대가)
 - **설정은 워크스페이스별로 각자의 운명**을 가집니다.  

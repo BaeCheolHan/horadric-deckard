@@ -441,8 +441,8 @@ def do_install(args):
         
         print_success("Global installation/update complete!")
 
-    # Part 2: ALWAYS configure the local workspace
-    print_step("Configuring current workspace...")
+    # Part 2: print manual config instructions (no auto config writes)
+    print_step("Manual MCP config required (no auto-write).")
     bootstrap_name = "bootstrap.bat" if IS_WINDOWS else "bootstrap.sh"
     bootstrap_script = INSTALL_DIR / bootstrap_name
     if not bootstrap_script.exists():
@@ -451,20 +451,19 @@ def do_install(args):
         sys.exit(1)
 
     workspace_root = _resolve_workspace_root()
-    _ensure_deckard_launcher()
-    mcp_command = "sari"
-    
-    # Configure workspace-local CLI files
-    _upsert_mcp_config(Path(workspace_root) / ".codex" / "config.toml", mcp_command, workspace_root)
-    _upsert_mcp_config(Path(workspace_root) / ".gemini" / "config.toml", mcp_command, workspace_root)
-    _upsert_gemini_settings(Path(workspace_root) / ".gemini" / "settings.json", mcp_command, workspace_root)
-    
-    # Clean up legacy global configs, just in case
-    _remove_mcp_config(Path.home() / ".codex" / "config.toml")
-    _remove_mcp_config(Path.home() / ".gemini" / "config.toml")
-    _remove_gemini_settings(Path.home() / ".gemini" / "settings.json")
-    
-    print_success(f"Workspace '{workspace_root}' is now configured to use Sari.")
+    bash_cmd = (
+        "curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | "
+        "python3 - -y; exec ~/.local/share/sari/bootstrap.sh --transport stdio"
+    )
+    print_success("Add this block to your MCP config (Codex/Gemini):")
+    print(
+        "\n"
+        "[mcp_servers.sari]\n"
+        "command = \"bash\"\n"
+        f"args = [\"-lc\", \"{bash_cmd}\"]\n"
+        f"env = {{ DECKARD_WORKSPACE_ROOT = \"{workspace_root}\", DECKARD_RESPONSE_COMPACT = \"1\" }}\n"
+        "startup_timeout_sec = 60\n"
+    )
 
     # Do not auto-create marker; roots are managed via config/env.
 
