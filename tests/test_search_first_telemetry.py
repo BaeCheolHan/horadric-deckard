@@ -5,6 +5,7 @@ from pathlib import Path
 
 from mcp.server import LocalSearchMCPServer
 from mcp.telemetry import TelemetryLogger
+from tests.telemetry_helpers import read_log_with_retry
 
 
 class TestSearchFirstTelemetry(unittest.TestCase):
@@ -21,8 +22,9 @@ class TestSearchFirstTelemetry(unittest.TestCase):
         server._search_first_mode = "warn"
         server.logger = TelemetryLogger(self.log_dir)
         server._search_first_warning({"warnings": []})
+        server.logger.stop()
 
-        content = (self.log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(self.log_dir)
         self.assertIn("policy=search_first", content)
         self.assertIn("action=warn", content)
 
@@ -31,8 +33,9 @@ class TestSearchFirstTelemetry(unittest.TestCase):
         server._search_first_mode = "enforce"
         server.logger = TelemetryLogger(self.log_dir)
         server._search_first_error()
+        server.logger.stop()
 
-        content = (self.log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(self.log_dir)
         self.assertIn("policy=search_first", content)
         self.assertIn("action=enforce", content)
 

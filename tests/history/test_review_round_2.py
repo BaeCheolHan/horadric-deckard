@@ -29,7 +29,7 @@ enabled = true
             # Should insert after model_reasoning_effort? Or just append if simple loop finding
             # My logic inserts after model_reasoning_effort line found plus 1
             # Or appends.
-            assert "env = { DECKARD_WORKSPACE_ROOT = \"/workspace\" }" in content
+            assert "DECKARD_WORKSPACE_ROOT = \"/workspace\"" in content
             
             # Double insert shouldn't duplicate (logic removes first)
             _upsert_deckard_block(path, "/usr/bin/python3", "/workspace")

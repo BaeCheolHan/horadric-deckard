@@ -3,6 +3,7 @@ import pytest
 import re
 from pathlib import Path
 from mcp.telemetry import TelemetryLogger
+from tests.telemetry_helpers import read_log_with_retry
 
 class TestShieldTelemetrySchema:
     """
@@ -22,8 +23,9 @@ class TestShieldTelemetrySchema:
         """
         logger = TelemetryLogger(log_dir)
         logger.log_info("Consistency Check")
+        logger.stop()
         
-        content = (log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(log_dir)
         # [202X-XX-XXTXX:XX:XX...
         match = re.search(r"^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", content)
         assert match, "Timestamp missing or malformed"
@@ -37,8 +39,9 @@ class TestShieldTelemetrySchema:
         """
         logger = TelemetryLogger(log_dir)
         logger.log_telemetry("tool=search latency=100")
+        logger.stop()
         
-        content = (log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(log_dir)
         assert "tool=search latency=100" in content
 
     def test_telemetry_redaction_safety(self, log_dir):
@@ -49,8 +52,9 @@ class TestShieldTelemetrySchema:
         logger = TelemetryLogger(log_dir)
         secret = "OPENAI_API_KEY=sk-111111111111111111111111111111111111111111111111"
         logger.log_telemetry(f"query='{secret}'")
+        logger.stop()
         
-        content = (log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(log_dir)
         
         # If this fails, we have a security leak in logging.
         # "Product Shield" methodology demands we fix it.
@@ -62,7 +66,8 @@ class TestShieldTelemetrySchema:
         """
         logger = TelemetryLogger(log_dir)
         logger.log_error("Fail")
-        content = (log_dir / "deckard.log").read_text()
+        logger.stop()
+        content = read_log_with_retry(log_dir)
         assert "[ERROR] Fail" in content
 
     def test_file_permission_safety(self, log_dir):

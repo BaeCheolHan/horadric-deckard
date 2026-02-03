@@ -100,6 +100,16 @@ def send_mcp_request(proc, request):
         return None
     return json.loads(line)
 
+def parse_pack_metrics(text: str) -> dict:
+    metrics = {}
+    for line in text.splitlines():
+        if line.startswith("m:"):
+            _, rest = line.split("m:", 1)
+            if "=" in rest:
+                k, v = rest.split("=", 1)
+                metrics[k.strip()] = v.strip()
+    return metrics
+
 def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
     """
     E2E: Actual Install -> Config Check -> MCP Handshake -> Tool Execute -> Uninstall.
@@ -153,8 +163,25 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
         }
         resp = send_mcp_request(mcp_proc, init_req)
         assert resp and "result" in resp, "MCP Initialize failed"
+
+        # Step B: Force a synchronous scan once for determinism
+        scan_req = {
+            "jsonrpc": "2.0",
+            "id": "1.5",
+            "method": "tools/call",
+            "params": {
+                "name": "scan_once",
+                "arguments": {}
+            }
+        }
+        resp = send_mcp_request(mcp_proc, scan_req)
+        assert resp and "result" in resp, "Tool 'scan_once' call failed"
+        scan_text = resp["result"]["content"][0]["text"]
+        assert "PACK1 scan_once" in scan_text
+        scan_metrics = parse_pack_metrics(scan_text)
+        assert int(scan_metrics.get("scanned_files", "0")) >= 0
         
-        # Step B: Call 'status' tool
+        # Step C: Call 'status' tool
         status_req = {
             "jsonrpc": "2.0",
             "id": "2",
@@ -167,11 +194,9 @@ def test_full_cli_mcp_cycle_codex_and_gemini(test_env):
         resp = send_mcp_request(mcp_proc, status_req)
         assert resp and "result" in resp, "Tool 'status' call failed"
         content_text = resp["result"]["content"][0]["text"]
-        try:
-            payload = json.loads(content_text)
-            assert payload.get("index_ready") is True or "active" in content_text.lower()
-        except Exception:
-            assert '"index_ready": true' in content_text.lower() or "active" in content_text.lower()
+        # PACK1 default: expect header + index_ready metric
+        assert "PACK1 status" in content_text
+        assert "m:index_ready=true" in content_text.lower() or "active" in content_text.lower()
         
     finally:
         # Cleanup MCP process

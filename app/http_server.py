@@ -50,10 +50,12 @@ class Handler(BaseHTTPRequestHandler):
                     "version": self.server_version,
                     "index_ready": bool(st.index_ready),
                     "last_scan_ts": st.last_scan_ts,
+                    "last_commit_ts": self.indexer.get_last_commit_ts() if hasattr(self.indexer, "get_last_commit_ts") else 0,
                     "scanned_files": st.scanned_files,
                     "indexed_files": st.indexed_files,
                     "errors": st.errors,
                     "fts_enabled": self.db.fts_enabled,
+                    "queue_depths": self.indexer.get_queue_depths() if hasattr(self.indexer, "get_queue_depths") else {},
                 }
             )
 
@@ -166,4 +168,3 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     th = threading.Thread(target=httpd.serve_forever, daemon=True)
     th.start()
     return (httpd, actual_port)
-

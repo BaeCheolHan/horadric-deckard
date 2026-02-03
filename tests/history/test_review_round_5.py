@@ -117,7 +117,7 @@ class TestReviewRound5:
         mock_iter.return_value = []
         
         # Manually trigger scan
-        indexer._scan_once()
+        indexer.scan_once()
         
         # Should have updated timestamp
         assert indexer.status.last_scan_ts > 0

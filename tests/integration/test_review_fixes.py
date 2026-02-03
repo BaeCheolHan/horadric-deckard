@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 from app.db import LocalSearchDB, SearchOptions
 from mcp.tools.search_symbols import execute_search_symbols
+from tests.pack1_util import parse_pack1
 
 @pytest.fixture
 def db(tmp_path):
@@ -26,11 +27,13 @@ def test_search_symbols_limit_fix(db):
     # Execute tool with limit=2
     args = {"query": "ba", "limit": 2}
     result = execute_search_symbols(args, db)
-    
-    text = result["content"][0]["text"]
-    assert "Found 2 symbols" in text
-    assert "baz" in text or "bar" in text
-    assert "- [function] foo" not in text # Should be cut off if sorted (though order isn't guaranteed, 2 is less than 3)
+
+    data = parse_pack1(result["content"][0]["text"])
+    records = [r for r in data["records"] if r["kind"] == "h"]
+    assert len(records) == 2
+    names = {r["data"].get("name") for r in records}
+    assert "baz" in names or "bar" in names
+    assert "foo" not in names
 
 def test_fts_fallback_logic(db):
     """P1: Verify FTS fallback to LIKE."""

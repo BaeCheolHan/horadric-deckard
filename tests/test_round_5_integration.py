@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db import LocalSearchDB
@@ -41,6 +42,10 @@ class TestRound5Integration(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+        try:
+            self.logger.stop()
+        except Exception:
+            pass
         shutil.rmtree(self.test_dir)
 
     def _index_file(self, rel_path, content):
@@ -85,8 +90,9 @@ class TestRound5Integration(unittest.TestCase):
         self.assertTrue(len(syms) > 0, "Symbol foo should be indexed")
         self.assertEqual(syms[0].get("docstring"), "My Docstring", "Docstring should be indexed")
 
-        res = execute_search({"query": "foo"}, self.db, self.logger)
-        content = json.loads(res["content"][0]["text"])
+        with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
+            res = execute_search({"query": "foo"}, self.db, self.logger)
+            content = json.loads(res["content"][0]["text"])
         
         if not content["results"]:
              self.fail(f"Search returned no results for 'foo'. Metadata: {content.get('meta')}")
@@ -99,8 +105,9 @@ class TestRound5Integration(unittest.TestCase):
         code = f'def bar():\n    """{long_doc}"""\n    pass'
         self._index_file("bar.py", code)
         
-        res = execute_search({"query": "bar"}, self.db, self.logger)
-        content = json.loads(res["content"][0]["text"])
+        with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
+            res = execute_search({"query": "bar"}, self.db, self.logger)
+            content = json.loads(res["content"][0]["text"])
         hit = content["results"][0]
         self.assertIn("Line 1", hit["docstring"])
         self.assertIn("...", hit["docstring"])

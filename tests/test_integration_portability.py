@@ -11,6 +11,7 @@ from app.indexer import Indexer
 from app.config import Config
 from mcp.tools.list_files import execute_list_files
 from mcp.tools.repo_candidates import execute_repo_candidates
+from tests.pack1_util import parse_pack1
 
 class TestIntegrationPortability(unittest.TestCase):
     def setUp(self):
@@ -24,8 +25,8 @@ class TestIntegrationPortability(unittest.TestCase):
         self.db.close()
         shutil.rmtree(self.tmp_dir)
 
-    def test_list_files_complex_filter(self):
-        """Case 3: list_files with multiple filters"""
+    def test_list_files_complex_filter_pack1(self):
+        """Case 3: list_files with multiple filters (PACK1)"""
         ts = int(time.time())
         self.db.upsert_files([
             ("repo1/src/main.py", "repo1", 0, 0, "content", ts),
@@ -40,13 +41,27 @@ class TestIntegrationPortability(unittest.TestCase):
             "path_pattern": "src"
         }
         result = execute_list_files(args, self.db, MagicMock())
-        data = json.loads(result["content"][0]["text"])
+        data = parse_pack1(result["content"][0]["text"])
         
-        self.assertEqual(len(data["paths"]), 1)
-        self.assertEqual(data["paths"][0], "repo1/src/main.py")
+        # In PACK1, records are under "records"
+        paths = [r["value"] for r in data["records"] if r["kind"] == "p"]
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(paths[0], "repo1/src/main.py")
+        self.assertEqual(data["header"]["returned"], "1")
 
-    def test_repo_candidates_scoring(self):
-        """Case 4: repo_candidates scoring logic"""
+    def test_list_files_legacy_json(self):
+        """Verify legacy JSON mode still works via env var"""
+        with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
+            ts = int(time.time())
+            self.db.upsert_files([("test.py", "repo1", 0, 0, "content", ts)])
+            args = {"repo": "repo1"}
+            result = execute_list_files(args, self.db, MagicMock())
+            data = json.loads(result["content"][0]["text"])
+            self.assertIn("files", data)
+            self.assertEqual(data["files"][0]["path"], "test.py")
+
+    def test_repo_candidates_scoring_pack1(self):
+        """Case 4: repo_candidates scoring logic (PACK1)"""
         ts = int(time.time())
         self.db.upsert_files([
             ("f1.txt", "repo_high", 0, 0, "target keyword", ts),
@@ -56,9 +71,11 @@ class TestIntegrationPortability(unittest.TestCase):
         
         args = {"query": "target"}
         result = execute_repo_candidates(args, self.db)
-        data = json.loads(result["content"][0]["text"])
-        candidates = data["candidates"]
+        data = parse_pack1(result["content"][0]["text"])
+        
+        candidates = [r["data"] for r in data["records"] if r["kind"] == "r"]
         self.assertEqual(candidates[0]["repo"], "repo_high")
+        self.assertIn("Low match", candidates[0]["reason"])
 
     def test_indexer_ai_safety_net(self):
         """Case 5: Indexer AI Safety Net (force re-index)"""
@@ -78,13 +95,13 @@ class TestIntegrationPortability(unittest.TestCase):
         )
         
         indexer = Indexer(cfg, self.db)
-        indexer._scan_once()
+        indexer.scan_once()
+        first_indexed = indexer.status.indexed_files
         
-        self.db.get_file_meta = MagicMock(return_value=(mtime, test_file.stat().st_size))
-        self.db.upsert_files = MagicMock(return_value=1)
-        
-        indexer._scan_once()
-        self.assertTrue(self.db.upsert_files.called)
+        # Re-scan without changing file: should still index within safety window
+        indexer.scan_once()
+        indexer.stop()
+        self.assertGreater(indexer.status.indexed_files, first_indexed)
 
     def test_server_json_port_tracking(self):
         """Case 2: server.json tracks actual port"""

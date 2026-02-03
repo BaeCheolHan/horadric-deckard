@@ -416,6 +416,58 @@ curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/horadric-deckard/main/i
 
 ---
 
+## 🤖 MCP 응답 포맷 (PACK1) 가이드
+
+데커드 v2.5.0부터는 토큰 절약을 위해 **PACK1**이라는 압축 텍스트 포맷을 기본으로 사용합니다. JSON의 불필요한 괄호와 공백을 제거하여 **약 30~50%의 토큰을 절약**합니다.
+
+### 1. 포맷 개요
+- **헤더(Header)**: `PACK1 <tool> key=value ...`
+- **레코드(Record)**: `<type>:<payload>` (한 줄에 하나씩)
+- **인코딩**: 특수문자나 공백이 포함된 값은 안전하게 URL 인코딩됩니다.
+  - `ENC_ID`: 식별자용 (경로, 이름 등). `safe="/._-:@"`
+  - `ENC_TEXT`: 일반 텍스트용 (스니펫, 메시지 등). `safe=""`
+
+### 2. 주요 도구 예시
+
+**`list_files`**
+```text
+PACK1 list_files offset=0 limit=100 returned=2 total=2 total_mode=exact
+p:src/main.py
+p:src/utils.py
+```
+
+**`search_symbols`**
+```text
+PACK1 search_symbols q=User limit=50 returned=1 total_mode=none
+h:repo=my-repo path=src/user.py line=10 kind=class name=User
+```
+
+**`status`**
+```text
+PACK1 status returned=5
+m:index_ready=true
+m:scanned_files=100
+m:indexed_files=100
+m:errors=0
+m:fts_enabled=true
+```
+
+### 3. 에러 코드 (Error Codes)
+오류 발생 시 `PACK1 <tool> ok=false` 헤더와 함께 아래 코드가 반환됩니다.
+
+| 코드 | 설명 |
+|---|---|
+| `INVALID_ARGS` | 잘못된 인자 전달 |
+| `NOT_INDEXED` | 인덱싱이 완료되지 않음 |
+| `REPO_NOT_FOUND` | 존재하지 않는 저장소 |
+| `IO_ERROR` | 파일 읽기/쓰기 실패 |
+| `DB_ERROR` | 데이터베이스 오류 |
+| `INTERNAL` | 내부 서버 오류 |
+
+> **참고**: 기존 JSON 포맷이 필요하다면 환경변수 `DECKARD_FORMAT=json`을 설정하세요. (디버깅용)
+
+---
+
 ## 🏗️ 개발자를 위한 제원 (Tech Specs)
 
 - **언어**: Python 3.9+ (표준 라이브러리만 사용하는 제로 디펜던시!)

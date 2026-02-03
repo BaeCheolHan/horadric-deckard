@@ -2,7 +2,8 @@
 import os
 import time
 import threading
-from typing import Callable, List, Optional
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
 from threading import Timer
 
 try:
@@ -15,6 +16,11 @@ except ImportError:
     class FileSystemEventHandler: pass
     class Observer: pass
 
+try:
+    from .queue_pipeline import FsEvent, FsEventKind
+except Exception:
+    from queue_pipeline import FsEvent, FsEventKind
+
 class DebouncedEventHandler(FileSystemEventHandler):
     """Handles events with debounce to prevent duplicate indexing on save."""
     def __init__(self, callback: Callable[[str], None], debounce_seconds: float = 1.0, logger=None):
@@ -23,6 +29,7 @@ class DebouncedEventHandler(FileSystemEventHandler):
         self.logger = logger
         self._timers = {}
         self._lock = threading.Lock()
+        self._pending_events: Dict[str, FsEvent] = {}
 
     def on_any_event(self, event):
         if event.is_directory:
@@ -31,32 +38,47 @@ class DebouncedEventHandler(FileSystemEventHandler):
         # We care about Created, Modified, Moved, Deleted
         # watchdog event types: 'created', 'deleted', 'modified', 'moved'
         
-        paths = [event.src_path]
-        if event.event_type == 'moved' and hasattr(event, 'dest_path'):
-            paths.append(event.dest_path)
-        
-        for p in paths:
-            with self._lock:
-                if p in self._timers:
-                    self._timers[p].cancel()
-                
-                t = Timer(self.debounce_seconds, self._trigger, args=[p])
-                self._timers[p] = t
-                t.start()
+        evt_kind = None
+        if event.event_type == 'created':
+            evt_kind = FsEventKind.CREATED
+        elif event.event_type == 'modified':
+            evt_kind = FsEventKind.MODIFIED
+        elif event.event_type == 'deleted':
+            evt_kind = FsEventKind.DELETED
+        elif event.event_type == 'moved':
+            evt_kind = FsEventKind.MOVED
+
+        if not evt_kind:
+            return
+
+        key = event.src_path
+        fs_event = FsEvent(kind=evt_kind, path=event.src_path,
+                           dest_path=getattr(event, 'dest_path', None),
+                           ts=time.time())
+
+        with self._lock:
+            if key in self._timers:
+                self._timers[key].cancel()
+            self._pending_events[key] = fs_event
+            t = Timer(self.debounce_seconds, self._trigger, args=[key])
+            self._timers[key] = t
+            t.start()
 
     def _trigger(self, path: str):
         with self._lock:
             if path in self._timers:
                 del self._timers[path]
-        
+            fs_event = self._pending_events.pop(path, None)
+        if not fs_event:
+            return
         try:
-           self.callback(path)
+           self.callback(fs_event)
         except Exception as e:
             if self.logger:
                 self.logger.log_error(f"Watcher callback failed for {path}: {e}")
 
 class FileWatcher:
-    def __init__(self, paths: List[str], on_change_callback: Callable[[str], None], logger=None):
+    def __init__(self, paths: List[str], on_change_callback: Callable[[FsEvent], None], logger=None):
         self.paths = paths
         self.callback = on_change_callback
         self.logger = logger

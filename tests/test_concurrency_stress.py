@@ -8,6 +8,7 @@ from pathlib import Path
 from mcp.registry import Registry
 from mcp.server import LocalSearchMCPServer
 from app.db import SearchOptions
+from unittest.mock import patch
 
 class TestConcurrencyStress(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -41,11 +42,11 @@ class TestConcurrencyStress(unittest.IsolatedAsyncioTestCase):
         
         # Search with large offset
         args = {"query": "any", "offset": 1000, "limit": 10}
-        result = server._tool_search(args)
-        
-        data = json.loads(result["content"][0]["text"])
-        self.assertEqual(len(data["results"]), 0)
-        self.assertFalse(data["has_more"])
+        with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
+            result = server._tool_search(args)
+            data = json.loads(result["content"][0]["text"])
+            self.assertEqual(len(data["results"]), 0)
+            self.assertFalse(data["has_more"])
 
     def test_fts_fallback_on_syntax_error(self):
         """Case 3: FTS syntax error fallback"""
@@ -56,12 +57,12 @@ class TestConcurrencyStress(unittest.IsolatedAsyncioTestCase):
         
         # Query with mismatched quote (FTS error)
         args = {"query": 'unclosed " quote', "limit": 10}
-        result = server._tool_search(args)
-        
-        data = json.loads(result["content"][0]["text"])
-        # Should return result (empty or matched via LIKE) without error
-        self.assertIn("meta", data)
-        self.assertTrue(data["meta"]["fallback_used"])
+        with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
+            result = server._tool_search(args)
+            data = json.loads(result["content"][0]["text"])
+            # Should return result (empty or matched via LIKE) without error
+            self.assertIn("meta", data)
+            self.assertTrue(data["meta"]["fallback_used"])
 
     def test_multi_workspace_isolation(self):
         """Case 1: Multi-workspace isolation"""

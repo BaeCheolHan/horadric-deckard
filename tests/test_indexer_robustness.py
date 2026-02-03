@@ -8,6 +8,7 @@ from pathlib import Path
 from app.indexer import Indexer
 from app.config import Config
 from app.db import LocalSearchDB
+from app.queue_pipeline import FsEvent, FsEventKind
 
 class TestIndexerRobustness(unittest.TestCase):
     def setUp(self):
@@ -33,6 +34,7 @@ class TestIndexerRobustness(unittest.TestCase):
             commit_batch_size=50
         )
         self.indexer = Indexer(self.cfg, self.db)
+        self.indexer._start_pipeline()
 
     def tearDown(self):
         self.indexer.stop()
@@ -48,13 +50,13 @@ class TestIndexerRobustness(unittest.TestCase):
         for i in range(200):
             p = self.workspace / f"file_{i}.py"
             p.write_text(f"def func_{i}(): pass")
-            self.indexer._process_watcher_event(str(p))
+            self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p), ts=time.time()))
             
         # 2. Immediately modify them multiple times (Burst)
         for i in range(200):
             p = self.workspace / f"file_{i}.py"
             p.write_text(f"def func_{i}_v2(): pass")
-            self.indexer._process_watcher_event(str(p))
+            self.indexer._process_watcher_event(FsEvent(FsEventKind.MODIFIED, str(p), ts=time.time()))
             
         # Wait for ingestion to finish
         # The batch size is 50, timeout 1.0. 
@@ -81,8 +83,8 @@ class TestIndexerRobustness(unittest.TestCase):
         p2 = self.workspace / "bad.java"
         p2.write_text("class 123Bad { void #@! method() {} }")
         
-        self.indexer._process_watcher_event(str(p1))
-        self.indexer._process_watcher_event(str(p2))
+        self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p1), ts=time.time()))
+        self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p2), ts=time.time()))
         
         # Wait a bit
         time.sleep(2)
@@ -96,11 +98,11 @@ class TestIndexerRobustness(unittest.TestCase):
         """Case 3: File is modified then deleted quickly."""
         p = self.workspace / "volatile.py"
         p.write_text("def exist(): pass")
-        self.indexer._process_watcher_event(str(p))
+        self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p), ts=time.time()))
         
         # Sudden deletion
         p.unlink()
-        self.indexer._process_watcher_event(str(p))
+        self.indexer._process_watcher_event(FsEvent(FsEventKind.DELETED, str(p), ts=time.time()))
         
         time.sleep(2)
         
@@ -113,7 +115,7 @@ class TestIndexerRobustness(unittest.TestCase):
         for i in range(100):
             p = self.workspace / f"stress_{i}.py"
             p.write_text("class Stress { void work() {} }")
-            self.indexer._process_watcher_event(str(p))
+            self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p), ts=time.time()))
             
         # Perform many concurrent searches
         errors = []

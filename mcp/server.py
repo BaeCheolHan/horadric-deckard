@@ -45,6 +45,8 @@ import mcp.tools.read_symbol as read_symbol_tool
 import mcp.tools.doctor as doctor_tool
 import mcp.tools.search_api_endpoints as search_api_endpoints_tool
 import mcp.tools.index_file as index_file_tool
+import mcp.tools.rescan as rescan_tool
+import mcp.tools.scan_once as scan_once_tool
 import mcp.tools.get_callers as get_callers_tool
 import mcp.tools.get_implementations as get_implementations_tool
 import mcp.tools.deckard_guide as deckard_guide_tool
@@ -311,6 +313,16 @@ class LocalSearchMCPServer:
                     },
                 },
                 {
+                    "name": "rescan",
+                    "description": "Trigger an async rescan of the workspace index.",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "scan_once",
+                    "description": "Run a synchronous scan once (blocking).",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {
                     "name": "repo_candidates",
                     "description": "Suggest top repos for a query. Use before search if repo is unknown.",
                     "inputSchema": {
@@ -527,6 +539,10 @@ class LocalSearchMCPServer:
             return search_api_endpoints_tool.execute_search_api_endpoints(args, self.db)
         elif tool_name == "index_file":
             return index_file_tool.execute_index_file(args, self.indexer)
+        elif tool_name == "rescan":
+            return rescan_tool.execute_rescan(args, self.indexer)
+        elif tool_name == "scan_once":
+            return scan_once_tool.execute_scan_once(args, self.indexer)
         elif tool_name == "get_callers":
             return get_callers_tool.execute_get_callers(args, self.db)
         elif tool_name == "get_implementations":

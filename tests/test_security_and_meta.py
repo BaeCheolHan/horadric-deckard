@@ -3,6 +3,7 @@ import tempfile
 import shutil
 import os
 from pathlib import Path
+import time
 from app.indexer import _redact
 from app.db import LocalSearchDB
 
@@ -47,13 +48,19 @@ class TestMetaExtraction(unittest.TestCase):
             redact_enabled=True, commit_batch_size=500
         )
         indexer = Indexer(cfg, self.db)
+        indexer._start_pipeline()
         indexer._process_meta_file(pkg_path, "test-repo")
-        
-        meta = self.db.get_repo_meta("test-repo")
+        end = time.time() + 2.0
+        meta = None
+        while time.time() < end:
+            meta = self.db.get_repo_meta("test-repo")
+            if meta:
+                break
+            time.sleep(0.05)
+        indexer.stop()
         self.assertIsNotNone(meta)
         self.assertEqual(meta["description"], "Test Repo")
         self.assertIn("tag1", meta["tags"])
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from mcp.telemetry import TelemetryLogger
+from tests.telemetry_helpers import read_log_with_retry
 
 class TestReviewRound7:
     """Round 7: Telemetry & Logging."""
@@ -18,6 +19,7 @@ class TestReviewRound7:
         """Test 1: Logger creates file on init (actually on first write)."""
         logger = TelemetryLogger(log_dir) # Pass Path object
         logger.log_info("test")
+        logger.stop()
         
         files = list(log_dir.glob("*.log"))
         assert len(files) >= 1
@@ -27,9 +29,9 @@ class TestReviewRound7:
         """Test 2: log_telemetry format."""
         logger = TelemetryLogger(log_dir)
         logger.log_telemetry("tool=search query='foo' latency=10ms")
+        logger.stop()
         
-        log_file = log_dir / "deckard.log"
-        content = log_file.read_text()
+        content = read_log_with_retry(log_dir)
         assert "tool=search" in content
         assert "query='foo'" in content
 
@@ -38,8 +40,9 @@ class TestReviewRound7:
         logger = TelemetryLogger(log_dir)
         logger.log_info("First")
         logger.log_info("Second")
+        logger.stop()
         
-        content = (log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(log_dir)
         lines = content.strip().splitlines()
         assert len(lines) >= 2
         assert "First" in lines[-2]
@@ -49,8 +52,9 @@ class TestReviewRound7:
         """Test 4: Error logging includes ERROR level."""
         logger = TelemetryLogger(log_dir)
         logger.log_error("Something bad happened")
+        logger.stop()
         
-        content = (log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(log_dir)
         assert "[ERROR]" in content
         assert "Something bad happened" in content
         
@@ -58,8 +62,9 @@ class TestReviewRound7:
         """Test 5: Logs contain timestamps."""
         logger = TelemetryLogger(log_dir)
         logger.log_info("Time check")
+        logger.stop()
         
-        content = (log_dir / "deckard.log").read_text()
+        content = read_log_with_retry(log_dir)
         # [202...-..-..T..:..:..]
         import re
         assert re.search(r"\[\d{4}-\d{2}-\d{2}", content)

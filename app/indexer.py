@@ -6,6 +6,9 @@ import os
 import re
 import threading
 import time
+import queue
+import random
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +21,7 @@ try:
     from .db import LocalSearchDB
     from .watcher import FileWatcher
     from .dedup_queue import DedupQueue
+    from .queue_pipeline import FsEvent, FsEventKind, TaskAction, CoalesceTask, DbTask, coalesce_action, split_moved_event
 except ImportError:
     from config import Config
     from db import LocalSearchDB
@@ -29,6 +33,16 @@ except ImportError:
         from dedup_queue import DedupQueue
     except Exception:
         DedupQueue = None
+    try:
+        from queue_pipeline import FsEvent, FsEventKind, TaskAction, CoalesceTask, DbTask, coalesce_action, split_moved_event
+    except Exception:
+        FsEvent = None
+        FsEventKind = None
+        TaskAction = None
+        CoalesceTask = None
+        DbTask = None
+        coalesce_action = None
+        split_moved_event = None
 
 AI_SAFETY_NET_SECONDS = 3.0
 
@@ -474,11 +488,164 @@ def _extract_symbols_with_relations(path: str, content: str) -> Tuple[List[Tuple
     return result.symbols, result.relations
 
 
+class DBWriter:
+    def __init__(self, db: LocalSearchDB, logger=None, max_batch: int = 50, max_wait: float = 0.2, latency_cb=None):
+        self.db = db
+        self.logger = logger
+        self.max_batch = max_batch
+        self.max_wait = max_wait
+        self.latency_cb = latency_cb
+        self.queue: "queue.Queue[DbTask]" = queue.Queue()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._conn = None
+        self.last_commit_ts = 0
+
+    def start(self) -> None:
+        if not self._thread.is_alive():
+            self._thread.start()
+
+    def stop(self, timeout: float = 2.0) -> None:
+        self._stop.set()
+        started = False
+        try:
+            started = self._thread.is_alive() or bool(getattr(self._thread, "_started", None) and self._thread._started.is_set())
+        except Exception:
+            started = False
+        if started:
+            self._thread.join(timeout=timeout)
+
+    def enqueue(self, task: DbTask) -> None:
+        self.queue.put(task)
+
+    def qsize(self) -> int:
+        return self.queue.qsize()
+
+    def _run(self) -> None:
+        self._conn = self.db.open_writer_connection()
+        cur = self._conn.cursor()
+        while not self._stop.is_set() or not self.queue.empty():
+            tasks = self._drain_batch()
+            if not tasks:
+                continue
+            try:
+                cur.execute("BEGIN")
+                self._process_batch(cur, tasks)
+                self._conn.commit()
+                self.last_commit_ts = int(time.time())
+            except Exception as e:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                if self.logger:
+                    self.logger.log_error(f"DBWriter batch failed: {e}")
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+    def _drain_batch(self) -> List[DbTask]:
+        tasks: List[DbTask] = []
+        try:
+            first = self.queue.get(timeout=self.max_wait)
+            tasks.append(first)
+            self.queue.task_done()
+        except queue.Empty:
+            return tasks
+        while len(tasks) < self.max_batch:
+            try:
+                t = self.queue.get_nowait()
+                tasks.append(t)
+                self.queue.task_done()
+            except queue.Empty:
+                break
+        return tasks
+
+    def _process_batch(self, cur, tasks: List[DbTask]) -> None:
+        commit_ts = int(time.time())
+        delete_paths: set[str] = set()
+        upsert_files_rows: List[tuple] = []
+        upsert_symbols_rows: List[tuple] = []
+        upsert_relations_rows: List[tuple] = []
+        update_last_seen_paths: List[str] = []
+        repo_meta_tasks: List[dict] = []
+        latency_samples: List[float] = []
+
+        for t in tasks:
+            if t.kind == "delete_path" and t.path:
+                delete_paths.add(t.path)
+                if t.ts:
+                    latency_samples.append(time.time() - t.ts)
+            elif t.kind == "upsert_files" and t.rows:
+                upsert_files_rows.extend(t.rows)
+                if t.ts:
+                    latency_samples.append(time.time() - t.ts)
+            elif t.kind == "upsert_symbols" and t.rows:
+                upsert_symbols_rows.extend(t.rows)
+            elif t.kind == "upsert_relations" and t.rows:
+                upsert_relations_rows.extend(t.rows)
+            elif t.kind == "update_last_seen" and t.paths:
+                update_last_seen_paths.extend(t.paths)
+            elif t.kind == "upsert_repo_meta" and t.repo_meta:
+                repo_meta_tasks.append(t.repo_meta)
+
+        if delete_paths:
+            upsert_files_rows = [r for r in upsert_files_rows if r[0] not in delete_paths]
+            upsert_symbols_rows = [r for r in upsert_symbols_rows if r[0] not in delete_paths]
+            upsert_relations_rows = [r for r in upsert_relations_rows if r[0] not in delete_paths]
+            update_last_seen_paths = [p for p in update_last_seen_paths if p not in delete_paths]
+
+        # Safety order: delete -> upsert_files -> upsert_symbols -> upsert_relations -> update_last_seen
+        for p in delete_paths:
+            self.db.delete_path_tx(cur, p)
+
+        if upsert_files_rows:
+            rows = [(r[0], r[1], r[2], r[3], r[4], commit_ts) for r in upsert_files_rows]
+            self.db.upsert_files_tx(cur, rows)
+        if upsert_symbols_rows:
+            self.db.upsert_symbols_tx(cur, upsert_symbols_rows)
+        if upsert_relations_rows:
+            self.db.upsert_relations_tx(cur, upsert_relations_rows)
+        if update_last_seen_paths:
+            self.db.update_last_seen_tx(cur, update_last_seen_paths, commit_ts)
+        if repo_meta_tasks:
+            for m in repo_meta_tasks:
+                self.db.upsert_repo_meta_tx(
+                    cur,
+                    repo_name=m.get("repo_name", ""),
+                    tags=m.get("tags", ""),
+                    domain=m.get("domain", ""),
+                    description=m.get("description", ""),
+                    priority=int(m.get("priority", 0) or 0),
+                )
+
+        if self.latency_cb and latency_samples:
+            for s in latency_samples:
+                self.latency_cb(s)
+
+
 class Indexer:
     def __init__(self, cfg: Config, db: LocalSearchDB, logger=None):
         self.cfg, self.db, self.logger = cfg, db, logger
         self.status = IndexStatus()
         self._stop, self._rescan = threading.Event(), threading.Event()
+        self._pipeline_started = False
+        self._drain_timeout = 2.0
+        self._coalesce_max_keys = 100000
+        self._coalesce_lock = threading.Lock()
+        self._coalesce_map: Dict[Tuple[str, str], CoalesceTask] = {}
+        self._event_queue = DedupQueue() if DedupQueue else None
+        self._worker_thread = None
+        self._db_writer = DBWriter(self.db, logger=self.logger, latency_cb=self._record_latency)
+        self._metrics_thread = None
+        self._latencies = deque(maxlen=2000)
+        self._enqueue_count = 0
+        self._enqueue_count_ts = time.time()
+        self._retry_count = 0
+        self._drop_count_degraded = 0
+        self._drop_count_shutdown = 0
+        self._drop_count_telemetry = 0
         max_workers = getattr(cfg, "max_workers", 4) or 4
         try:
             max_workers = int(max_workers)
@@ -494,12 +661,26 @@ class Indexer:
         if self.watcher:
             try: self.watcher.stop()
             except: pass
+        self._drain_queues()
         try: self._executor.shutdown(wait=False)
         except: pass
+        if self._db_writer:
+            self._db_writer.stop(timeout=self._drain_timeout)
+        if self.logger and hasattr(self.logger, "stop"):
+            try:
+                self.logger.stop(timeout=self._drain_timeout)
+            except Exception:
+                pass
 
     def request_rescan(self): self._rescan.set()
 
+    def scan_once(self) -> None:
+        """Force a synchronous scan of the workspace (used by MCP tools/tests)."""
+        self._start_pipeline()
+        self._scan_once()
+
     def run_forever(self):
+        self._start_pipeline()
         # v2.7.0: Start watcher if available and not already running
         if FileWatcher and not self.watcher:
             try:
@@ -518,7 +699,213 @@ class Indexer:
             if self._stop.is_set(): break
             self._scan_once()
 
-    def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float) -> Optional[dict]:
+    def _start_pipeline(self) -> None:
+        if self._pipeline_started:
+            return
+        self._pipeline_started = True
+        if self._db_writer:
+            self._db_writer.start()
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+        self._metrics_thread = threading.Thread(target=self._metrics_loop, daemon=True)
+        self._metrics_thread.start()
+
+    def _record_latency(self, value: float) -> None:
+        self._latencies.append(value)
+
+    def get_queue_depths(self) -> dict:
+        watcher_q = self._event_queue.qsize() if self._event_queue else 0
+        db_q = self._db_writer.qsize() if self._db_writer else 0
+        telemetry_q = self.logger.get_queue_depth() if self.logger and hasattr(self.logger, "get_queue_depth") else 0
+        return {"watcher": watcher_q, "db_writer": db_q, "telemetry": telemetry_q}
+
+    def get_last_commit_ts(self) -> int:
+        if self._db_writer and hasattr(self._db_writer, "last_commit_ts"):
+            return int(self._db_writer.last_commit_ts or 0)
+        return 0
+
+    def _metrics_loop(self) -> None:
+        while not self._stop.is_set():
+            time.sleep(5.0)
+            try:
+                now = time.time()
+                elapsed = max(1.0, now - self._enqueue_count_ts)
+                enqueue_per_sec = self._enqueue_count / elapsed
+                self._enqueue_count = 0
+                self._enqueue_count_ts = now
+
+                latencies = list(self._latencies)
+                if latencies:
+                    latencies.sort()
+                    p50 = latencies[int(0.5 * (len(latencies) - 1))]
+                    p95 = latencies[int(0.95 * (len(latencies) - 1))]
+                else:
+                    p50 = 0.0
+                    p95 = 0.0
+
+                watcher_q = self._event_queue.qsize() if self._event_queue else 0
+                db_q = self._db_writer.qsize() if self._db_writer else 0
+                telemetry_q = self.logger.get_queue_depth() if self.logger and hasattr(self.logger, "get_queue_depth") else 0
+                telemetry_drop = self.logger.get_drop_count() if self.logger and hasattr(self.logger, "get_drop_count") else 0
+
+                if self.logger:
+                    self.logger.log_telemetry(
+                        f"queue_depth watcher={watcher_q} db={db_q} telemetry={telemetry_q} "
+                        f"enqueue_per_sec={enqueue_per_sec:.2f} latency_p50={p50:.3f}s latency_p95={p95:.3f}s "
+                        f"retry_count={self._retry_count} drop_degraded={self._drop_count_degraded} "
+                        f"drop_shutdown={self._drop_count_shutdown} telemetry_drop={telemetry_drop}"
+                    )
+            except Exception:
+                pass
+
+    def _drain_queues(self) -> None:
+        deadline = time.time() + self._drain_timeout
+        while time.time() < deadline:
+            pending = 0
+            if self._event_queue:
+                pending += self._event_queue.qsize()
+            if self._db_writer:
+                pending += self._db_writer.qsize()
+            if pending == 0:
+                return
+            time.sleep(0.05)
+        remaining = 0
+        if self._event_queue:
+            remaining += self._event_queue.qsize()
+        if self._db_writer:
+            remaining += self._db_writer.qsize()
+        self._drop_count_shutdown += remaining
+        if self.logger:
+            self.logger.log_info(f"dropped_on_shutdown={remaining}")
+
+    def _enqueue_db_tasks(self, files_rows: List[tuple], symbols_rows: List[tuple], relations_rows: List[tuple], enqueue_ts: Optional[float] = None) -> None:
+        if files_rows:
+            self._db_writer.enqueue(DbTask(kind="upsert_files", rows=list(files_rows), ts=enqueue_ts or time.time()))
+        if symbols_rows:
+            self._db_writer.enqueue(DbTask(kind="upsert_symbols", rows=list(symbols_rows)))
+        if relations_rows:
+            self._db_writer.enqueue(DbTask(kind="upsert_relations", rows=list(relations_rows)))
+
+    def _enqueue_update_last_seen(self, paths: List[str]) -> None:
+        if not paths:
+            return
+        self._db_writer.enqueue(DbTask(kind="update_last_seen", paths=list(paths)))
+
+    def _enqueue_delete_path(self, path: str, enqueue_ts: Optional[float] = None) -> None:
+        self._db_writer.enqueue(DbTask(kind="delete_path", path=path, ts=enqueue_ts or time.time()))
+
+    def _enqueue_repo_meta(self, repo_name: str, tags: str, description: str) -> None:
+        self._db_writer.enqueue(
+            DbTask(kind="upsert_repo_meta", repo_meta={"repo_name": repo_name, "tags": tags, "description": description})
+        )
+
+    def _normalize_path(self, path: str) -> Optional[str]:
+        try:
+            root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
+            p = Path(path).resolve()
+            rel = str(p.relative_to(root))
+            return rel.replace(os.sep, "/")
+        except Exception:
+            return None
+
+    def _enqueue_action(self, action: TaskAction, path: str, ts: float, attempts: int = 0) -> None:
+        if not self._event_queue:
+            return
+        norm = self._normalize_path(path)
+        if not norm:
+            return
+        key = (self.cfg.workspace_root, norm)
+        with self._coalesce_lock:
+            exists = key in self._coalesce_map
+            if not exists and len(self._coalesce_map) >= self._coalesce_max_keys:
+                self._drop_count_degraded += 1
+                if self.logger:
+                    self.logger.log_error(f"coalesce_map degraded: drop key={key}")
+                return
+            if exists:
+                task = self._coalesce_map[key]
+                task.action = coalesce_action(task.action, action)
+                task.last_seen = ts
+                task.enqueue_ts = ts
+                task.attempts = max(task.attempts, attempts)
+            else:
+                self._coalesce_map[key] = CoalesceTask(action=action, path=norm, attempts=attempts, enqueue_ts=ts, last_seen=ts)
+            self._event_queue.put(key)
+            self._enqueue_count += 1
+
+    def _enqueue_fsevent(self, evt: FsEvent) -> None:
+        if evt.kind == FsEventKind.MOVED:
+            for action, p in split_moved_event(evt):
+                self._enqueue_action(action, p, evt.ts)
+            return
+        if evt.kind == FsEventKind.DELETED:
+            self._enqueue_action(TaskAction.DELETE, evt.path, evt.ts)
+            return
+        self._enqueue_action(TaskAction.INDEX, evt.path, evt.ts)
+
+    def _worker_loop(self) -> None:
+        if not self._event_queue:
+            return
+        while not self._stop.is_set() or self._event_queue.qsize() > 0:
+            keys = self._event_queue.get_batch(max_size=50, timeout=0.2)
+            if not keys:
+                continue
+            for key in keys:
+                with self._coalesce_lock:
+                    task = self._coalesce_map.pop(key, None)
+                if not task:
+                    continue
+                if task.action == TaskAction.DELETE:
+                    self._enqueue_delete_path(task.path, enqueue_ts=task.enqueue_ts)
+                    continue
+                self._handle_index_task(task)
+
+    def _handle_index_task(self, task: CoalesceTask) -> None:
+        root = Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
+        file_path = root / task.path
+        try:
+            st = file_path.stat()
+        except FileNotFoundError:
+            self._enqueue_delete_path(task.path, enqueue_ts=task.enqueue_ts)
+            return
+        except (IOError, PermissionError, OSError) as e:
+            self._retry_task(task, e)
+            return
+
+        try:
+            res = self._process_file_task(root, file_path, st, int(time.time()), time.time(), raise_on_error=True)
+        except (IOError, PermissionError, OSError) as e:
+            self._retry_task(task, e)
+            return
+        except Exception:
+            self.status.errors += 1
+            return
+
+        if not res or res.get("type") == "unchanged":
+            return
+
+        self._enqueue_db_tasks(
+            [(res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"])],
+            list(res["symbols"]),
+            list(res["relations"]),
+            enqueue_ts=task.enqueue_ts,
+        )
+
+    def _retry_task(self, task: CoalesceTask, err: Exception) -> None:
+        if task.attempts >= 2:
+            self._drop_count_degraded += 1
+            if self.logger:
+                self.logger.log_error(f"Task dropped after retries: {task.path} err={err}")
+            return
+        self._retry_count += 1
+        task.attempts += 1
+        base = 0.5 if task.attempts == 1 else 2.0
+        sleep = base * random.uniform(0.8, 1.2)
+        t = threading.Timer(sleep, lambda: self._enqueue_action(task.action, task.path, time.time(), attempts=task.attempts))
+        t.daemon = True
+        t.start()
+
+    def _process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, raise_on_error: bool = False) -> Optional[dict]:
         try:
             rel = str(file_path.relative_to(root))
             repo = rel.split(os.sep, 1)[0] if os.sep in rel else "__root__"
@@ -542,6 +929,8 @@ class Indexer:
             return {"type": "changed", "rel": rel, "repo": repo, "mtime": int(st.st_mtime), "size": int(st.st_size), "content": text, "scan_ts": scan_ts, "symbols": symbols, "relations": relations}
         except Exception:
             self.status.errors += 1
+            if raise_on_error:
+                raise
             try:
                 rel = str(file_path.relative_to(root))
                 return {"type": "unchanged", "rel": rel}
@@ -571,7 +960,7 @@ class Indexer:
             return
 
         tags_str = ",".join(tags)
-        self.db.upsert_repo_meta(repo, tags=tags_str, description=description)
+        self._enqueue_repo_meta(repo, tags_str, description)
 
     def _iter_file_entries_stream(self, root: Path):
         include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
@@ -643,23 +1032,15 @@ class Indexer:
         if chunk:
             self._process_chunk(root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged)
 
-        if batch_files:
-            try:
-                self.db.upsert_files(batch_files)
-                self.db.upsert_symbols(batch_syms)
-                self.db.upsert_relations(batch_rels)
-                self.status.indexed_files += len(batch_files)
-            except Exception as e:
-                if self.logger:
-                    self.logger.log_error(f"Failed to flush final batch to DB: {e}")
-                self.status.errors += 1
+        if batch_files or batch_syms or batch_rels:
+            self._enqueue_db_tasks(batch_files, batch_syms, batch_rels)
+            self.status.indexed_files += len(batch_files)
         if unchanged:
-            try:
-                self.db.update_last_seen(unchanged, scan_ts)
-            except Exception as e:
-                self.status.errors += 1
+            self._enqueue_update_last_seen(unchanged)
         try:
-            self.db.delete_unseen_files(scan_ts)
+            unseen_paths = self.db.get_unseen_paths(scan_ts)
+            for p in unseen_paths:
+                self._enqueue_delete_path(p)
         except Exception as e:
             self.status.errors += 1
 
@@ -678,33 +1059,23 @@ class Indexer:
             if not res: continue
             if res["type"] == "unchanged":
                 unchanged.append(res["rel"])
-                if len(unchanged) >= 100: self.db.update_last_seen(unchanged, scan_ts); unchanged.clear()
+                if len(unchanged) >= 100:
+                    self._enqueue_update_last_seen(unchanged)
+                    unchanged.clear()
                 continue
                 
             batch_files.append((res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"]))
             batch_syms.extend(res["symbols"]); batch_rels.extend(res["relations"])
                 
             if len(batch_files) >= 50:
-                try:
-                    self.db.upsert_files(batch_files)
-                    self.db.upsert_symbols(batch_syms)
-                    self.db.upsert_relations(batch_rels)
-                    self.status.indexed_files += len(batch_files)
-                except Exception as e:
-                    if self.logger:
-                        self.logger.log_error(f"Failed to flush batch to DB: {e}")
-                    self.status.errors += 1
+                self._enqueue_db_tasks(batch_files, batch_syms, batch_rels)
+                self.status.indexed_files += len(batch_files)
                 batch_files.clear()
                 batch_syms.clear()
                 batch_rels.clear()
 
-    def _process_watcher_event(self, path: str):
+    def _process_watcher_event(self, evt: FsEvent):
         try:
-            p, root = Path(path).resolve(), Path(os.path.expanduser(self.cfg.workspace_root)).resolve()
-            rel = str(p.relative_to(root))
-            if not p.exists(): self.db.delete_file(rel); return
-            res = self._process_file_task(root, p, p.stat(), int(time.time()), time.time())
-            if res and res["type"] == "changed":
-                self.db.upsert_files([(res["rel"], res["repo"], res["mtime"], res["size"], res["content"], res["scan_ts"])])
-                self.db.upsert_symbols(res["symbols"]); self.db.upsert_relations(res["relations"])
-        except Exception: self.status.errors += 1
+            self._enqueue_fsevent(evt)
+        except Exception:
+            self.status.errors += 1

@@ -37,7 +37,8 @@ class TestIndexerConfig(unittest.TestCase):
         )
         
         indexer = Indexer(cfg, self.db)
-        indexer._scan_once()
+        indexer.scan_once()
+        indexer.stop()
         
         paths = self.db.get_all_file_paths()
         self.assertIn("normal.py", paths)
@@ -63,7 +64,8 @@ class TestIndexerConfig(unittest.TestCase):
         )
         
         indexer = Indexer(cfg, self.db)
-        indexer._scan_once()
+        indexer.scan_once()
+        indexer.stop()
         
         paths = self.db.get_all_file_paths()
         self.assertIn("small.txt", paths)
@@ -82,6 +84,10 @@ class TestIndexerConfig(unittest.TestCase):
             # Should not raise exception
             logger.log_telemetry("this should fail gracefully")
         finally:
+            try:
+                logger.stop()
+            except Exception:
+                pass
             os.chmod(readonly_dir, 0o777)
 
 if __name__ == "__main__":

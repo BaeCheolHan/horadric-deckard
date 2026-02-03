@@ -83,6 +83,13 @@ class LocalSearchDB:
         conn.execute("PRAGMA busy_timeout=2000;")
         conn.execute("PRAGMA cache_size=-20000;")
 
+    def open_writer_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.create_function("deckard_decompress", 1, _decompress)
+        self._apply_pragmas(conn)
+        return conn
+
     @property
     def fts_enabled(self) -> bool:
         return self._fts_enabled
@@ -93,6 +100,111 @@ class LocalSearchDB:
                 c.close()
             except Exception:
                 pass
+
+    # ----------------------------
+    # Transaction-safe *_tx methods (no commit/rollback here)
+    # ----------------------------
+
+    def upsert_files_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple[str, str, int, int, str, int]]) -> int:
+        rows_list = []
+        for r in rows:
+            compressed_content = _compress(r[4])
+            rows_list.append((r[0], r[1], r[2], r[3], compressed_content, r[5]))
+        if not rows_list:
+            return 0
+        cur.executemany(
+            """
+            INSERT INTO files(path, repo, mtime, size, content, last_seen)
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(path) DO UPDATE SET
+              repo=excluded.repo,
+              mtime=excluded.mtime,
+              size=excluded.size,
+              content=excluded.content,
+              last_seen=excluded.last_seen
+            WHERE excluded.mtime >= files.mtime;
+            """,
+            rows_list,
+        )
+        # Clear old symbols for updated paths to ensure consistency (v2.8.0)
+        cur.executemany("DELETE FROM symbols WHERE path = ?", [(r[0],) for r in rows_list])
+        return len(rows_list)
+
+    def upsert_symbols_tx(self, cur: sqlite3.Cursor, symbols: Iterable[tuple]) -> int:
+        if hasattr(symbols, "symbols"):
+            symbols_list = list(getattr(symbols, "symbols"))
+        else:
+            symbols_list = list(symbols)
+        if not symbols_list:
+            return 0
+        normalized = []
+        for s in symbols_list:
+            if len(s) == 7:
+                normalized.append(s + ("{}", ""))
+            elif len(s) == 9:
+                normalized.append(s)
+            else:
+                tmp = list(s) + [""] * (9 - len(s))
+                normalized.append(tuple(tmp[:9]))
+        symbols_list = normalized
+        paths = {s[0] for s in symbols_list}
+        cur.executemany("DELETE FROM symbols WHERE path = ?", [(p,) for p in paths])
+        cur.executemany(
+            """
+            INSERT INTO symbols(path, name, kind, line, end_line, content, parent_name, metadata, docstring)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            """,
+            symbols_list,
+        )
+        return len(symbols_list)
+
+    def upsert_relations_tx(self, cur: sqlite3.Cursor, relations: Iterable[tuple[str, str, str, str, str, int]]) -> int:
+        rels_list = list(relations)
+        if not rels_list:
+            return 0
+        paths = {r[0] for r in rels_list}
+        cur.executemany("DELETE FROM symbol_relations WHERE from_path = ?", [(p,) for p in paths])
+        cur.executemany(
+            """
+            INSERT INTO symbol_relations(from_path, from_symbol, to_path, to_symbol, rel_type, line)
+            VALUES(?,?,?,?,?,?)
+            """,
+            rels_list,
+        )
+        return len(rels_list)
+
+    def delete_path_tx(self, cur: sqlite3.Cursor, path: str) -> None:
+        # Explicit delete order: relations -> symbols -> files (no FK/cascade dependency)
+        cur.execute("DELETE FROM symbol_relations WHERE from_path = ? OR to_path = ?", (path, path))
+        cur.execute("DELETE FROM symbols WHERE path = ?", (path,))
+        cur.execute("DELETE FROM files WHERE path = ?", (path,))
+
+    def update_last_seen_tx(self, cur: sqlite3.Cursor, paths: Iterable[str], timestamp: int) -> int:
+        paths_list = list(paths)
+        if not paths_list:
+            return 0
+        cur.executemany(
+            "UPDATE files SET last_seen=? WHERE path=?",
+            [(timestamp, p) for p in paths_list],
+        )
+        return len(paths_list)
+
+    def upsert_repo_meta_tx(self, cur: sqlite3.Cursor, repo_name: str, tags: str = "", domain: str = "", description: str = "", priority: int = 0) -> None:
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO repo_meta (repo_name, tags, domain, description, priority)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (repo_name, tags, domain, description, priority)
+        )
+
+    def get_unseen_paths(self, timestamp_limit: int) -> list[str]:
+        with self._read_lock:
+            rows = self._read.execute(
+                "SELECT path FROM files WHERE last_seen < ?",
+                (timestamp_limit,),
+            ).fetchall()
+        return [str(r["path"]) for r in rows]
 
     def _try_enable_fts(self, conn: sqlite3.Connection) -> bool:
         try:
@@ -249,79 +361,27 @@ class LocalSearchDB:
                 )
 
     def upsert_files(self, rows: Iterable[tuple[str, str, int, int, str, int]]) -> int:
-        rows_list = []
-        for r in rows:
-            # r is (path, repo, mtime, size, content, last_seen)
-            compressed_content = _compress(r[4])
-            rows_list.append((r[0], r[1], r[2], r[3], compressed_content, r[5]))
-            
+        rows_list = list(rows)
         if not rows_list:
             return 0
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
-            # 1. Upsert files
-            cur.executemany(
-                """
-                INSERT INTO files(path, repo, mtime, size, content, last_seen)
-                VALUES(?,?,?,?,?,?)
-                ON CONFLICT(path) DO UPDATE SET
-                  repo=excluded.repo,
-                  mtime=excluded.mtime,
-                  size=excluded.size,
-                  content=excluded.content,
-                  last_seen=excluded.last_seen
-                WHERE excluded.mtime >= files.mtime;
-                """,
-                rows_list,
-            )
-            # 2. Clear old symbols for updated paths to ensure consistency (v2.8.0)
-            cur.executemany("DELETE FROM symbols WHERE path = ?", [(r[0],) for r in rows_list])
+            count = self.upsert_files_tx(cur, rows_list)
             self._write.commit()
-        return len(rows_list)
+        return count
 
     def upsert_symbols(self, symbols: Iterable[tuple]) -> int:
         """Upsert detected symbols (path, name, kind, line, end_line, content, parent_name, metadata, docstring)."""
-        if hasattr(symbols, "symbols"):
-            symbols_list = list(getattr(symbols, "symbols"))
-        else:
-            symbols_list = list(symbols)
+        symbols_list = list(getattr(symbols, "symbols", symbols))
         if not symbols_list:
             return 0
-        
-        # Normalize to 9-tuples (v2.7.0: compatibility with legacy tests)
-        normalized = []
-        for s in symbols_list:
-            if len(s) == 7:
-                # Legacy: (path, name, kind, line, end_line, content, parent_name)
-                normalized.append(s + ("{}", ""))
-            elif len(s) == 9:
-                normalized.append(s)
-            else:
-                # Fallback/Truncated
-                tmp = list(s) + [""] * (9 - len(s))
-                normalized.append(tuple(tmp[:9]))
-        
-        symbols_list = normalized
-        # Group by path to clear old symbols first
-        paths = {s[0] for s in symbols_list}
-        
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
-            
-            # Clear old symbols for these paths
-            cur.executemany("DELETE FROM symbols WHERE path = ?", [(p,) for p in paths])
-            
-            cur.executemany(
-                """
-                INSERT INTO symbols(path, name, kind, line, end_line, content, parent_name, metadata, docstring)
-                VALUES(?,?,?,?,?,?,?,?,?)
-                """,
-                symbols_list,
-            )
+            count = self.upsert_symbols_tx(cur, symbols_list)
             self._write.commit()
-        return len(symbols_list)
+        return count
 
     def get_symbol_block(self, path: str, name: str) -> Optional[dict[str, Any]]:
         """Get the full content block for a specific symbol (v2.7.0)."""
@@ -368,21 +428,12 @@ class LocalSearchDB:
         rels_list = list(relations)
         if not rels_list:
             return 0
-        
-        paths = {r[0] for r in rels_list}
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
-            cur.executemany("DELETE FROM symbol_relations WHERE from_path = ?", [(p,) for p in paths])
-            cur.executemany(
-                """
-                INSERT INTO symbol_relations(from_path, from_symbol, to_path, to_symbol, rel_type, line)
-                VALUES(?,?,?,?,?,?)
-                """,
-                rels_list,
-            )
+            count = self.upsert_relations_tx(cur, rels_list)
             self._write.commit()
-        return len(rels_list)
+        return count
 
     def update_last_seen(self, paths: Iterable[str], timestamp: int) -> int:
         """Update last_seen timestamp for existing files (v2.5.3)."""
@@ -392,12 +443,9 @@ class LocalSearchDB:
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
-            cur.executemany(
-                "UPDATE files SET last_seen=? WHERE path=?",
-                [(timestamp, p) for p in paths_list]
-            )
+            count = self.update_last_seen_tx(cur, paths_list, timestamp)
             self._write.commit()
-        return len(paths_list)
+        return count
 
     def delete_unseen_files(self, timestamp_limit: int) -> int:
         """Delete files that were not seen in the latest scan (v2.5.3)."""
@@ -483,13 +531,9 @@ class LocalSearchDB:
     def upsert_repo_meta(self, repo_name: str, tags: str = "", domain: str = "", description: str = "", priority: int = 0) -> None:
         """Upsert repository metadata (v2.4.3)."""
         with self._lock:
-            self._write.execute(
-                """
-                INSERT OR REPLACE INTO repo_meta (repo_name, tags, domain, description, priority)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (repo_name, tags, domain, description, priority)
-            )
+            cur = self._write.cursor()
+            cur.execute("BEGIN")
+            self.upsert_repo_meta_tx(cur, repo_name, tags, domain, description, priority)
             self._write.commit()
 
     def get_repo_meta(self, repo_name: str) -> Optional[dict[str, Any]]:
@@ -509,8 +553,7 @@ class LocalSearchDB:
         with self._lock:
             cur = self._write.cursor()
             cur.execute("BEGIN")
-            cur.execute("DELETE FROM symbols WHERE path = ?", (path,))
-            cur.execute("DELETE FROM files WHERE path = ?", (path,))
+            self.delete_path_tx(cur, path)
             self._write.commit()
 
     def list_files(

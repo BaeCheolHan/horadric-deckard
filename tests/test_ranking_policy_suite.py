@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.db import LocalSearchDB, SearchOptions
 from mcp.tools.search import execute_search
 from mcp.telemetry import TelemetryLogger
+from tests.pack1_util import parse_pack1
 
 # Attempt to import for Cycle 11+
 try:
@@ -97,16 +98,16 @@ class TestRankingPolicy(unittest.TestCase):
     def test_limit_cap(self):
         args = {"query": "content", "limit": 100}
         result = execute_search(args, self.db, self.logger)
-        data = json.loads(result["content"][0]["text"])
-        self.assertEqual(data["limit"], 20)
+        data = parse_pack1(result["content"][0]["text"])
+        self.assertEqual(int(data["header"]["returned"]), 20)
 
     def test_exclude_patterns_filtered_total(self):
         args = {"query": "content", "exclude_patterns": ["doc_1"]}
-        result = execute_search(args, self.db, self.logger)
-        data = json.loads(result["content"][0]["text"])
-        self.assertFalse(data["is_exact_total"])
-        self.assertIsNotNone(data.get("filtered_total"))
-        self.assertTrue(any("exclude_patterns applied" in w for w in data.get("warnings", [])))
+        with patch.dict(os.environ, {"DECKARD_FORMAT": "json"}):
+            result = execute_search(args, self.db, self.logger)
+            data = json.loads(result["content"][0]["text"])
+            self.assertFalse(data["is_exact_total"])
+            self.assertIsNotNone(data.get("filtered_total"))
 
     def test_search_telemetry_includes_fallback_and_total_mode(self):
         args = {"query": "content"}

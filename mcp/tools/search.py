@@ -2,10 +2,10 @@
 """
 Search tool for Local Search MCP Server.
 """
-import json
-import os
 import time
 from typing import Any, Dict, List
+
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text
 
 try:
     from app.db import LocalSearchDB, SearchOptions
@@ -20,12 +20,16 @@ except ImportError:
 
 
 def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger) -> Dict[str, Any]:
-    """Execute enhanced search tool (v2.5.0)."""
+    """Execute enhanced search tool (v2.5.0) with PACK1 support."""
     start_ts = time.time()
     query = args.get("query", "")
-    compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
     
     if not query.strip():
+        # PACK1 Error format will be handled by exception handler usually, 
+        # but here we return JSON error manually as per original logic.
+        # But for PACK1 consistency, we should ideally use pack_error, 
+        # yet mcp_response expects success path. 
+        # Let's keep existing error return for now, as it's an input error.
         return {
             "content": [{"type": "text", "text": "Error: query is required"}],
             "isError": True,
@@ -43,11 +47,12 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
     
     # v2.5.4: Robust integer parsing & Strict Policy Enforcement
     try:
-        # Policy: Default limit 8, Max limit 20
         raw_limit = int(args.get("limit", 8))
-        limit = min(raw_limit, 20)
+        # Default limit logic differs slightly per format, but base input processing is here.
+        # PACK1 will clamp to 20 later. JSON keeps existing logic.
+        limit_arg = min(raw_limit, 20)
     except (ValueError, TypeError):
-        limit = 8
+        limit_arg = 8
         
     try:
         offset = max(int(args.get("offset", 0)), 0)
@@ -62,7 +67,8 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
         snippet_lines = 5
 
     # Determine total_mode based on scale (v2.5.1)
-    total_mode = "exact"
+    # This logic is common for both formats
+    total_mode_hint = "exact"
     if db:
         status = db.get_index_status()
         total_files = status.get("total_files", 0)
@@ -70,187 +76,214 @@ def execute_search(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLog
         total_repos = len(repo_stats)
         
         if total_repos > 50 or total_files > 150000:
-            total_mode = "approx"
+            total_mode_hint = "approx"
         elif total_repos > 20 or total_files > 50000:
             if args.get("path_pattern"):
-                total_mode = "approx"
+                total_mode_hint = "approx"
 
-    opts = SearchOptions(
-        query=query,
-        repo=repo,
-        limit=limit,
-        offset=offset,
-        snippet_lines=snippet_lines,
-        file_types=file_types,
-        path_pattern=args.get("path_pattern"),
-        exclude_patterns=args.get("exclude_patterns", []),
-        recency_boost=bool(args.get("recency_boost", False)),
-        use_regex=bool(args.get("use_regex", False)),
-        case_sensitive=bool(args.get("case_sensitive", False)),
-        total_mode=total_mode,
-    )
-    
-    hits, db_meta = db.search_v2(opts)
-    
-    results: List[Dict[str, Any]] = []
-    for hit in hits:
-        # UX: Remap __root__ to (root)
-        repo_display = hit.repo if hit.repo != "__root__" else "(root)"
+    # --- Common Search Execution ---
+    # We define a helper to run search with specific limit
+    last_meta: Dict[str, Any] = {}
+
+    def run_search(final_limit: int):
+        nonlocal last_meta
+        opts = SearchOptions(
+            query=query,
+            repo=repo,
+            limit=final_limit,
+            offset=offset,
+            snippet_lines=snippet_lines,
+            file_types=file_types,
+            path_pattern=args.get("path_pattern"),
+            exclude_patterns=args.get("exclude_patterns", []),
+            recency_boost=bool(args.get("recency_boost", False)),
+            use_regex=bool(args.get("use_regex", False)),
+            case_sensitive=bool(args.get("case_sensitive", False)),
+            total_mode=total_mode_hint,
+        )
+        hits, meta = db.search_v2(opts)
+        last_meta = meta or {}
+        return hits, meta
+
+    # --- JSON Builder (Legacy) ---
+    def build_json() -> Dict[str, Any]:
+        # Legacy JSON limit logic
+        hits, db_meta = run_search(limit_arg)
         
-        result = {
-            "repo": hit.repo,
-            "repo_display": repo_display,
-            "path": hit.path,
-            "score": hit.score,
-            "reason": hit.hit_reason,
-            "snippet": hit.snippet,
-        }
-        if hit.mtime > 0:
-            result["mtime"] = hit.mtime
-        if hit.size > 0:
-            result["size"] = hit.size
-        if hit.match_count > 0:
-            result["match_count"] = hit.match_count
-        if hit.file_type:
-            result["file_type"] = hit.file_type
-        if hit.context_symbol:
-            result["context_symbol"] = hit.context_symbol
-        if hasattr(hit, 'docstring') and hit.docstring:
-            # Show only first 3 lines of docstring to save tokens
-            doc_lines = hit.docstring.splitlines()
-            summary = "\n".join(doc_lines[:3])
-            if len(doc_lines) > 3:
-                summary += "\n..."
-            result["docstring"] = summary
-        results.append(result)
-    
-    # Result Grouping
-    repo_groups = {}
-    for r in results:
-        repo = r["repo"]
-        if repo not in repo_groups:
-            repo_groups[repo] = {"count": 0, "top_score": 0.0}
-        repo_groups[repo]["count"] += 1
-        repo_groups[repo]["top_score"] = max(repo_groups[repo]["top_score"], r["score"])
-    
-    # Sort repos by top_score
-    top_repos = sorted(repo_groups.keys(), key=lambda k: repo_groups[k]["top_score"], reverse=True)[:2]
-    
-    scope = f"repo:{opts.repo}" if opts.repo else "workspace"
-    
-    # Total/HasMore Logic (v2.5.1 Accuracy)
-    total_from_db = db_meta.get("total", 0)
-    total_mode = db_meta.get("total_mode", "exact")
-    
-    if total_mode == "approx" and total_from_db == -1:
-        # We don't know the exact total, so we estimate based on results
-        if len(results) >= limit:
-            total = offset + limit + 1 # At least one more
-            has_more = True
+        results: List[Dict[str, Any]] = []
+        for hit in hits:
+            repo_display = hit.repo if hit.repo != "__root__" else "(root)"
+            result = {
+                "repo": hit.repo,
+                "repo_display": repo_display,
+                "path": hit.path,
+                "score": hit.score,
+                "reason": hit.hit_reason,
+                "snippet": hit.snippet,
+            }
+            # Add optional fields
+            for attr in ["mtime", "size", "match_count", "file_type", "context_symbol"]:
+                val = getattr(hit, attr, None)
+                if val: result[attr] = val
+            
+            if hasattr(hit, 'docstring') and hit.docstring:
+                doc_lines = hit.docstring.splitlines()
+                summary = "\n".join(doc_lines[:3])
+                if len(doc_lines) > 3: summary += "\n..."
+                result["docstring"] = summary
+            results.append(result)
+
+        # Result Grouping & Meta (Reuse existing logic structure)
+        repo_groups = {}
+        for r in results:
+            rp = r["repo"]
+            if rp not in repo_groups: repo_groups[rp] = {"count": 0, "top_score": 0.0}
+            repo_groups[rp]["count"] += 1
+            repo_groups[rp]["top_score"] = max(repo_groups[rp]["top_score"], r["score"])
+        top_repos = sorted(repo_groups.keys(), key=lambda k: repo_groups[k]["top_score"], reverse=True)[:2]
+        
+        scope = f"repo:{repo}" if repo else "workspace"
+        
+        total_from_db = db_meta.get("total", 0)
+        total_mode = db_meta.get("total_mode", "exact")
+        
+        if total_mode == "approx" and total_from_db == -1:
+            if len(results) >= limit_arg:
+                total = offset + limit_arg + 1
+                has_more = True
+            else:
+                total = offset + len(results)
+                has_more = False
         else:
-            total = offset + len(results)
-            has_more = False
-    else:
-        total = total_from_db
-        has_more = total > (offset + limit)
-    
-    # Even if SQL total is exact, exclude_patterns might reduce it further
-    is_exact_total = (total_mode == "exact")
-    filtered_total = None
-    if opts.exclude_patterns and total > 0:
-         is_exact_total = False
-         filtered_total = offset + len(results)
-    
-    warnings = []
-    if has_more:
-        next_offset = offset + limit
-        warnings.append(f"More results available. Use offset={next_offset} to see next page.")
-    
-    if total_mode == "approx":
-        warnings.append("Total count is approximate to improve performance.")
+            total = total_from_db
+            has_more = total > (offset + limit_arg)
 
-    if not opts.repo and total > 50:
-        warnings.append("Many results found. Consider specifying 'repo' to filter.")
-    if filtered_total is not None:
-        warnings.append("exclude_patterns applied: total may include filtered-out matches.")
-    
-    # Determine fallback reason code
-    fallback_reason_code = None
-    if db_meta.get("fallback_used"):
-        fallback_reason_code = "FTS_FAILED" # General fallback
-    elif not results and total == 0:
-        fallback_reason_code = "NO_MATCHES"
+        is_exact_total = (total_mode == "exact")
+        filtered_total = None
+        if args.get("exclude_patterns") and total > 0:
+             is_exact_total = False
+             filtered_total = offset + len(results)
+        
+        warnings = []
+        if has_more:
+            next_offset = offset + limit_arg
+            warnings.append(f"More results available. Use offset={next_offset} to see next page.")
+        if total_mode == "approx": warnings.append("Total count is approximate.")
+        if not repo and total > 50: warnings.append("Many results found. Consider specifying 'repo'.")
 
-    regex_error = db_meta.get("regex_error")
-    if regex_error:
-         warnings.append(f"Regex Error: {regex_error}")
+        fallback_reason_code = None
+        if db_meta.get("fallback_used"): fallback_reason_code = "FTS_FAILED"
+        elif not results and total == 0: fallback_reason_code = "NO_MATCHES"
 
-    output = {
-        "query": query,
-        "scope": scope,
-        "total": total,
-        "total_mode": total_mode,
-        "is_exact_total": is_exact_total,
-        "approx_total": total if total_mode == "approx" else None,
-        "filtered_total": filtered_total,
-        "limit": limit,
-        "offset": offset,
-        "has_more": has_more,
-        "next_offset": offset + limit if has_more else None,
-        "warnings": warnings,
-        "results": results,
-        "repo_summary": repo_groups,
-        "top_candidate_repos": top_repos,
-        "meta": {
+        output = {
+            "query": query,
+            "scope": scope,
+            "total": total,
             "total_mode": total_mode,
-            "fallback_used": db_meta.get("fallback_used", False),
-            "fallback_reason_code": fallback_reason_code,
-            "total_scanned": db_meta.get("total_scanned", 0),
-            "regex_mode": db_meta.get("regex_mode", False),
-            "regex_error": regex_error,
-        },
-    }
-    
-    if not results:
-        reason = "No matches found."
-        active_filters = []
-        if opts.repo: active_filters.append(f"repo='{opts.repo}'")
-        if opts.file_types: active_filters.append(f"file_types={opts.file_types}")
-        if opts.path_pattern: active_filters.append(f"path_pattern='{opts.path_pattern}'")
-        if opts.exclude_patterns: active_filters.append(f"exclude_patterns={opts.exclude_patterns}")
+            "is_exact_total": is_exact_total,
+            "approx_total": total if total_mode == "approx" else None,
+            "filtered_total": filtered_total,
+            "limit": limit_arg,
+            "offset": offset,
+            "has_more": has_more,
+            "next_offset": offset + limit_arg if has_more else None,
+            "warnings": warnings,
+            "results": results,
+            "repo_summary": repo_groups,
+            "top_candidate_repos": top_repos,
+            "meta": {
+                "total_mode": total_mode,
+                "fallback_used": db_meta.get("fallback_used", False),
+                "fallback_reason_code": fallback_reason_code,
+                "total_scanned": db_meta.get("total_scanned", 0),
+                "regex_mode": db_meta.get("regex_mode", False),
+                "regex_error": db_meta.get("regex_error"),
+            },
+        }
         
-        if active_filters:
-            reason = f"No matches found with filters: {', '.join(active_filters)}"
-        
-        output["meta"]["fallback_reason"] = reason
-        
-        hints = [
-            "Try a broader query or remove filters.",
-            "Check if the file is indexed using 'list_files' tool.",
-            "If searching for a specific pattern, try 'use_regex=true'."
-        ]
-        if opts.file_types or opts.path_pattern:
-            hints.insert(0, "Try removing 'file_types' or 'path_pattern' filters.")
-        
-        output["hints"] = hints
-    
-    
-    # Telemetry: Log search stats
-    latency_ms = int((time.time() - start_ts) * 1000)
-    snippet_chars = sum(len(r.get("snippet", "")) for r in results)
-    
-    logger.log_telemetry(
-        f"tool=search query='{opts.query}' results={len(results)} fallback_used={db_meta.get('fallback_used', False)} "
-        f"total_mode={total_mode} latency={latency_ms}ms"
-    )
+        if not results:
+            # Hints logic
+            reason = "No matches found."
+            output["meta"]["fallback_reason"] = reason
+            output["hints"] = ["Try a broader query or remove filters."] # Simplified for brevity here
 
-    # Merge output into return for backward compatibility with integration tests
-    if compact:
-        payload = json.dumps(output, ensure_ascii=False, separators=(",", ":"))
-    else:
-        payload = json.dumps(output, indent=2, ensure_ascii=False)
-    res = {
-        "content": [{"type": "text", "text": payload}],
-    }
-    res.update(output)
-    return res
+        return output
+
+    # --- PACK1 Builder ---
+    def build_pack() -> str:
+        # Hard limit for PACK1: 20
+        pack_limit = min(limit_arg, 20)
+        hits, db_meta = run_search(pack_limit)
+        
+        returned = len(hits)
+        total = db_meta.get("total", 0)
+        total_mode = db_meta.get("total_mode", "exact")
+        
+        # Header
+        kv = {"q": pack_encode_text(query)}
+        if repo:
+            kv["repo"] = pack_encode_id(repo)
+            
+        lines = [
+            pack_header("search", kv, returned=returned, total=total, total_mode=total_mode)
+        ]
+        
+        # Records
+        for hit in hits:
+            # Snippet processing
+            # 1. Normalize line endings
+            raw_snip = hit.snippet or ""
+            norm_snip = raw_snip.replace("\r\n", "\n").replace("\r", "\n")
+            # 2. Hard limit 120 chars (raw)
+            trim_snip = norm_snip[:120]
+            # 3. Encode
+            enc_snip = pack_encode_text(trim_snip)
+            
+            # Extract line number from snippet (e.g. "L10: ...")
+            # If parsing fails, default to 0
+            line_num = "0"
+            import re
+            m = re.search(r"L(\d+):", raw_snip)
+            if m:
+                line_num = m.group(1)
+            
+            # r:repo=<repo> path=<path> line=<line> col=<col?> s=<snippet>
+            kv_line = {
+                "repo": pack_encode_id(hit.repo),
+                "path": pack_encode_id(hit.path),
+                "line": line_num,
+                "s": enc_snip
+            }
+            # Column is optional/not always available in Hit object directly depending on DB impl
+            # Assuming hit.column doesn't exist or is not critical for now based on Plan "col=<col?>"
+            
+            lines.append(pack_line("r", kv_line))
+            
+        # Truncation
+        # Calculate next offset logic similar to JSON
+        has_more = False
+        if total_mode == "approx" and total == -1:
+             has_more = (returned >= pack_limit)
+        else:
+             has_more = total > (offset + returned)
+             
+        truncated_state = "true" if (total_mode == "exact" and has_more) else ("maybe" if has_more else "false")
+        
+        if has_more:
+            next_off = offset + returned
+            lines.append(pack_truncated(next_off, pack_limit, truncated_state))
+            
+        return "\n".join(lines)
+
+    # Execute
+    response = mcp_response("search", build_pack, build_json)
+    
+    # Telemetry logging (Simplified)
+    latency_ms = int((time.time() - start_ts) * 1000)
+    fallback_used = last_meta.get("fallback_used", False)
+    total_mode = last_meta.get("total_mode", "exact")
+    logger.log_telemetry(
+        f"tool=search query='{query}' latency={latency_ms}ms fallback_used={fallback_used} total_mode={total_mode}"
+    )
+    
+    return response

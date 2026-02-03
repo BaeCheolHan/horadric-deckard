@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from app.db import LocalSearchDB, SearchOptions
 from mcp.telemetry import TelemetryLogger
+from tests.telemetry_helpers import read_log_with_retry
 
 class TestFinalPolish(unittest.TestCase):
     def setUp(self):
@@ -66,10 +67,11 @@ class TestFinalPolish(unittest.TestCase):
         
         test_msg = "test telemetry message"
         logger.log_telemetry(test_msg)
+        logger.stop()
         
         log_file = log_dir / "deckard.log"
         self.assertTrue(log_file.exists())
-        content = log_file.read_text()
+        content = read_log_with_retry(log_dir)
         self.assertIn(test_msg, content)
 
 if __name__ == "__main__":

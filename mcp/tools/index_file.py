@@ -1,4 +1,11 @@
+import time
 from typing import Any, Dict
+
+try:
+    from app.queue_pipeline import FsEvent, FsEventKind
+except Exception:
+    FsEvent = None
+    FsEventKind = None
 
 def execute_index_file(args: Dict[str, Any], indexer: Any) -> Dict[str, Any]:
     """Force immediate re-indexing of a specific file."""
@@ -11,10 +18,11 @@ def execute_index_file(args: Dict[str, Any], indexer: Any) -> Dict[str, Any]:
 
     try:
         # Trigger watcher event logic which handles upsert/delete
-        indexer._process_watcher_event(path)
-        # If queue is enabled, we might need to flush it (optional)
-        if hasattr(indexer, "queue") and indexer.queue:
-            pass
+        if FsEvent and FsEventKind:
+            evt = FsEvent(kind=FsEventKind.MODIFIED, path=path, dest_path=None, ts=time.time())
+            indexer._process_watcher_event(evt)
+        else:
+            indexer._process_watcher_event(path)
              
         return {
             "success": True,

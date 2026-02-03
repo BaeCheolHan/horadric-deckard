@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import unittest
 import os
+import time
 
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -36,6 +37,24 @@ class TestRound3(unittest.TestCase):
             commit_batch_size=100
         )
         cls.indexer = Indexer(cls.cfg, cls.db)
+        cls.indexer._start_pipeline()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.indexer.stop()
+        except Exception:
+            pass
+        cls.db.close()
+
+    def _wait_for_meta(self, path, timeout=2.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            meta = self.db.get_file_meta(path)
+            if meta:
+                return meta
+            time.sleep(0.05)
+        return None
 
     def test_3_1_api_search_integration(self):
         # Index a sample controller
@@ -64,7 +83,7 @@ class TestRound3(unittest.TestCase):
         # Verify in DB
         # Note: Indexer._process_watcher_event uses relative path
         rel_path = str(new_file.relative_to(repo_root))
-        meta = self.db.get_file_meta(rel_path)
+        meta = self._wait_for_meta(rel_path)
         self.assertIsNotNone(meta)
 
 if __name__ == "__main__":

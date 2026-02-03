@@ -42,7 +42,8 @@ class TestIndexerStreamingScan(unittest.TestCase):
         )
 
         indexer = Indexer(cfg, self.db)
-        indexer._scan_once()
+        indexer.scan_once()
+        indexer.stop()
 
         self.assertEqual(indexer.status.scanned_files, 2)
         paths = self.db.get_all_file_paths()

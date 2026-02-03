@@ -1,5 +1,6 @@
 from typing import Any, Dict
 from app.db import LocalSearchDB
+from mcp.tools._util import mcp_response, pack_header, pack_line, pack_truncated, pack_encode_id, pack_encode_text
 
 def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB) -> Dict[str, Any]:
     """
@@ -10,38 +11,52 @@ def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB) -> Dict[str,
         db: LocalSearchDB instance
     """
     query = args.get("query", "")
-    limit = args.get("limit", 20)
+    limit_arg = int(args.get("limit", 20))
     
-    results = db.search_symbols(query, limit=limit)
-    
-    if not results:
+    # --- JSON Builder (Legacy/Debug) ---
+    def build_json() -> Dict[str, Any]:
+        results = db.search_symbols(query, limit=limit_arg)
         return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"No symbols found matching '{query}'"
-                }
-            ]
+            "query": query,
+            "count": len(results),
+            "symbols": results
         }
+
+    # --- PACK1 Builder ---
+    def build_pack() -> str:
+        # Hard limit for PACK1: 50
+        pack_limit = min(limit_arg, 50)
         
-    # Format output
-    lines = []
-    lines.append(f"Found {len(results)} symbols matching '{query}':\n")
-    
-    current_repo = None
-    for r in results:
-        if r["repo"] != current_repo:
-            current_repo = r["repo"]
-            lines.append(f"\n📁 Repository: {current_repo}")
-            
-        lines.append(f"- [{r['kind']}] {r['name']} ({r['path']}:{r['line']})")
-        lines.append(f"  Snippet: {r['snippet']}")
+        results = db.search_symbols(query, limit=pack_limit)
+        returned = len(results)
         
-    return {
-        "content": [
-            {
-                "type": "text",
-                "text": "\n".join(lines)
-            }
+        # Header
+        # Note: search_symbols DB query typically doesn't return total count currently
+        kv = {"q": pack_encode_text(query), "limit": pack_limit}
+        lines = [
+            pack_header("search_symbols", kv, returned=returned, total_mode="none")
         ]
-    }
+        
+        # Records
+        for r in results:
+            # h:repo=<repo> path=<path> line=<line> kind=<kind> name=<name>
+            # repo, path, name, kind => ENC_ID (identifiers)
+            kv_line = {
+                "repo": pack_encode_id(r["repo"]),
+                "path": pack_encode_id(r["path"]),
+                "line": str(r["line"]),
+                "kind": pack_encode_id(r["kind"]),
+                "name": pack_encode_id(r["name"])
+            }
+            lines.append(pack_line("h", kv_line))
+            
+        # Truncation
+        # Since we don't know total, if we hit the limit, we say truncated=maybe
+        if returned >= pack_limit:
+            # next offset is unknown/not supported by simple symbol search usually, 
+            # but we follow the format. offset=returned is best guess if paginated.
+            lines.append(pack_truncated(returned, pack_limit, "maybe"))
+            
+        return "\n".join(lines)
+
+    return mcp_response("search_symbols", build_pack, build_json)

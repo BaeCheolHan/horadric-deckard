@@ -9,6 +9,7 @@ from pathlib import Path
 from app.indexer import Indexer
 from app.config import Config
 from app.db import LocalSearchDB
+from app.queue_pipeline import FsEvent, FsEventKind
 
 class TestIndexerDeepDive(unittest.TestCase):
     """
@@ -24,6 +25,7 @@ class TestIndexerDeepDive(unittest.TestCase):
         # Default config for matrix
         self._set_config()
         self.indexer = Indexer(self.cfg, self.db)
+        self.indexer._start_pipeline()
 
     def _set_config(self, **kwargs):
         base = {
@@ -74,7 +76,7 @@ class TestIndexerDeepDive(unittest.TestCase):
                     path.write_text(text, encoding="utf-8")
                     
                     # Notify indexer
-                    self.indexer._process_watcher_event(str(path))
+                    self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(path), ts=time.time()))
 
         # Wait for ingestion thread (Wait up to 15 seconds for 200 files)
         start = time.time()
@@ -113,13 +115,13 @@ class TestIndexerDeepDive(unittest.TestCase):
             p = self.workspace / f"churn_{i}.py"
             p.write_text("v0")
             files.append(p)
-            self.indexer._process_watcher_event(str(p))
+            self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p), ts=time.time()))
 
         # Rapidly spam updates
         for version in range(1, 11):
             for p in files:
                 p.write_text(f"version_{version}")
-                self.indexer._process_watcher_event(str(p))
+                self.indexer._process_watcher_event(FsEvent(FsEventKind.MODIFIED, str(p), ts=time.time()))
 
         # Wait for stabilize
         time.sleep(5)
@@ -141,12 +143,12 @@ class TestIndexerDeepDive(unittest.TestCase):
         # 1. Latin-1 file
         p1 = self.workspace / "latin1.txt"
         p1.write_bytes(b"\xe9\xe0\xf1") # é à ñ in Latin-1
-        self.indexer._process_watcher_event(str(p1))
+        self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p1), ts=time.time()))
         
         # 2. Binary-like (with null bytes)
         p2 = self.workspace / "maybe_binary.py"
         p2.write_bytes(b"print('hello')\0\0\0" + b"A" * 100)
-        self.indexer._process_watcher_event(str(p2))
+        self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(p2), ts=time.time()))
         
         time.sleep(2)
         # Should be indexed (with errors='ignore')
@@ -160,7 +162,7 @@ class TestIndexerDeepDive(unittest.TestCase):
         d.mkdir()
         for i in range(50):
             (d / f"kill_{i}.py").write_text("pass")
-            self.indexer._process_watcher_event(str(d / f"kill_{i}.py"))
+            self.indexer._process_watcher_event(FsEvent(FsEventKind.CREATED, str(d / f"kill_{i}.py"), ts=time.time()))
             
         time.sleep(3)
         self.assertEqual(self.db.count_files(), 50)
@@ -169,7 +171,7 @@ class TestIndexerDeepDive(unittest.TestCase):
         for i in range(50):
             p = d / f"kill_{i}.py"
             p.unlink()
-            self.indexer._process_watcher_event(str(p))
+            self.indexer._process_watcher_event(FsEvent(FsEventKind.DELETED, str(p), ts=time.time()))
             
         time.sleep(3)
         self.assertEqual(self.db.count_files(), 0)

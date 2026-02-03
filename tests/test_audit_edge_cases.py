@@ -8,6 +8,7 @@ from app.indexer import _redact, Indexer
 from app.config import Config
 from app.db import LocalSearchDB
 from mcp.telemetry import TelemetryLogger
+from tests.telemetry_helpers import read_log_with_retry
 
 class TestAuditEdgeCases(unittest.TestCase):
     def setUp(self):
@@ -20,6 +21,10 @@ class TestAuditEdgeCases(unittest.TestCase):
         self.logger = TelemetryLogger(self.log_dir)
 
     def tearDown(self):
+        try:
+            self.logger.stop()
+        except Exception:
+            pass
         self.db.close()
         shutil.rmtree(self.tmp_dir)
 
@@ -48,16 +53,16 @@ class TestAuditEdgeCases(unittest.TestCase):
         )
         
         indexer = Indexer(cfg, self.db)
-        indexer._scan_once()
+        indexer.scan_once()
+        indexer.stop()
         
         self.assertEqual(self.db.count_files(), 0)
 
     def test_telemetry_format(self):
         """Case 4: Telemetry log format"""
         self.logger.log_info("test message")
-        log_file = self.log_dir / "deckard.log"
-        self.assertTrue(log_file.exists())
-        content = log_file.read_text()
+        self.logger.stop()
+        content = read_log_with_retry(self.log_dir)
         self.assertIn("[INFO] test message", content)
         # Check ISO timestamp format roughly [2026-...]
         self.assertTrue(content.startswith("[202"))
@@ -79,7 +84,8 @@ class TestAuditEdgeCases(unittest.TestCase):
         )
         
         indexer = Indexer(cfg, self.db)
-        indexer._scan_once()
+        indexer.scan_once()
+        indexer.stop()
         
         paths = self.db.get_all_file_paths()
         self.assertIn("keep.py", paths)
