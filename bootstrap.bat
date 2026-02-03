@@ -84,6 +84,14 @@ if exist "%ROOT_DIR%\.git" (
     )
 )
 
+:: Check if sari.__main__ exists; fallback to deckard if missing
+"%PY%" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('sari.__main__') else 1)" >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    set "RUN_MOD=sari"
+) else (
+    set "RUN_MOD=deckard"
+)
+
 :: Argument loop for --workspace-root
 set "ARGS="
 :argparse
@@ -100,9 +108,9 @@ goto argparse
 
 :run
 if "%ARGS%"=="" (
-    "%PY%" -m sari
+    "%PY%" -m %RUN_MOD%
 ) else (
-    "%PY%" -m sari --cmd %ARGS%
+    "%PY%" -m %RUN_MOD% --cmd %ARGS%
 )
 
 endlocal

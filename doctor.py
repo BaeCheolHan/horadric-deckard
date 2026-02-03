@@ -23,6 +23,11 @@ if str(REPO_ROOT) not in sys.path:
 from app.db import LocalSearchDB
 from app.workspace import WorkspaceManager
 from app.registry import ServerRegistry
+try:
+    from mcp.cli import get_daemon_address
+except ImportError:
+    sys.path.insert(0, str(REPO_ROOT))
+    from mcp.cli import get_daemon_address
 
 RED = "\033[31m"
 GREEN = "\033[32m"

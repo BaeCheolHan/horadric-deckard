@@ -148,8 +148,22 @@ fi
 echo "[Sari] Starting (v${DECKARD_VERSION:-dev})..." >&2
 
 # Run entrypoint (default to MCP stdio server if no args)
-if [ $# -eq 0 ]; then
-    exec python3 -m sari
+python3 - <<'PY'
+import importlib.util
+raise SystemExit(0 if importlib.util.find_spec("sari.__main__") is not None else 1)
+PY
+HAS_SARI_MAIN=$?
+
+if [ "$HAS_SARI_MAIN" -eq 0 ]; then
+    if [ $# -eq 0 ]; then
+        exec python3 -m sari
+    else
+        exec python3 -m sari "$@"
+    fi
 else
-    exec python3 -m sari "$@"
+    if [ $# -eq 0 ]; then
+        exec python3 -m deckard
+    else
+        exec python3 -m deckard "$@"
+    fi
 fi
