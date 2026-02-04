@@ -108,14 +108,52 @@ python3 -m sari --transport stdio
 
 `env` 섹션에 환경 변수를 추가하여 동작을 제어할 수 있습니다.
 
+### 1. 코어 및 시스템 (Core & System)
+기본적인 동작을 위한 필수 설정입니다.
+
 | 변수명 | 설명 | 기본값 |
 |--------|------|--------|
-| `DECKARD_WORKSPACE_ROOT` | **(필수 권장)** 프로젝트 최상위 루트 경로. | 자동 감지 |
+| `DECKARD_WORKSPACE_ROOT` | **(필수 권장)** 프로젝트 최상위 루트 경로. 생략 시 자동 감지하지만 명시하는 것이 좋습니다. | 자동 감지 |
 | `SARI_ROOTS_JSON` | 여러 개의 루트를 등록할 때 사용합니다. JSON 배열 문자열 예: `["/path/a", "/path/b"]` | - |
+| `DECKARD_DB_PATH` | SQLite 인덱스 DB 파일의 경로를 직접 지정합니다. | `~/.local/share/sari/data/<hash>/index.db` |
+| `DECKARD_CONFIG` | 특정 설정 파일을 로드합니다. | `~/.config/sari/config.json` |
 | `DECKARD_RESPONSE_COMPACT` | 응답 JSON을 압축하여 LLM 토큰을 절약합니다. 디버깅 때는 `0`으로 끄세요. | `1` (켜짐) |
-| `DECKARD_DB_PATH` | SQLite 인덱스 DB 파일의 경로를 직접 지정합니다. | `~/.local/share/sari/data/...` |
-| `DECKARD_ENGINE_MODE` | 검색 엔진 백엔드. `embedded`(Tantivy)가 빠르고 정확합니다. `sqlite`(FTS5)는 호환성 모드입니다. | `embedded` |
+| `DECKARD_FORMAT` | CLI 도구 출력 형식. `pack`(텍스트) 또는 `json`. | `pack` |
+
+### 2. 검색 엔진 (Search Engine)
+검색 품질과 백엔드 동작을 튜닝합니다.
+
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `DECKARD_ENGINE_MODE` | 검색 백엔드. `embedded`(Tantivy)가 빠르고 정확합니다. `sqlite`(FTS5)는 호환성 모드입니다. | `embedded` |
+| `DECKARD_ENGINE_TOKENIZER` | 토크나이저 전략. `auto`(감지), `cjk`(한중일 최적화), `latin`(표준). | `auto` |
+| `DECKARD_ENGINE_AUTO_INSTALL` | 엔진 바이너리(Tantivy)가 없으면 자동으로 설치합니다. | `1` (켜짐) |
+| `DECKARD_ENGINE_SUGGEST_FILES`| 상태 체크 시 Tantivy 엔진 업그레이드를 제안하는 파일 수 임계값. | `10000` |
+| `DECKARD_LINDERA_DICT_PATH` | CJK 토큰화를 위한 커스텀 Lindera 사전 경로 (고급). | - |
+
+### 3. 인덱싱 및 성능 (Indexing & Performance)
+리소스 사용량과 동시성을 제어합니다.
+
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
 | `DECKARD_COALESCE_SHARDS` | 인덱싱 동시성 제어. 대규모 리포지토리(파일 10만 개 이상)에서는 늘리는 것이 좋습니다. | `16` |
+| `DECKARD_PARSE_TIMEOUT_SECONDS`| 파일당 파싱 제한 시간(초). `0`은 무제한. 파서 멈춤을 방지합니다. | `0` |
+| `DECKARD_PARSE_TIMEOUT_WORKERS`| 타임아웃 파싱을 위한 워커 스레드 수. | `2` |
+| `DECKARD_MAX_PARSE_BYTES` | 파싱을 시도할 최대 파일 크기(바이트). 더 큰 파일은 건너뛰거나 샘플링합니다. | `16MB` |
+| `DECKARD_MAX_AST_BYTES` | AST 추출을 시도할 최대 파일 크기(바이트). | `8MB` |
+| `DECKARD_GIT_CHECKOUT_DEBOUNCE`| Git 체크아웃 후 대량 인덱싱 시작 전 대기 시간(초). | `3.0` |
+| `DECKARD_FOLLOW_SYMLINKS` | 파일 스캔 시 심볼릭 링크를 따라갑니다. **주의:** 순환 링크가 있으면 무한 루프 위험이 있습니다. | `0` (꺼짐) |
+| `DECKARD_READ_MAX_BYTES` | `read_file` 도구가 반환하는 최대 바이트 수. 컨텍스트 초과 방지. | `1MB` |
+
+### 4. 네트워크 및 보안 (Network & Security)
+데몬 연결 설정입니다.
+
+| 변수명 | 설명 | 기본값 |
+|--------|------|--------|
+| `DECKARD_DAEMON_HOST` | 백그라운드 데몬 호스트 주소. | `127.0.0.1` |
+| `DECKARD_DAEMON_PORT` | 데몬 TCP 포트. | `47779` |
+| `DECKARD_HTTP_API_PORT` | HTTP API 서버 포트 (선택 사항). | `47777` |
+| `DECKARD_ALLOW_NON_LOOPBACK` | 로컬호스트가 아닌 IP 접속 허용. **보안 위험:** 신뢰할 수 있는 네트워크에서만 켜세요. | `0` (꺼짐) |
 
 ### 5. 설치 및 부트스트랩 (Installation & Bootstrapping)
 설치 및 시작 과정에 영향을 주는 설정입니다.
@@ -131,6 +169,9 @@ python3 -m sari --transport stdio
 
 | 변수명 | 설명 | 기본값 |
 |--------|------|--------|
+| `DECKARD_CALLGRAPH_PLUGIN` | 커스텀 정적 분석 플러그인을 위한 Python 모듈 경로. | - |
+| `DECKARD_DRYRUN_LINT` | `dry_run_diff` 도구에서 린터(ruff/eslint) 검사를 활성화합니다. | `0` |
+| `DECKARD_DLQ_POLL_SECONDS` | 실패한 인덱싱 작업 재시도 간격 (Dead Letter Queue). | `60` |
 | `DECKARD_LOG_LEVEL` | 로그 레벨 설정 (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `INFO` |
 
 ---
