@@ -8,6 +8,7 @@ import subprocess
 import logging
 import sys
 import tempfile
+import secrets
 from pathlib import Path
 
 # Add project root to sys.path for absolute imports
@@ -211,17 +212,19 @@ def forward_socket_to_stdout(sock, state):
             if not body:
                 break
 
-            suppress_ids = state.setdefault("suppress_ids", set())
-            if suppress_ids:
-                try:
-                    obj = json.loads(body.decode("utf-8"))
-                    if isinstance(obj, dict):
-                        msg_id = obj.get("id")
-                        if msg_id in suppress_ids:
-                            suppress_ids.discard(msg_id)
-                            continue
-                except Exception:
-                    pass
+            msg_id = None
+            try:
+                obj = json.loads(body.decode("utf-8"))
+                if isinstance(obj, dict):
+                    msg_id = obj.get("id")
+            except Exception:
+                msg_id = None
+            if msg_id is not None:
+                with state["suppress_lock"]:
+                    suppress_ids = state.setdefault("suppress_ids", set())
+                    if msg_id in suppress_ids:
+                        suppress_ids.discard(msg_id)
+                        continue
 
             mode = state.get("mode") or _MODE_FRAMED
             if mode == _MODE_JSONL:
@@ -322,9 +325,13 @@ def _reconnect(state) -> bool:
         if init_req:
             try:
                 internal = dict(init_req)
-                internal_id = -1
+                with state["suppress_lock"]:
+                    suppress_ids = state.setdefault("suppress_ids", set())
+                    internal_id = -secrets.randbelow(2**31 - 1) - 1
+                    while internal_id in suppress_ids:
+                        internal_id = -secrets.randbelow(2**31 - 1) - 1
+                    suppress_ids.add(internal_id)
                 internal["id"] = internal_id
-                state.setdefault("suppress_ids", set()).add(internal_id)
                 _send_payload(state, json.dumps(internal).encode("utf-8"), state.get("mode") or _MODE_FRAMED)
             except Exception as e:
                 _log_error(f"Reconnect initialize failed: {e}")
@@ -438,6 +445,7 @@ def main():
         "dead": False,
         "send_lock": threading.Lock(),
         "conn_lock": threading.Lock(),
+        "suppress_lock": threading.Lock(),
         "suppress_ids": set(),
         "init_request": None,
         "workspace_root": workspace_root,

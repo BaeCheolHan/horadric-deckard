@@ -2,6 +2,7 @@ import json
 import os
 import time
 import socket
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Optional, Any, Iterable
 
@@ -17,6 +18,7 @@ if os.environ.get("SARI_REGISTRY_FILE"):
 else:
     REGISTRY_DIR = Path.home() / ".local" / "share" / "sari"
     REGISTRY_FILE = REGISTRY_DIR / "server.json"
+LOCK_FILE = REGISTRY_DIR / "server.json.lock"
 
 
 class ServerRegistry:
@@ -46,6 +48,42 @@ class ServerRegistry:
         except Exception:
             data = {}
         return self._ensure_v2(data)
+
+    @contextmanager
+    def _registry_lock(self, exclusive: bool):
+        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOCK_FILE, "a+") as lockf:
+            if not IS_WINDOWS:
+                fcntl.flock(lockf, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+            try:
+                yield
+            finally:
+                if not IS_WINDOWS:
+                    fcntl.flock(lockf, fcntl.LOCK_UN)
+
+    def _load_unlocked(self) -> Dict[str, Any]:
+        try:
+            with open(REGISTRY_FILE, "r") as f:
+                return self._safe_load(f)
+        except FileNotFoundError:
+            return self._empty()
+
+    def _atomic_write(self, data: Dict[str, Any]) -> None:
+        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = REGISTRY_DIR / f"{REGISTRY_FILE.name}.tmp.{os.getpid()}.{int(time.time() * 1000)}"
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, REGISTRY_FILE)
+        except Exception:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+            raise
 
     def _ensure_v2(self, data: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(data, dict):
@@ -85,45 +123,19 @@ class ServerRegistry:
 
     def _load(self) -> Dict[str, Any]:
         """Load registry with shared lock."""
-        try:
-            with open(REGISTRY_FILE, "r") as f:
-                if not IS_WINDOWS:
-                    fcntl.flock(f, fcntl.LOCK_SH)
-                try:
-                    return self._safe_load(f)
-                finally:
-                    if not IS_WINDOWS:
-                        fcntl.flock(f, fcntl.LOCK_UN)
-        except FileNotFoundError:
-            return self._empty()
+        with self._registry_lock(exclusive=False):
+            return self._load_unlocked()
 
     def _save(self, data: Dict[str, Any]):
         """Save registry with exclusive lock."""
-        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        with open(REGISTRY_FILE, "w") as f:
-            if not IS_WINDOWS:
-                fcntl.flock(f, fcntl.LOCK_EX)
-            try:
-                json.dump(data, f, indent=2)
-            finally:
-                if not IS_WINDOWS:
-                    fcntl.flock(f, fcntl.LOCK_UN)
+        with self._registry_lock(exclusive=True):
+            self._atomic_write(data)
 
     def _update(self, updater) -> None:
-        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        with open(REGISTRY_FILE, "a+") as f:
-            if not IS_WINDOWS:
-                fcntl.flock(f, fcntl.LOCK_EX)
-            try:
-                f.seek(0)
-                data = self._safe_load(f)
-                updater(data)
-                f.seek(0)
-                json.dump(data, f, indent=2)
-                f.truncate()
-            finally:
-                if not IS_WINDOWS:
-                    fcntl.flock(f, fcntl.LOCK_UN)
+        with self._registry_lock(exclusive=True):
+            data = self._load_unlocked()
+            updater(data)
+            self._atomic_write(data)
 
     def _is_process_alive(self, pid: Optional[int]) -> bool:
         if not pid:
