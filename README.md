@@ -57,7 +57,7 @@ MCP 설정 파일에 아래 블록을 **직접 추가**하면, 실행 시 Sari�
 ```toml
 [mcp_servers.sari]
 command = "bash"
-args = ["-lc", "(curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"]
+args = ["-lc", "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"]
 env = { DECKARD_WORKSPACE_ROOT = "/path/to/workspace", DECKARD_RESPONSE_COMPACT = "1" }
 startup_timeout_sec = 60
 ```
@@ -117,7 +117,7 @@ startup_timeout_sec = 60
       "command": "bash",
       "args": [
         "-lc",
-        "(curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"
+        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"
       ],
       "env": {
         "DECKARD_WORKSPACE_ROOT": "/path/to/workspace",
@@ -579,7 +579,7 @@ Sari는 인덱싱 + FTS 기반 검색 구조라서 **“어떤 단계에서 쓰�
       "command": "bash",
       "args": [
         "-lc",
-        "(curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"
+        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"
       ],
       "env": {
         "DECKARD_WORKSPACE_ROOT": "/Users/[사용자명]/path/to/workspace",
@@ -594,7 +594,7 @@ Sari는 인덱싱 + FTS 기반 검색 구조라서 **“어떤 단계에서 쓰�
 ```toml
 [mcp_servers.sari]
 command = "bash"
-args = ["-lc", "(curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"]
+args = ["-lc", "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"]
 env = { DECKARD_WORKSPACE_ROOT = "/Users/[사용자명]/path/to/workspace", DECKARD_RESPONSE_COMPACT = "1" }
 startup_timeout_sec = 60
 ```
