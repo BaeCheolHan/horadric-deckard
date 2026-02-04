@@ -65,9 +65,10 @@ def get_daemon_address():
 
     try:
         workspace_root = os.environ.get("SARI_WORKSPACE_ROOT") or WorkspaceManager.resolve_workspace_root()
-        inst = ServerRegistry().get_instance(str(workspace_root))
+        inst = ServerRegistry().resolve_workspace_daemon(str(workspace_root))
         if inst and inst.get("port"):
-            return host, int(inst.get("port"))
+            inst_host = inst.get("host") or host
+            return inst_host, int(inst.get("port"))
     except Exception:
         pass
 
@@ -156,14 +157,27 @@ def _get_http_host_port(host_override: Optional[str] = None, port_override: Opti
             host = None
             port = None
 
-    # 2. Fallback to Config
+    # 2. Global registry (daemon-managed HTTP port)
+    try:
+        ws_info = ServerRegistry().get_workspace(str(workspace_root))
+        if ws_info:
+            reg_host = ws_info.get("http_host")
+            reg_port = ws_info.get("http_port")
+            if reg_host:
+                host = str(reg_host)
+            if reg_port:
+                port = int(reg_port)
+    except Exception:
+        pass
+
+    # 3. Fallback to Config
     cfg = _load_http_config(str(workspace_root)) or {}
     if not host:
         host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
     if port is None:
         port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
 
-    # 3. Environment overrides
+    # 4. Environment overrides
     if env_host:
         host = env_host
     if env_port:
@@ -172,7 +186,7 @@ def _get_http_host_port(host_override: Optional[str] = None, port_override: Opti
         except (TypeError, ValueError):
             pass
 
-    # 4. Explicit overrides
+    # 5. Explicit overrides
     if host_override:
         host = host_override
     if port_override is not None:
@@ -191,17 +205,114 @@ def _request_http(path: str, params: dict, host: Optional[str] = None, port: Opt
         return json.loads(r.read().decode("utf-8"))
 
 
-def is_daemon_running(host: str, port: int) -> bool:
-    """Check if daemon is running by attempting connection."""
+def _identify_sari_daemon(host: str, port: int, timeout: float = 0.3) -> Optional[Dict[str, Any]]:
+    """Return identify payload if the server speaks Sari MCP."""
     try:
-        with socket.create_connection((host, port), timeout=0.5):
-            return True
-    except (ConnectionRefusedError, OSError):
-        return False
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "sari/identify"}).encode("utf-8")
+            header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+            sock.sendall(header + body)
+
+            f = sock.makefile("rb")
+            headers = {}
+            while True:
+                line = f.readline()
+                if not line:
+                    return None
+                line = line.strip()
+                if not line:
+                    break
+                if b":" in line:
+                    k, v = line.split(b":", 1)
+                    headers[k.strip().lower()] = v.strip()
+
+            try:
+                content_length = int(headers.get(b"content-length", b"0"))
+            except ValueError:
+                return None
+            if content_length <= 0:
+                return None
+            resp_body = f.read(content_length)
+            if not resp_body:
+                return None
+            resp = json.loads(resp_body.decode("utf-8"))
+
+            result = resp.get("result") or {}
+            if result.get("name") == "sari":
+                return result
+    except Exception:
+        pass
+
+    # Legacy fallback: probe "ping" and accept "Server not initialized" error
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode("utf-8")
+            header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
+            sock.sendall(header + body)
+
+            f = sock.makefile("rb")
+            headers = {}
+            while True:
+                line = f.readline()
+                if not line:
+                    return None
+                line = line.strip()
+                if not line:
+                    break
+                if b":" in line:
+                    k, v = line.split(b":", 1)
+                    headers[k.strip().lower()] = v.strip()
+
+            try:
+                content_length = int(headers.get(b"content-length", b"0"))
+            except ValueError:
+                return None
+            if content_length <= 0:
+                return None
+            resp_body = f.read(content_length)
+            if not resp_body:
+                return None
+            resp = json.loads(resp_body.decode("utf-8"))
+            err = resp.get("error") or {}
+            msg = (err.get("message") or "").lower()
+            if "server not initialized" in msg:
+                return {"name": "sari", "version": "legacy", "protocolVersion": ""}
+    except Exception:
+        pass
+
+    return None
+
+
+def _probe_sari_daemon(host: str, port: int, timeout: float = 0.3) -> bool:
+    """Verify the server speaks Sari MCP (framed JSON-RPC)."""
+    return _identify_sari_daemon(host, port, timeout=timeout) is not None
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, port))
+            return False
+    except OSError:
+        return True
+
+
+def is_daemon_running(host: str, port: int) -> bool:
+    """Check if a Sari daemon is running on the given port."""
+    return _probe_sari_daemon(host, port)
 
 
 def read_pid() -> Optional[int]:
     """Read PID from pidfile."""
+    try:
+        workspace_root = os.environ.get("SARI_WORKSPACE_ROOT") or WorkspaceManager.resolve_workspace_root()
+        inst = ServerRegistry().resolve_workspace_daemon(str(workspace_root))
+        if inst and inst.get("pid"):
+            return int(inst.get("pid"))
+    except Exception:
+        pass
     if PID_FILE.exists():
         try:
             return int(PID_FILE.read_text().strip())
@@ -216,28 +327,66 @@ def remove_pid() -> None:
         PID_FILE.unlink()
 
 
+def _get_local_version() -> str:
+    try:
+        from sari.version import __version__ as v
+        return v or ""
+    except Exception:
+        return os.environ.get("SARI_VERSION", "") or ""
+
+
 def cmd_daemon_start(args):
     """Start the daemon."""
+    explicit_port = bool(args.daemon_port)
+    force_start = (os.environ.get("SARI_DAEMON_FORCE_START") or "").strip().lower() in {"1", "true", "yes", "on"}
+    workspace_root = WorkspaceManager.resolve_workspace_root()
+    registry = ServerRegistry()
+
     if args.daemon_host or args.daemon_port:
         host = args.daemon_host or DEFAULT_HOST
         port = int(args.daemon_port or DEFAULT_PORT)
     else:
-        host, port = get_daemon_address()
-    workspace_root = WorkspaceManager.resolve_workspace_root()
+        inst = registry.resolve_workspace_daemon(str(workspace_root))
+        if inst and inst.get("port"):
+            host = inst.get("host") or DEFAULT_HOST
+            port = int(inst.get("port"))
+        else:
+            host = DEFAULT_HOST
+            port = DEFAULT_PORT
 
-    if is_daemon_running(host, port):
-        pid = read_pid()
-        print(f"✅ Daemon already running on {host}:{port}")
-        if not pid:
-            print("⚠️  PID file missing. Another process may be using this port.")
-            print("   Hint: Try a different port: SARI_DAEMON_PORT=47790 sari daemon start -d")
-        return 0
+    identify = _identify_sari_daemon(host, port)
+    if identify:
+        existing_version = identify.get("version") or ""
+        local_version = _get_local_version()
+        draining = bool(identify.get("draining"))
+        needs_upgrade = bool(existing_version and local_version and existing_version != local_version)
+        if not force_start and not needs_upgrade and not draining:
+            pid = read_pid()
+            print(f"✅ Daemon already running on {host}:{port}")
+            if not pid:
+                print("⚠️  PID file missing. Another process may be using this port.")
+                print("   Hint: Try a different port: SARI_DAEMON_PORT=47790 sari daemon start -d")
+            return 0
+        if explicit_port:
+            print(f"❌ Port {port} is already in use by a running Sari daemon.", file=sys.stderr)
+            return 1
+        port = registry.find_free_port(start_port=47790)
+        print(f"⚠️  Starting new daemon on free port {port} (upgrade/drain).")
+    elif _port_in_use(host, port):
+        if explicit_port:
+            print(f"❌ Port {port} is already in use by another process.", file=sys.stderr)
+            return 1
+        # Choose a free port to avoid collisions with other MCP daemons.
+        free_port = registry.find_free_port(start_port=47790)
+        print(f"⚠️  Port {port} is in use. Switching to free port {free_port}.")
+        port = free_port
 
     repo_root = Path(__file__).parent.parent.resolve()
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     env["SARI_DAEMON_AUTOSTART"] = "1"
     env["SARI_WORKSPACE_ROOT"] = workspace_root
+    env["SARI_DAEMON_PORT"] = str(port)
     if args.daemon_host:
         env["SARI_DAEMON_HOST"] = args.daemon_host
     if args.daemon_port:
@@ -426,7 +575,7 @@ def cmd_auto(args):
     # Fast path: if TCP is blocked by sandbox, skip daemon/proxy.
     try:
         with socket.create_connection((host, port), timeout=0.1):
-            return cmd_proxy(args)
+            pass
     except OSError as e:
         if _tcp_blocked(e):
             from sari.mcp.server import main as server_main
@@ -434,17 +583,18 @@ def cmd_auto(args):
             return 0
         # Connection refused etc. We'll try to start daemon below.
 
+    if _identify_sari_daemon(host, port):
+        return cmd_proxy(args)
+
     # Try to start daemon in background, then proxy.
     if not is_daemon_running(host, port):
-        repo_root = Path(__file__).parent.parent.resolve()
         workspace_root = WorkspaceManager.resolve_workspace_root()
         env = os.environ.copy()
         env["SARI_DAEMON_AUTOSTART"] = "1"
         env["SARI_WORKSPACE_ROOT"] = workspace_root
-        env["PYTHONPATH"] = str(repo_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         subprocess.Popen(
-            [sys.executable, "-m", "sari.mcp.daemon"],
-            cwd=repo_root.parent,
+            [sys.executable, "-m", "sari.mcp.cli", "daemon", "start", "-d"],
+            cwd=Path(__file__).parent.parent.parent,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -452,6 +602,7 @@ def cmd_auto(args):
         )
         for _ in range(30):
             try:
+                host, port = get_daemon_address()
                 if is_daemon_running(host, port):
                     break
             except OSError as e:

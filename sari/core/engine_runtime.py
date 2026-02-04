@@ -24,10 +24,21 @@ except ImportError:
     from cjk import has_cjk as _has_cjk, cjk_space as _cjk_space_impl, lindera_available, lindera_error
 
 
+def _normalize_engine_package(pkg: str) -> str:
+    raw = (pkg or "").strip()
+    if not raw:
+        return raw
+    if raw.startswith("sari-search"):
+        # Backward-compat: sari-search -> sari
+        suffix = raw[len("sari-search"):]
+        return f"sari{suffix}"
+    return raw
+
+
 def _default_engine_package() -> str:
     env = (os.environ.get("SARI_ENGINE_PACKAGE") or "").strip()
     if env:
-        return env
+        return _normalize_engine_package(env)
     ver = ""
     try:
         from sari.version import __version__
@@ -41,7 +52,7 @@ def _default_engine_package() -> str:
     return "sari"
 
 
-ENGINE_PACKAGE = _default_engine_package()
+ENGINE_PACKAGE = _normalize_engine_package(_default_engine_package())
 _DEFAULT_ENGINE_MEM_MB = 512
 _DEFAULT_ENGINE_INDEX_MEM_MB = 256
 _DEFAULT_ENGINE_THREADS = 2

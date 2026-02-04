@@ -32,9 +32,9 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
     # 1. Gather status data
     actual_http_port = None
     try:
-        inst = ServerRegistry().get_instance(workspace_root)
-        if inst and inst.get("port"):
-            actual_http_port = int(inst.get("port"))
+        inst = ServerRegistry().get_workspace(workspace_root)
+        if inst and inst.get("http_port"):
+            actual_http_port = int(inst.get("http_port"))
     except Exception:
         actual_http_port = None
 

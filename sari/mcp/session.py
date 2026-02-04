@@ -2,9 +2,18 @@ import json
 import logging
 import asyncio
 import inspect
+import os
 from typing import Dict, Any, Optional
 from .registry import Registry, SharedState
+
+try:
+    from sari.version import __version__ as _SARI_VERSION
+except Exception:
+    _SARI_VERSION = "dev"
+_SARI_PROTOCOL_VERSION = "2025-11-25"
+_SARI_BOOT_ID = (os.environ.get("SARI_BOOT_ID") or "").strip()
 from sari.core.workspace import WorkspaceManager
+from sari.core.registry import ServerRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +141,30 @@ class Session:
         params = request.get("params", {})
         msg_id = request.get("id")
 
+        if self.workspace_root:
+            self.registry.touch_workspace(self.workspace_root)
+
+        if method == "sari/identify":
+            draining = False
+            if _SARI_BOOT_ID:
+                try:
+                    info = ServerRegistry().get_daemon(_SARI_BOOT_ID) or {}
+                    draining = bool(info.get("draining"))
+                except Exception:
+                    draining = False
+            response = {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "name": "sari",
+                    "version": _SARI_VERSION,
+                    "protocolVersion": _SARI_PROTOCOL_VERSION,
+                    "bootId": _SARI_BOOT_ID,
+                    "draining": draining,
+                },
+            }
+            await self.send_json(response)
+            return
         if method == "initialize":
             await self.handle_initialize(request)
         elif method == "initialized":
@@ -171,6 +204,16 @@ class Session:
         params = request.get("params", {})
         msg_id = request.get("id")
 
+        if _SARI_BOOT_ID:
+            try:
+                info = ServerRegistry().get_daemon(_SARI_BOOT_ID) or {}
+                if info.get("draining"):
+                    await self.send_error(msg_id, -32001, "Server is draining. Reconnect to the latest daemon.")
+                    self.running = False
+                    return
+            except Exception:
+                pass
+
         root_uri = params.get("rootUri") or params.get("rootPath")
         if not root_uri:
             # Fallback for clients that omit rootUri/rootPath
@@ -189,6 +232,7 @@ class Session:
 
         self.workspace_root = workspace_root
         self.shared_state = self.registry.get_or_create(self.workspace_root)
+        self.registry.touch_workspace(self.workspace_root)
 
         # Delegate specific initialize logic to the server instance
         # We need to construct the result based on server's response

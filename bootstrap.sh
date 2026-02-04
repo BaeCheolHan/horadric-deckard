@@ -18,7 +18,7 @@ if [ "$1" = "uninstall" ]; then
         python3 "$ROOT_DIR/install.py" --uninstall --no-interactive >/dev/null 2>&1 || true
     else
         if command -v python3 >/dev/null 2>&1; then
-            python3 -m sari --cmd uninstall --no-interactive >/dev/null 2>&1 || true
+            python3 -m sari.main --cmd uninstall --no-interactive >/dev/null 2>&1 || true
         else
             if [ -x "$INSTALL_DIR/bootstrap.sh" ]; then
                 "$INSTALL_DIR/bootstrap.sh" daemon stop >/dev/null 2>&1 || true
@@ -94,11 +94,22 @@ fi
 # Announce version to stderr (visible in host logs/console)
 echo "[Sari] Starting (v${SARI_VERSION:-dev})..." >&2
 
+# Ensure local repo imports work without a global install.
+PYTHONPATH_DIR="$ROOT_DIR"
+if [ -n "$PYTHONPATH" ]; then
+    export PYTHONPATH="$PYTHONPATH_DIR:$PYTHONPATH"
+else
+    export PYTHONPATH="$PYTHONPATH_DIR"
+fi
+
+# Avoid cwd shadowing (repo root has __init__.py).
+cd "$HOME" >/dev/null 2>&1 || true
+
 # Run Sari (default to auto mode for MCP)
 if [ "$transport" = "http" ]; then
-    exec python3 -m sari --transport http "$@"
+    exec python3 -m sari.main --transport http "$@"
 elif [ $# -eq 0 ] || [ "$transport" = "stdio" ]; then
-    exec python3 -m sari auto
+    exec python3 -m sari.main auto
 else
-    exec python3 -m sari "$@"
+    exec python3 -m sari.main "$@"
 fi

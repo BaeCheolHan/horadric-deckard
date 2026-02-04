@@ -339,9 +339,9 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
         results.append(_check_port(daemon_port, "Daemon"))
         http_port = 0
         try:
-            inst = ServerRegistry().get_instance(ws_root)
-            if inst and inst.get("port"):
-                http_port = int(inst.get("port"))
+            inst = ServerRegistry().get_workspace(ws_root)
+            if inst and inst.get("http_port"):
+                http_port = int(inst.get("http_port"))
         except Exception:
             http_port = 0
         if not http_port:

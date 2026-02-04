@@ -7,6 +7,7 @@ When all clients disconnect from a workspace (refcount=0), resources are cleaned
 """
 import logging
 import threading
+import os
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -79,9 +80,10 @@ class SharedState:
         """Stop indexer, close DB, and shutdown HTTP server."""
         logger.info(f"Shutting down SharedState for {self.workspace_root}")
 
-        # Unregister from Global Registry
+        # Unregister from Global Registry (if still owned by this daemon)
         try:
-            ServerRegistry().unregister(self.workspace_root)
+            boot_id = (os.environ.get("SARI_BOOT_ID") or "").strip() or None
+            ServerRegistry().unregister_workspace(self.workspace_root, boot_id=boot_id)
         except Exception as e:
             logger.error(f"Failed to unregister workspace: {e}")
 
@@ -107,6 +109,7 @@ class Registry:
     def __init__(self):
         self._workspaces: Dict[str, SharedState] = {}
         self._registry_lock = threading.Lock()
+        self._boot_id = (os.environ.get("SARI_BOOT_ID") or "").strip()
 
     @classmethod
     def get_instance(cls) -> "Registry":
@@ -145,6 +148,10 @@ class Registry:
 
             state = self._workspaces[resolved_root]
             state.acquire()
+            try:
+                self._register_workspace(state)
+            except Exception as e:
+                logger.error(f"Failed to register workspace in global registry: {e}")
             return state
 
     def release(self, workspace_root: str) -> None:
@@ -169,6 +176,28 @@ class Registry:
                 state.shutdown()
                 del self._workspaces[resolved_root]
                 logger.info(f"Unregistered workspace: {resolved_root}")
+
+    def _register_workspace(self, state: SharedState) -> None:
+        if not self._boot_id:
+            return
+        http_host = ""
+        try:
+            http_host = state.server.cfg.http_api_host  # type: ignore[attr-defined]
+        except Exception:
+            http_host = ""
+        ServerRegistry().set_workspace(
+            state.workspace_root,
+            self._boot_id,
+            http_port=state.http_port or None,
+            http_host=http_host or None,
+        )
+
+    def touch_workspace(self, workspace_root: str) -> None:
+        """Update last activity timestamp for workspace."""
+        try:
+            ServerRegistry().touch_workspace(workspace_root)
+        except Exception as e:
+            logger.error(f"Failed to touch workspace activity: {e}")
 
     def get(self, workspace_root: str) -> Optional[SharedState]:
         """Get SharedState without modifying refcount.

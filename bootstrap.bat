@@ -32,7 +32,7 @@ if "%~1"=="uninstall" (
     if exist "%ROOT_DIR%\install.py" (
         "%PY%" "%ROOT_DIR%\install.py" --uninstall --no-interactive >nul 2>nul
     ) else (
-        "%PY%" -m sari --cmd uninstall --no-interactive >nul 2>nul
+        "%PY%" -m sari.main --cmd uninstall --no-interactive >nul 2>nul
     )
     echo [sari] done. >&2
     exit /b 0
@@ -83,7 +83,7 @@ for /f "tokens=*" %%v in ('%PY% -c "import importlib,sys; spec=importlib.util.fi
 )
 if /I "%SARI_VERSION%"=="None" set "SARI_VERSION="
 
-set "RUN_MOD=sari"
+set "RUN_MOD=sari.main"
 
 :: Argument loop for --workspace-root / --transport
 set "ARGS="

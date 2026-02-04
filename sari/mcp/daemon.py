@@ -3,6 +3,9 @@ import os
 import signal
 import logging
 import ipaddress
+import threading
+import time
+import uuid
 from .session import Session
 
 from pathlib import Path
@@ -48,8 +51,15 @@ class SariDaemon:
         self.host = os.environ.get("SARI_DAEMON_HOST", DEFAULT_HOST)
         self.port = int(os.environ.get("SARI_DAEMON_PORT", DEFAULT_PORT))
         self.server = None
+        self._loop = None
         self._pinned_workspace_root = None
         self._registry = ServerRegistry()
+        self.boot_id = (os.environ.get("SARI_BOOT_ID") or "").strip() or uuid.uuid4().hex
+        os.environ["SARI_BOOT_ID"] = self.boot_id
+        self._stop_event = threading.Event()
+        self._heartbeat_thread = None
+        self._idle_since = None
+        self._drain_since = None
 
     def _write_pid(self):
         """Write current PID to file."""
@@ -65,28 +75,31 @@ class SariDaemon:
         """Remove PID file."""
         try:
             if PID_FILE.exists():
-                PID_FILE.unlink()
-                logger.info("Removed PID file")
+                current = PID_FILE.read_text().strip()
+                if current == str(os.getpid()):
+                    PID_FILE.unlink()
+                    logger.info("Removed PID file")
         except Exception as e:
             logger.error(f"Failed to remove PID file: {e}")
 
     def _register_daemon(self):
         try:
-            workspace_root = (os.environ.get("SARI_WORKSPACE_ROOT") or "").strip()
-            if not workspace_root:
-                workspace_root = WorkspaceManager.resolve_workspace_root()
-            self._registry.register(workspace_root, self.port, os.getpid())
-            logger.info(f"Registered daemon for {workspace_root} on port {self.port}")
+            try:
+                from sari.version import __version__ as sari_version
+            except Exception:
+                sari_version = os.environ.get("SARI_VERSION", "dev")
+            host = (self.host or DEFAULT_HOST).strip()
+            port = int(self.port)
+            pid = os.getpid()
+            self._registry.register_daemon(self.boot_id, host, port, pid, version=sari_version)
+            logger.info(f"Registered daemon {self.boot_id} on {host}:{port}")
         except Exception as e:
             logger.error(f"Failed to register daemon: {e}")
 
     def _unregister_daemon(self):
         try:
-            workspace_root = (os.environ.get("SARI_WORKSPACE_ROOT") or "").strip()
-            if not workspace_root:
-                workspace_root = WorkspaceManager.resolve_workspace_root()
-            self._registry.unregister(workspace_root)
-            logger.info(f"Unregistered daemon for {workspace_root}")
+            self._registry.unregister_daemon(self.boot_id)
+            logger.info(f"Unregistered daemon {self.boot_id}")
         except Exception as e:
             logger.error(f"Failed to unregister daemon: {e}")
 
@@ -107,6 +120,62 @@ class SariDaemon:
         except Exception as e:
             logger.error(f"Failed to auto-start workspace HTTP server: {e}")
 
+    def _start_heartbeat(self) -> None:
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            return
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+    def _heartbeat_loop(self) -> None:
+        try:
+            interval = float(os.environ.get("SARI_DAEMON_HEARTBEAT_SEC", "5") or 5)
+        except (TypeError, ValueError):
+            interval = 5.0
+        try:
+            idle_sec = float(os.environ.get("SARI_DAEMON_IDLE_SEC", "600") or 600)
+        except (TypeError, ValueError):
+            idle_sec = 600.0
+        try:
+            drain_grace = float(os.environ.get("SARI_DAEMON_DRAIN_GRACE_SEC", "10") or 10)
+        except (TypeError, ValueError):
+            drain_grace = 10.0
+
+        from .registry import Registry
+        workspace_registry = Registry.get_instance()
+
+        while not self._stop_event.is_set():
+            try:
+                self._registry.touch_daemon(self.boot_id)
+                daemon_info = self._registry.get_daemon(self.boot_id) or {}
+                draining = bool(daemon_info.get("draining"))
+                active_count = workspace_registry.active_count()
+                now = time.time()
+
+                if draining:
+                    if self._drain_since is None:
+                        self._drain_since = now
+                    if active_count == 0:
+                        self.shutdown()
+                        break
+                    if drain_grace > 0 and now - self._drain_since >= drain_grace:
+                        self.shutdown()
+                        break
+                else:
+                    self._drain_since = None
+                    if idle_sec > 0:
+                        if active_count == 0:
+                            if self._idle_since is None:
+                                self._idle_since = now
+                            elif now - self._idle_since >= idle_sec:
+                                self.shutdown()
+                                break
+                        else:
+                            self._idle_since = None
+            except Exception as e:
+                logger.error(f"Heartbeat failed: {e}")
+
+            self._stop_event.wait(interval)
+
     async def start(self):
         host = (self.host or "127.0.0.1").strip()
         try:
@@ -121,12 +190,15 @@ class SariDaemon:
             )
 
         self._write_pid()
-        self._register_daemon()
-        self._autostart_workspace()
-
         self.server = await asyncio.start_server(
             self.handle_client, self.host, self.port
         )
+        os.environ["SARI_DAEMON_HOST"] = host
+        os.environ["SARI_DAEMON_PORT"] = str(self.port)
+        self._loop = asyncio.get_running_loop()
+        self._register_daemon()
+        self._autostart_workspace()
+        self._start_heartbeat()
 
         addr = self.server.sockets[0].getsockname()
         logger.info(f"Sari Daemon serving on {addr}")
@@ -144,8 +216,18 @@ class SariDaemon:
         logger.info(f"Closed connection from {addr}")
 
     def shutdown(self):
+        if self._stop_event.is_set():
+            return
+        self._stop_event.set()
+
         if self.server:
-            self.server.close()
+            try:
+                if self._loop:
+                    self._loop.call_soon_threadsafe(self.server.close)
+                else:
+                    self.server.close()
+            except Exception:
+                pass
 
         # Shutdown all workspaces to stop indexers and close DBs
         from .registry import Registry
