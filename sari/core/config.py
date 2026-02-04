@@ -34,7 +34,7 @@ class Config:
     redact_enabled: bool
     commit_batch_size: int
     http_api_host: str = "127.0.0.1"
-    http_api_port: int = 7331
+    http_api_port: int = 47777
     exclude_content_bytes: int = 104857600
     workspace_roots: list[str] = field(default_factory=list) # Optional for compatibility
 
@@ -55,7 +55,7 @@ class Config:
             "server_host": "127.0.0.1",
             "server_port": 47777,
             "http_api_host": "127.0.0.1",
-            "http_api_port": 7331,
+            "http_api_port": 47777,
             "scan_interval_seconds": 180,
             "snippet_max_lines": 5,
             "max_file_bytes": 1000000, # Increased to 1MB
