@@ -34,7 +34,7 @@ if str(REPO_ROOT) not in sys.path:
 
 
 from sari.core.workspace import WorkspaceManager
-from sari.core.registry import ServerRegistry
+from sari.core.registry import ServerRegistry, REGISTRY_FILE
 from sari.core.config import Config
 from sari.core.db import LocalSearchDB
 from sari.mcp.tools.call_graph import build_call_graph
@@ -93,6 +93,15 @@ def _load_server_info(workspace_root: str) -> Optional[dict]:
         return None
 
 
+def _load_registry_instances() -> Dict[str, Any]:
+    try:
+        if REGISTRY_FILE.exists():
+            return json.loads(REGISTRY_FILE.read_text(encoding="utf-8")).get("instances", {})
+    except Exception:
+        pass
+    return {}
+
+
 def _is_loopback(host: str) -> bool:
     h = (host or "").strip().lower()
     if h == "localhost":
@@ -113,26 +122,75 @@ def _enforce_loopback(host: str) -> None:
 
 
 def _get_http_host_port(host_override: Optional[str] = None, port_override: Optional[int] = None) -> tuple[str, int]:
-    """Get active HTTP server address with Environment priority ."""
+    """Get active HTTP server address with Environment priority."""
     # 0. Environment Override (Highest Priority for testing/isolation)
     # PRIORITY: SARI_
     env_host = os.environ.get("SARI_HTTP_API_HOST") or os.environ.get("SARI_HTTP_HOST")
-    # 3. Fallback to Config
+    env_port = os.environ.get("SARI_HTTP_API_PORT") or os.environ.get("SARI_HTTP_PORT")
+
     workspace_root = WorkspaceManager.resolve_workspace_root()
-    cfg = _load_http_config(workspace_root) or {}
-    host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
-    port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
+
+    host = None
+    port = None
+
+    # 1. server.json (actual bound port) if present
+    server_info = _load_server_info(str(workspace_root))
+    if server_info:
+        try:
+            host = str(server_info.get("host") or "")
+            port = int(server_info.get("port")) if server_info.get("port") else None
+        except Exception:
+            host = None
+            port = None
+
+    # 2. Registry (global server.json)
+    if port is None:
+        try:
+            inst = ServerRegistry().get_instance(str(workspace_root))
+            if inst:
+                port = int(inst.get("port")) if inst.get("port") else None
+        except Exception:
+            pass
+
+    # 2.1 Registry fallback: try cwd/parents or single active instance
+    if port is None:
+        instances = _load_registry_instances()
+        cwd = Path.cwd().resolve()
+        matched = None
+        for p in [cwd] + list(cwd.parents):
+            matched = instances.get(str(p))
+            if matched:
+                break
+        if not matched and len(instances) == 1:
+            matched = list(instances.values())[0]
+        if matched:
+            try:
+                port = int(matched.get("port")) if matched.get("port") else None
+            except Exception:
+                pass
+
+    # 3. Fallback to Config
+    cfg = _load_http_config(str(workspace_root)) or {}
+    if not host:
+        host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
+    if port is None:
+        port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
+
+    # 3. Environment overrides
     if env_host:
         host = env_host
-    if os.environ.get("SARI_HTTP_API_PORT") or os.environ.get("SARI_HTTP_PORT"):
+    if env_port:
         try:
-            port = int(os.environ.get("SARI_HTTP_API_PORT") or os.environ.get("SARI_HTTP_PORT"))
+            port = int(env_port)
         except (TypeError, ValueError):
             pass
+
+    # 4. Explicit overrides
     if host_override:
         host = host_override
     if port_override is not None:
         port = int(port_override)
+
     return host, port
 
 
@@ -437,7 +495,7 @@ def cmd_status(args):
         host, port = _get_http_host_port(args.http_host, args.http_port)
         http_running = is_daemon_running(host, port)
 
-        if not daemon_running or not http_running:
+        if not http_running:
             print("❌ Error: Sari services are not fully running.")
             print(f"   Daemon: {'🟢' if daemon_running else '⚫'} {daemon_host}:{daemon_port}")
             print(f"   HTTP:   {'🟢' if http_running else '⚫'} {host}:{port}")

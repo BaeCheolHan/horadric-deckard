@@ -227,6 +227,11 @@ You can check the daemon status and indexing progress:
 sari status
 ```
 
+`sari status` will automatically use the actual HTTP port recorded in
+`.codex/tools/sari/data/server.json` (workspace-local) or
+`~/.local/share/sari/server.json` (global registry) if the default port is unavailable.
+If multiple instances exist, it prefers the current working directory (or its parents).
+
 #### If Daemon Port Is Busy
 If you see a message like "Daemon already running" but things still don't work,
 another process may be using the default port.
@@ -268,6 +273,20 @@ Diagnose issues with your environment or installation:
 
 # If installed via pip:
 sari doctor --auto-fix
+```
+
+### Update
+Update Sari using the installer script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - --update -y
+```
+
+After updating, restart the daemon to load the new version:
+
+```bash
+pkill -f "sari.mcp.daemon"
+sari daemon start -d
 ```
 
 ### Uninstall

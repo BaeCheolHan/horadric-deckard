@@ -148,7 +148,7 @@ def confirm(question, default=True):
         args.yes = True
 
 def _create_bootstrap_script(install_dir: Path):
-    """Create a bootstrap script that runs 'python -m sari'."""
+    """Create a bootstrap script that runs 'python -m sari.main'."""
     if IS_WINDOWS:
         script_path = install_dir / "bootstrap.bat"
         py = sys.executable
@@ -165,7 +165,7 @@ def _create_bootstrap_script(install_dir: Path):
             "  )\r\n"
             "  exit /b 0\r\n"
             ")\r\n"
-            f"\"{py}\" -m sari %*\r\n"
+            f"\"{py}\" -m sari.main %*\r\n"
         )
     else:
         script_path = install_dir / "bootstrap.sh"
@@ -189,7 +189,7 @@ def _create_bootstrap_script(install_dir: Path):
             "  fi\n"
             "  exit 0\n"
             "fi\n\n"
-            "exec python3 -m sari \"$@\"\n"
+            "exec python3 -m sari.main \"$@\"\n"
         )
 
     script_path.write_text(content, encoding="utf-8")
