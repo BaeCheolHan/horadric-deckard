@@ -1,5 +1,7 @@
 # Sari (사리)
 
+[🇰🇷 한국어 가이드 (Korean Guide)](README_KR.md)
+
 **Sari** is a high-performance **Local Code Search Agent** implementing the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). It empowers AI assistants (like Claude, Cursor, Codex) to efficiently navigate, understand, and search large codebases without sending code to external servers.
 
 > **Key Features:**
