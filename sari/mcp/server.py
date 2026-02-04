@@ -12,7 +12,7 @@ Usage:
   python3 .codex/tools/sari/mcp/server.py
 
 Environment:
-  LOCAL_SEARCH_WORKSPACE_ROOT - Workspace root directory (default: cwd)
+  SARI_WORKSPACE_ROOT - Workspace root directory (default: cwd)
 """
 import json
 import os
@@ -49,7 +49,7 @@ import sari.mcp.tools.rescan as rescan_tool
 import sari.mcp.tools.scan_once as scan_once_tool
 import sari.mcp.tools.get_callers as get_callers_tool
 import sari.mcp.tools.get_implementations as get_implementations_tool
-import sari.mcp.tools.deckard_guide as deckard_guide_tool
+import sari.mcp.tools.guide as sari_guide_tool
 from sari.mcp.tools.registry import ToolContext, build_default_registry
 
 
@@ -99,10 +99,12 @@ class LocalSearchMCPServer:
 
     @staticmethod
     def _resolve_search_first_policy() -> str:
-        raw_mode = (os.environ.get("DECKARD_SEARCH_FIRST_MODE") or "").strip().lower()
+        # Check SARI_
+        from sari.core.config import _get_env_any
+        raw_mode = (_get_env_any("SEARCH_FIRST_MODE") or "").strip().lower()
         if raw_mode in {"off", "warn", "enforce"}:
             return raw_mode
-        raw_enforce = (os.environ.get("DECKARD_ENFORCE_SEARCH_FIRST") or "").strip().lower()
+        raw_enforce = (_get_env_any("ENFORCE_SEARCH_FIRST") or "").strip().lower()
         if raw_enforce:
             return "off" if raw_enforce in {"0", "false", "no", "off"} else "enforce"
         return "warn"
@@ -180,7 +182,7 @@ class LocalSearchMCPServer:
                 self._indexer_thread = threading.Thread(target=self.indexer.run_forever, daemon=True)
                 self._indexer_thread.start()
 
-                init_timeout = float(os.environ.get("DECKARD_INIT_TIMEOUT") or os.environ.get("LOCAL_SEARCH_INIT_TIMEOUT") or "5")
+                init_timeout = float(os.environ.get("SARI_INIT_TIMEOUT") or "5")
                 if init_timeout > 0:
                     wait_iterations = int(init_timeout * 10)
                     for _ in range(wait_iterations):

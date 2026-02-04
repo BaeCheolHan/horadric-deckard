@@ -49,20 +49,20 @@ def test_resolve_root_ids(tmp_path):
 
 
 def test_mcp_response_json_mode(monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     res = mcp_response("x", lambda: "PACK1", lambda: {"ok": True})
     assert res.get("ok") is True
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_mcp_response_error_pack(monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "pack")
+    monkeypatch.setenv("SARI_FORMAT", "pack")
     def _bad():
         raise RuntimeError("boom")
     res = mcp_response("x", _bad, lambda: {"ok": True})
     text = res["content"][0]["text"]
     assert "ok=false" in text
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_resolve_root_ids_empty(monkeypatch):

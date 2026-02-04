@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import sari.mcp.tools.search as search_tool
 import sari.mcp.tools.status as status_tool
@@ -16,7 +16,7 @@ import sari.mcp.tools.rescan as rescan_tool
 import sari.mcp.tools.scan_once as scan_once_tool
 import sari.mcp.tools.get_callers as get_callers_tool
 import sari.mcp.tools.get_implementations as get_implementations_tool
-import sari.mcp.tools.deckard_guide as deckard_guide_tool
+import sari.mcp.tools.guide as guide_tool
 import sari.mcp.tools.call_graph as call_graph_tool
 import sari.mcp.tools.call_graph_health as call_graph_health_tool
 import sari.mcp.tools.save_snippet as save_snippet_tool
@@ -24,6 +24,14 @@ import sari.mcp.tools.get_snippet as get_snippet_tool
 import sari.mcp.tools.archive_context as archive_context_tool
 import sari.mcp.tools.get_context as get_context_tool
 import sari.mcp.tools.dry_run_diff as dry_run_diff_tool
+
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    input_schema: Dict[str, Any]
+    handler: Callable[["ToolContext", Dict[str, Any]], Dict[str, Any]]
 
 
 @dataclass
@@ -38,14 +46,6 @@ class ToolContext:
     server_version: str
 
 
-@dataclass
-class Tool:
-    name: str
-    description: str
-    input_schema: Dict[str, Any]
-    handler: Callable[[ToolContext, Dict[str, Any]], Dict[str, Any]]
-
-
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: Dict[str, Tool] = {}
@@ -55,14 +55,19 @@ class ToolRegistry:
 
     def list_tools(self) -> List[Dict[str, Any]]:
         return [
-            {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+            {
+                "name": t.name,
+                "description": t.description,
+                "inputSchema": t.input_schema,
+            }
             for t in self._tools.values()
         ]
 
     def execute(self, name: str, ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
-        if name not in self._tools:
+        tool = self._tools.get(name)
+        if not tool:
             raise ValueError(f"Unknown tool: {name}")
-        return self._tools[name].handler(ctx, args)
+        return tool.handler(ctx, args)
 
 
 def build_default_registry() -> ToolRegistry:
@@ -72,7 +77,7 @@ def build_default_registry() -> ToolRegistry:
         name="sari_guide",
         description="Usage guide. Call this if unsure; it enforces search-first workflow.",
         input_schema={"type": "object", "properties": {}},
-        handler=lambda ctx, args: deckard_guide_tool.execute_deckard_guide(args),
+        handler=lambda ctx, args: guide_tool.execute_sari_guide(args),
     ))
 
     reg.register(Tool(

@@ -53,7 +53,7 @@ def send_rpc(sock, method, params=None, msg_id=1):
 def test_daemon():
     print("Starting daemon...")
     env = os.environ.copy()
-    env["DECKARD_DAEMON_PORT"] = str(DAEMON_PORT)
+    env["SARI_DAEMON_PORT"] = str(DAEMON_PORT)
 
     # Run as module from repo root
     repo_root = Path(__file__).parent.parent

@@ -202,7 +202,7 @@ def _check_search_first_usage(usage: Dict[str, Any], mode: str) -> dict[str, Any
     return _result("Search-First Usage", False, error)
 
 def _check_callgraph_plugin() -> dict[str, Any]:
-    mod_path = os.environ.get("DECKARD_CALLGRAPH_PLUGIN", "").strip()
+    mod_path = os.environ.get("SARI_CALLGRAPH_PLUGIN", "").strip()
     if not mod_path:
         return _result("CallGraph Plugin", True, "not configured")
     mods = [m.strip() for m in mod_path.split(",") if m.strip()]
@@ -398,7 +398,7 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
         "auto_fix": auto_fix_results,
     }
 
-    compact = str(os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
+    compact = str(os.environ.get("SARI_RESPONSE_COMPACT") or "1").strip().lower() not in {"0", "false", "no", "off"}
     payload = json.dumps(output, ensure_ascii=False, separators=(",", ":")) if compact else json.dumps(output, ensure_ascii=False, indent=2)
     try:
         from sari.mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_text

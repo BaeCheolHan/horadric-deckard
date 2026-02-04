@@ -15,7 +15,7 @@ def _load(path: Path, name: str):
 def test_fallback_imports():
     repo = Path(__file__).resolve().parents[1]
     app_dir = repo / "app"
-    tools_dir = repo / "mcp" / "tools"
+    tools_dir = repo / "sari" / "mcp" / "tools"
     sys.path.insert(0, str(app_dir))
     sys.path.insert(0, str(tools_dir))
     try:

@@ -31,14 +31,14 @@ def test_get_http_host_port_prefers_server_json():
         server_json = data_dir / "server.json"
         server_json.write_text(json.dumps({"host": "127.0.0.1", "port": 47788}))
 
-        prev = os.environ.get("DECKARD_WORKSPACE_ROOT")
-        _set_env("DECKARD_WORKSPACE_ROOT", tmpdir)
+        prev = os.environ.get("SARI_WORKSPACE_ROOT")
+        _set_env("SARI_WORKSPACE_ROOT", tmpdir)
         try:
             host, port = _get_http_host_port()
             assert host == "127.0.0.1"
             assert port == 47788
         finally:
-            _set_env("DECKARD_WORKSPACE_ROOT", prev)
+            _set_env("SARI_WORKSPACE_ROOT", prev)
 
 
 def test_cmd_status_prints_json():

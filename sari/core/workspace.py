@@ -45,10 +45,9 @@ class WorkspaceManager:
         1. config.roots
         2. SARI_ROOTS_JSON
         3. SARI_ROOT_1..N
-        4. SARI_WORKSPACE_ROOT (legacy)
-        5. LOCAL_SEARCH_WORKSPACE_ROOT (legacy)
-        6. root_uri (MCP initialize param, ephemeral)
-        7. Fallback to cwd (only if no candidates)
+        4. SARI_WORKSPACE_ROOT
+        5. root_uri (MCP initialize param, ephemeral)
+        6. Fallback to cwd (only if no candidates)
 
         Returns:
             List of absolute, normalized paths.
@@ -79,27 +78,19 @@ class WorkspaceManager:
 
         # 3. SARI_ROOT_1..N
         for k, v in env_vars.items():
-            if k.startswith("SARI_ROOT_") and k[13:].isdigit():
+            if k.startswith("SARI_ROOT_") and k[len("SARI_ROOT_"):].isdigit():
                 if v and v.strip():
                     candidates.append((v.strip(), "env"))
 
-        # 4. Legacy SARI_WORKSPACE_ROOT (Higher priority than LOCAL_SEARCH)
-        legacy_val = (env_vars.get("SARI_WORKSPACE_ROOT") or "").strip()
-        if legacy_val:
-            if legacy_val == "${cwd}":
+        # 4. SARI_WORKSPACE_ROOT
+        root_val = (env_vars.get("SARI_WORKSPACE_ROOT") or "").strip()
+        if root_val:
+            if root_val == "${cwd}":
                 candidates.append((os.getcwd(), "env"))
             else:
-                candidates.append((legacy_val, "env"))
+                candidates.append((root_val, "env"))
 
-        # 5. Legacy LOCAL_SEARCH_WORKSPACE_ROOT
-        ls_val = (env_vars.get("LOCAL_SEARCH_WORKSPACE_ROOT") or "").strip()
-        if ls_val:
-            if ls_val == "${cwd}":
-                candidates.append((os.getcwd(), "env"))
-            else:
-                candidates.append((ls_val, "env"))
-
-        # 6. root_uri (ephemeral)
+        # 5. root_uri (ephemeral)
         if root_uri:
             uri_path = root_uri[7:] if root_uri.startswith("file://") else root_uri
             try:
@@ -110,7 +101,7 @@ class WorkspaceManager:
             except Exception:
                 pass
 
-        # 7. Fallback to cwd
+        # 6. Fallback to cwd
         if not candidates:
             candidates.append((os.getcwd(), "fallback"))
 
@@ -257,7 +248,7 @@ class WorkspaceManager:
     @staticmethod
     def get_global_log_dir() -> Path:
         """Get global log directory, with env override."""
-        for env_key in ["SARI_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
+        for env_key in ["SARI_LOG_DIR"]:
             val = (os.environ.get(env_key) or "").strip()
             if val:
                 return Path(os.path.expanduser(val)).resolve()

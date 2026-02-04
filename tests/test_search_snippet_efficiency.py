@@ -43,7 +43,7 @@ class DummyLogger:
 
 
 def test_search_snippet_reduces_read_calls(tmp_path):
-    os.environ["DECKARD_FORMAT"] = "json"
+    os.environ["SARI_FORMAT"] = "json"
     res = execute_search({"query": "hello"}, DummyDB(), DummyLogger(), [str(tmp_path)])
     results = res.get("results") or res.get("hits") or res.get("items") or []
     if not results and res.get("content"):
@@ -65,4 +65,4 @@ def test_search_snippet_reduces_read_calls(tmp_path):
     new_calls = 0
     reduction = (baseline_calls - new_calls) / max(1, baseline_calls)
     assert reduction >= 0.30
-    os.environ.pop("DECKARD_FORMAT", None)
+    os.environ.pop("SARI_FORMAT", None)

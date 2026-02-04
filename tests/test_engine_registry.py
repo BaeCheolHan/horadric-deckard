@@ -6,9 +6,9 @@ from sari.core.search_engine import SqliteSearchEngineAdapter
 
 
 def test_default_engine_name(monkeypatch):
-    monkeypatch.delenv("DECKARD_ENGINE_MODE", raising=False)
+    monkeypatch.delenv("SARI_ENGINE_MODE", raising=False)
     assert default_engine_name() == "embedded"
-    monkeypatch.setenv("DECKARD_ENGINE_MODE", "embedded")
+    monkeypatch.setenv("SARI_ENGINE_MODE", "embedded")
     assert default_engine_name() == "embedded"
 
 
@@ -28,15 +28,15 @@ def test_get_default_engine_embedded(monkeypatch, tmp_path):
         workspace_roots = [str(tmp_path)]
     class DummyDB:
         pass
-    monkeypatch.setenv("DECKARD_ENGINE_MODE", "embedded")
+    monkeypatch.setenv("SARI_ENGINE_MODE", "embedded")
     eng = get_default_engine(DummyDB(), DummyCfg(), DummyCfg.workspace_roots)
     assert isinstance(eng, EmbeddedEngine)
-    monkeypatch.delenv("DECKARD_ENGINE_MODE", raising=False)
+    monkeypatch.delenv("SARI_ENGINE_MODE", raising=False)
 
 
 def test_get_default_engine_sqlite(monkeypatch):
     class DummyDB:
         pass
-    monkeypatch.setenv("DECKARD_ENGINE_MODE", "sqlite")
+    monkeypatch.setenv("SARI_ENGINE_MODE", "sqlite")
     eng = get_default_engine(DummyDB(), None, None)
     assert isinstance(eng, SqliteSearchEngineAdapter)

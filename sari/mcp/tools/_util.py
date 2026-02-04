@@ -32,18 +32,26 @@ class ErrorCode(str, Enum):
 
 # --- Format Selection ---
 
+# --- Format Selection ---
+
+def _get_env_any(key_suffix: str, default: Any = None) -> Any:
+    val = os.environ.get(f"SARI_{key_suffix}")
+    if val is not None:
+        return val
+    return default
+
 def _get_format() -> str:
-    """
+    """Get response format (pack or json).
+    
     Returns 'pack' or 'json'.
-    Default is 'pack'.
-    'json' is used if DECKARD_FORMAT=json.
+    Defaults to 'pack'.
     """
-    fmt = os.environ.get("DECKARD_FORMAT", "pack").strip().lower()
+    fmt = _get_env_any("FORMAT", "pack").strip().lower()
     return "json" if fmt == "json" else "pack"
 
 def _compact_enabled() -> bool:
     """Legacy compact check for JSON mode."""
-    val = (os.environ.get("DECKARD_RESPONSE_COMPACT") or "1").strip().lower()
+    val = (_get_env_any("RESPONSE_COMPACT") or "1").strip().lower()
     return val not in {"0", "false", "no", "off"}
 
 # --- PACK1 Encoders ---
@@ -222,7 +230,8 @@ def resolve_db_path(input_path: str, roots: List[str]) -> Optional[str]:
         return None
     if input_path.startswith("root-") and "/" not in input_path:
         return None
-    follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+    val = _get_env_any("FOLLOW_SYMLINKS", "0")
+    follow_symlinks = (val.strip().lower() in ("1", "true", "yes", "on"))
     try:
         p = Path(os.path.expanduser(input_path))
         if not p.is_absolute():

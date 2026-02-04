@@ -71,19 +71,19 @@ def test_search_contract_pack(tmp_path):
 
 
 def test_search_contract_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     res = execute_search({"query": "hello"}, DummyDB(), DummyLogger(), [str(tmp_path)], engine=DummyEngine())
     assert res["meta"]["engine"] == "sqlite"
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_status_contract_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     res = execute_status({"details": True}, DummyIndexer(), DummyDB(), None, str(tmp_path), "1.0")
     assert "http_api_port" in res
     assert "http_api_port_config" in res
     assert "engine_mode" in res
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_config_migration_once(tmp_path, monkeypatch):
@@ -94,7 +94,7 @@ def test_config_migration_once(tmp_path, monkeypatch):
     ssot.parent.mkdir(parents=True)
     ssot.write_text(json.dumps({"roots": ["/ssot"]}), encoding="utf-8")
 
-    legacy_dir = workspace_root / ".codex" / "tools" / "deckard" / "config"
+    legacy_dir = workspace_root / ".codex" / "tools" / "SARI" / "config"
     legacy_dir.mkdir(parents=True)
     legacy = legacy_dir / "config.json"
     legacy.write_text(json.dumps({"roots": ["/legacy"]}), encoding="utf-8")

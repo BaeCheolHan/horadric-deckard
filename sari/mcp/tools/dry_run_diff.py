@@ -60,7 +60,7 @@ def _syntax_check(path: str, content: str) -> Dict[str, Any]:
     return {"syntax_ok": True}
 
 def _maybe_lint(path: str, content: str) -> Dict[str, Any]:
-    enabled = os.environ.get("DECKARD_DRYRUN_LINT", "").strip().lower() in {"1", "true", "yes", "on"}
+    enabled = os.environ.get("SARI_DRYRUN_LINT", "").strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
         return {"lint_skipped": True, "lint_reason": "disabled"}
     ext = path.lower()

@@ -20,11 +20,11 @@ PY
 )"
 
 export HOME="${TMP_ROOT}/home"
-export DECKARD_REGISTRY_FILE="${TMP_ROOT}/registry.json"
-export DECKARD_LOG_DIR="${TMP_ROOT}/logs"
-export DECKARD_DAEMON_PORT="${DAEMON_PORT}"
+export SARI_REGISTRY_FILE="${TMP_ROOT}/registry.json"
+export SARI_LOG_DIR="${TMP_ROOT}/logs"
+export SARI_DAEMON_PORT="${DAEMON_PORT}"
 
-mkdir -p "$HOME" "$DECKARD_LOG_DIR"
+mkdir -p "$HOME" "$SARI_LOG_DIR"
 
 cd "$ROOT_DIR"
 python3 -m pytest "$@"

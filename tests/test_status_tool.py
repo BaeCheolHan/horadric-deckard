@@ -65,10 +65,10 @@ def test_status_pack_includes_engine_meta(tmp_path):
 
 
 def test_status_details_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     res = execute_status({"details": True}, DummyIndexer(), DummyDB(), DummyCfg(), str(tmp_path), "1.0")
     assert res.get("repo_stats") == {"repo": 2}
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_status_no_db_no_indexer(tmp_path):

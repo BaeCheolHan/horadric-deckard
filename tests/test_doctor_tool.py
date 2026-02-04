@@ -69,7 +69,7 @@ def test_check_db_ok(monkeypatch, tmp_path):
     cfg_path = tmp_path / "config.json"
     db_path = tmp_path / "index.db"
     cfg_path.write_text("{\"db_path\": \"" + str(db_path) + "\"}", encoding="utf-8")
-    monkeypatch.setenv("DECKARD_CONFIG", str(cfg_path))
+    monkeypatch.setenv("SARI_CONFIG", str(cfg_path))
     LocalSearchDB(str(db_path)).close()
     results = doctor_tool._check_db(str(tmp_path))
     assert any(r["name"].startswith("DB") for r in results)
@@ -79,7 +79,7 @@ def test_check_db_missing(monkeypatch, tmp_path):
     cfg_path = tmp_path / "config.json"
     db_path = tmp_path / "missing.db"
     cfg_path.write_text("{\"db_path\": \"" + str(db_path) + "\"}", encoding="utf-8")
-    monkeypatch.setenv("DECKARD_CONFIG", str(cfg_path))
+    monkeypatch.setenv("SARI_CONFIG", str(cfg_path))
     results = doctor_tool._check_db(str(tmp_path))
     assert any(r["name"] == "DB Existence" and r["passed"] is False for r in results)
 

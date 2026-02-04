@@ -7,7 +7,7 @@ from typing import Any, Dict
 from sari.mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_text
 
 
-def execute_deckard_guide(args: Dict[str, Any]) -> Dict[str, Any]:
+def execute_sari_guide(args: Dict[str, Any]) -> Dict[str, Any]:
     text = (
         "💡 Sari - Agentic Search Workflow Guide\n\n"
         "이 도구는 대규모 코드베이스에서 당신의 '외부 기억' 역할을 합니다. "

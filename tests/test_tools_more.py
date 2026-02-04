@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import pytest
 
-from sari.mcp.tools import deckard_guide as sari_guide
+from sari.mcp.tools import guide as sari_guide
 from sari.mcp.tools import repo_candidates as repo_candidates_tool
 from sari.mcp.tools import search_symbols as search_symbols_tool
 from sari.mcp.tools import search_api_endpoints as search_api_endpoints_tool
@@ -64,7 +64,7 @@ class SqliteDB:
 
 
 def test_sari_guide_pack():
-    res = sari_guide.execute_deckard_guide({})
+    res = sari_guide.execute_sari_guide({})
     text = res["content"][0]["text"]
     assert text.startswith("PACK1 tool=sari_guide ok=true")
 

@@ -33,7 +33,7 @@ def _load_server_info() -> Optional[Dict]:
 
 
 def _load_cfg() -> Dict:
-    env_cfg = os.environ.get("DECKARD_CONFIG")
+    env_cfg = os.environ.get("SARI_CONFIG")
     if env_cfg:
         try:
             with open(env_cfg, "r", encoding="utf-8") as f:
@@ -72,12 +72,12 @@ def _is_loopback(host: str) -> bool:
 
 
 def _enforce_loopback(host: str) -> None:
-    if os.environ.get("LOCAL_SEARCH_ALLOW_NON_LOOPBACK") == "1":
+    if os.environ.get("SARI_ALLOW_NON_LOOPBACK") == "1":
         return
     if not _is_loopback(host):
         raise RuntimeError(
             f"sari loopback-only: server_host must be 127.0.0.1/localhost/::1 (got={host}). "
-            "Set LOCAL_SEARCH_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
+            "Set SARI_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
         )
 
 

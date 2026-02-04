@@ -115,7 +115,7 @@ def test_http_server_port_conflict(monkeypatch, tmp_path):
     port = sock.getsockname()[1]
     db = DummyDB()
     indexer = DummyIndexer(str(tmp_path))
-    monkeypatch.setenv("DECKARD_HTTP_API_PORT_STRATEGY", "auto")
+    monkeypatch.setenv("SARI_HTTP_API_PORT_STRATEGY", "auto")
     httpd, actual_port = serve_forever("127.0.0.1", port, db, indexer, version="1.0", workspace_root=str(tmp_path))
     try:
         assert actual_port != port
@@ -130,7 +130,7 @@ def test_http_server_port_conflict_strict(monkeypatch, tmp_path):
     port = sock.getsockname()[1]
     db = DummyDB()
     indexer = DummyIndexer(str(tmp_path))
-    monkeypatch.setenv("DECKARD_HTTP_API_PORT_STRATEGY", "strict")
+    monkeypatch.setenv("SARI_HTTP_API_PORT_STRATEGY", "strict")
     try:
         try:
             serve_forever("127.0.0.1", port, db, indexer, version="1.0", workspace_root=str(tmp_path))

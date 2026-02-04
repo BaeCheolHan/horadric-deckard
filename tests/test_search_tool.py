@@ -102,13 +102,13 @@ def test_search_tool_root_ids_out_of_scope(tmp_path):
 
 
 def test_search_tool_json_mode(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     db = DummyDB()
     engine = DummyEngineEmbedded()
     roots = [str(tmp_path)]
     res = execute_search({"query": "hello"}, db, DummyLogger(), roots, engine=engine)
     assert res.get("meta", {}).get("engine") == "embedded"
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_search_tool_invalid_args(tmp_path):

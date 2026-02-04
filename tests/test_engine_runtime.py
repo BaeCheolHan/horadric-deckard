@@ -163,11 +163,11 @@ def test_cjk_space_helpers():
 
 def test_resolve_body_tokenizer_env(monkeypatch, tmp_path):
     eng = engine_runtime.EmbeddedEngine(DummyDB(), DummyCfg(), [str(tmp_path)])
-    monkeypatch.setenv("DECKARD_ENGINE_TOKENIZER", "latin")
+    monkeypatch.setenv("SARI_ENGINE_TOKENIZER", "latin")
     assert eng._resolve_body_tokenizer() == "tokenizer_latin"
-    monkeypatch.setenv("DECKARD_ENGINE_TOKENIZER", "cjk")
+    monkeypatch.setenv("SARI_ENGINE_TOKENIZER", "cjk")
     assert eng._resolve_body_tokenizer() == "tokenizer_cjk"
-    monkeypatch.setenv("DECKARD_ENGINE_TOKENIZER", "auto")
+    monkeypatch.setenv("SARI_ENGINE_TOKENIZER", "auto")
     assert eng._resolve_body_tokenizer() == "tokenizer_cjk"
 
 
@@ -215,9 +215,9 @@ def test_register_tokenizers_best_effort(tmp_path):
 
 
 def test_engine_limits_clamp(monkeypatch, tmp_path):
-    monkeypatch.setenv("DECKARD_ENGINE_MEM_MB", "128")
-    monkeypatch.setenv("DECKARD_ENGINE_INDEX_MEM_MB", "512")
-    monkeypatch.setenv("DECKARD_ENGINE_THREADS", "999")
+    monkeypatch.setenv("SARI_ENGINE_MEM_MB", "128")
+    monkeypatch.setenv("SARI_ENGINE_INDEX_MEM_MB", "512")
+    monkeypatch.setenv("SARI_ENGINE_THREADS", "999")
     eng = EmbeddedEngine(DummyDB(), DummyCfg(), [str(tmp_path)])
     mem_mb, index_mem_mb, threads = eng._engine_limits()
     assert mem_mb == 128
@@ -237,8 +237,8 @@ def test_engine_status_not_installed(monkeypatch, tmp_path):
 
 
 def test_engine_index_writer_signature(monkeypatch, tmp_path):
-    monkeypatch.setenv("DECKARD_ENGINE_INDEX_MEM_MB", "64")
-    monkeypatch.setenv("DECKARD_ENGINE_THREADS", "2")
+    monkeypatch.setenv("SARI_ENGINE_INDEX_MEM_MB", "64")
+    monkeypatch.setenv("SARI_ENGINE_THREADS", "2")
     eng = EmbeddedEngine(DummyDB(), DummyCfg(), [str(tmp_path)])
     idx = DummyIndex()
     _ = eng._index_writer(idx)
@@ -247,9 +247,9 @@ def test_engine_index_writer_signature(monkeypatch, tmp_path):
 
 
 def test_engine_index_version_write(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_ENGINE_MEM_MB", "128")
-    monkeypatch.setenv("DECKARD_ENGINE_INDEX_MEM_MB", "64")
-    monkeypatch.setenv("DECKARD_ENGINE_THREADS", "1")
+    monkeypatch.setenv("SARI_ENGINE_MEM_MB", "128")
+    monkeypatch.setenv("SARI_ENGINE_INDEX_MEM_MB", "64")
+    monkeypatch.setenv("SARI_ENGINE_THREADS", "1")
     eng = EmbeddedEngine(DummyDB(), DummyCfg(), [str(tmp_path)])
     eng._index_dir = tmp_path / "idx"
     eng._index_version_path = eng._index_dir / "index_version.json"

@@ -128,7 +128,7 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
             warnings.append(f"tokenizer bundle not found for {tag or 'platform'}")
         # Smart engine suggestion (sqlite -> embedded) for large workspaces
         try:
-            threshold = int(os.environ.get("DECKARD_ENGINE_SUGGEST_FILES", "10000") or 10000)
+            threshold = int(os.environ.get("SARI_ENGINE_SUGGEST_FILES", "10000") or 10000)
         except (TypeError, ValueError):
             threshold = 10000
         file_count = int(status_data.get("indexed_files") or 0)

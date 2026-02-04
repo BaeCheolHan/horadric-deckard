@@ -17,6 +17,13 @@ logger = logging.getLogger(__name__)
 def _expanduser(p: str) -> str:
     return os.path.expanduser(p)
 
+def _get_env_any(key_suffix: str, default: str = None) -> str:
+    """Helper to check SARI_ prefix."""
+    val = os.environ.get(f"SARI_{key_suffix}")
+    if val is not None:
+        return val
+    return default
+
 
 @dataclass(frozen=True)
 class Config:
@@ -177,20 +184,16 @@ class Config:
         defaults = Config.get_defaults(primary_root)
 
         # Support port override (legacy)
-        port_override = os.environ.get("SARI_PORT") or os.environ.get("LOCAL_SEARCH_PORT_OVERRIDE")
+        port_override = _get_env_any("PORT") or _get_env_any("PORT_OVERRIDE")
         server_port = int(port_override) if port_override else int(raw.get("server_port", defaults["server_port"]))
 
         # HTTP API port override (SSOT)
-        http_port_override = (
-            os.environ.get("SARI_HTTP_API_PORT")
-            or os.environ.get("SARI_HTTP_PORT")
-            or os.environ.get("LOCAL_SEARCH_HTTP_PORT")
-        )
+        http_port_override = _get_env_any("HTTP_API_PORT") or _get_env_any("HTTP_PORT")
         http_api_port = int(http_port_override) if http_port_override else int(raw.get("http_api_port", defaults["http_api_port"]))
 
         # Unified DB path resolution
         # Priority: Env > Config File > Default(primary_root)
-        env_db_path = (os.environ.get("SARI_DB_PATH") or os.environ.get("LOCAL_SEARCH_DB_PATH") or "").strip()
+        env_db_path = (_get_env_any("DB_PATH") or "").strip()
 
         db_path = ""
         if env_db_path:
@@ -234,15 +237,15 @@ class Config:
         )
 
         # --- Write-back (Persist) Logic ---
-        persist_flag = os.environ.get("SARI_PERSIST_ROOTS", os.environ.get("SARI_PERSIST_PATHS", "0")).strip().lower()
+        persist_flag = (_get_env_any("PERSIST_ROOTS") or _get_env_any("PERSIST_PATHS") or "0").strip().lower()
         should_persist = persist_flag in ("1", "true", "yes", "on")
 
         if should_persist and path:
             extra = {
-                "install_dir": (os.environ.get("SARI_INSTALL_DIR") or "").strip(),
-                "data_dir": (os.environ.get("SARI_DATA_DIR") or "").strip(),
-                "db_path": (os.environ.get("SARI_DB_PATH") or "").strip(),
-                "config_path": (os.environ.get("SARI_CONFIG") or "").strip(),
+                "install_dir": (_get_env_any("INSTALL_DIR") or "").strip(),
+                "data_dir": (_get_env_any("DATA_DIR") or "").strip(),
+                "db_path": (_get_env_any("DB_PATH") or "").strip(),
+                "config_path": (_get_env_any("CONFIG") or "").strip(),
             }
             cfg.save_paths_only(path, extra_paths=extra)
 

@@ -34,7 +34,7 @@ def main() -> int:
     workspace_root = WorkspaceManager.resolve_workspace_root()
 
     # Set env var so Config can pick it up
-    os.environ["LOCAL_SEARCH_WORKSPACE_ROOT"] = workspace_root
+    os.environ["SARI_WORKSPACE_ROOT"] = workspace_root
 
     cfg_path = resolve_config_path(workspace_root)
 
@@ -50,7 +50,7 @@ def main() -> int:
 
     # Security hardening: loopback-only by default.
     # Allow opt-in override only when explicitly requested.
-    allow_non_loopback = os.environ.get("LOCAL_SEARCH_ALLOW_NON_LOOPBACK") == "1"
+    allow_non_loopback = os.environ.get("SARI_ALLOW_NON_LOOPBACK") == "1"
     host = (cfg.http_api_host or "127.0.0.1").strip()
     try:
         is_loopback = host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
@@ -61,7 +61,7 @@ def main() -> int:
     if (not is_loopback) and (not allow_non_loopback):
         raise SystemExit(
             f"sari refused to start: server_host must be loopback only (127.0.0.1/localhost/::1). got={host}. "
-            "Set LOCAL_SEARCH_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
+            "Set SARI_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
         )
 
     # Workspace-local DB path enforcement (multi-workspace support)

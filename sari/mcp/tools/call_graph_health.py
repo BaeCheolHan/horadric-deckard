@@ -16,17 +16,17 @@ except Exception:
 
 
 def _load_plugins() -> List[str]:
-    mod_path = os.environ.get("DECKARD_CALLGRAPH_PLUGIN", "").strip()
+    mod_path = os.environ.get("SARI_CALLGRAPH_PLUGIN", "").strip()
     if not mod_path:
         return []
     return [m.strip() for m in mod_path.split(",") if m.strip()]
 
 
 def _parse_manifest() -> Dict[str, Any]:
-    manifest = os.environ.get("DECKARD_CALLGRAPH_PLUGIN_MANIFEST", "").strip()
+    manifest = os.environ.get("SARI_CALLGRAPH_PLUGIN_MANIFEST", "").strip()
     if not manifest:
         return {"path": "", "valid": True, "plugins": [], "errors": []}
-    strict = os.environ.get("DECKARD_CALLGRAPH_PLUGIN_MANIFEST_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
+    strict = os.environ.get("SARI_CALLGRAPH_PLUGIN_MANIFEST_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
     errors: List[str] = []
     try:
         path = Path(manifest).expanduser().resolve()

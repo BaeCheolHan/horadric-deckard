@@ -28,16 +28,16 @@ def test_list_files_pack(tmp_path):
 
 
 def test_list_files_json_summary(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     res = execute_list_files({}, DummyDB(), DummyLogger(), [str(tmp_path)])
     assert res.get("meta", {}).get("mode") == "summary"
     payload = res["content"][0]["text"]
     assert len(payload.encode("utf-8")) < 2048
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_list_files_json_detail(tmp_path, monkeypatch):
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_FORMAT", "json")
     res = execute_list_files({"repo": "repo"}, DummyDB(), DummyLogger(), [str(tmp_path)])
     assert res.get("files")
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)

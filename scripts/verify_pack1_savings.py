@@ -48,12 +48,12 @@ def run_test():
 
     for tool_name, tool_func, args in cases:
         # JSON Run
-        os.environ["DECKARD_FORMAT"] = "json"
+        os.environ["SARI_FORMAT"] = "json"
         res_json = tool_func(args, db, logger)
         json_bytes = len(res_json["content"][0]["text"].encode("utf-8"))
 
         # PACK1 Run
-        os.environ["DECKARD_FORMAT"] = "pack"
+        os.environ["SARI_FORMAT"] = "pack"
         res_pack = tool_func(args, db, logger)
         pack_bytes = len(res_pack["content"][0]["text"].encode("utf-8"))
 

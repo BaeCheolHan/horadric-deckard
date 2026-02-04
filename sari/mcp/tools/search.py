@@ -106,7 +106,7 @@ def execute_search(
         index_version = st.index_version
         if engine_mode == "embedded" and not st.engine_ready:
             if st.reason == "NOT_INSTALLED":
-                auto_install = (os.environ.get("DECKARD_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
+                auto_install = (os.environ.get("SARI_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
                 if not auto_install:
                     return mcp_response(
                         "search",

@@ -33,8 +33,8 @@ Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.
         "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"
       ],
       "env": {
-        "DECKARD_WORKSPACE_ROOT": "/path/to/your/project",
-        "DECKARD_RESPONSE_COMPACT": "1"
+        "SARI_WORKSPACE_ROOT": "/path/to/your/project",
+        "SARI_RESPONSE_COMPACT": "1"
       }
     }
   }
@@ -56,8 +56,8 @@ Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.
         "irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y; & $env:LOCALAPPDATA\sari\bootstrap.bat --transport stdio"
       ],
       "env": {
-        "DECKARD_WORKSPACE_ROOT": "C:\\path\\to\\your\\project",
-        "DECKARD_RESPONSE_COMPACT": "1"
+        "SARI_WORKSPACE_ROOT": "C:\\path\\to\\your\\project",
+        "SARI_RESPONSE_COMPACT": "1"
       }
     }
   }
@@ -65,6 +65,32 @@ Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.
 ```
 
 ---
+
+### Gemini CLI
+
+Gemini CLI reads MCP servers from `settings.json`. Add a Sari entry to your Gemini settings and restart the CLI. citeturn0search1turn0search5
+
+**Settings file locations:**
+- **macOS/Linux:** `~/.gemini/settings.json`
+- **Windows:** `%USERPROFILE%\.gemini\settings.json` citeturn0search5
+
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh --transport stdio"
+      ],
+      "env": {
+        "SARI_WORKSPACE_ROOT": "/path/to/your/project",
+        "SARI_RESPONSE_COMPACT": "1"
+      }
+    }
+  }
+}
+```
 
 
 ### Option 2: Manual Installation (Pip)
@@ -85,74 +111,87 @@ python3 -m sari --transport stdio
 
 Variables are categorized into **Installation-time** and **Runtime** settings.
 
+### How to set environment variables
+
+- **MCP Client**: Add to the `env` block of your MCP server configuration.
+- **CLI**: Prefix the command, e.g., `SARI_ENGINE_MODE=sqlite sari status`.
+
+```json
+"env": {
+  "SARI_WORKSPACE_ROOT": "/path/to/project",
+  "SARI_ENGINE_TOKENIZER": "cjk"
+}
+```
+
 ### A. Installation & Bootstrapping
 Settings affecting the installation scripts (`install.py`, `bootstrap.sh`).
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `XDG_DATA_HOME` | Custom data directory for installation. Sari installs to `$XDG_DATA_HOME/sari`. | `~/.local/share` |
-| `DECKARD_SKIP_INSTALL` | Set `1` to skip automatic pip install/upgrade on startup. Useful for development or offline usage. | `0` |
-| `DECKARD_NO_INTERACTIVE`| Set `1` to disable interactive prompts during installation (assumes 'yes'). | `0` |
+| `SARI_SKIP_INSTALL` | Set `1` to skip automatic pip install/upgrade on startup. Useful for development or offline usage. | `0` |
+| `SARI_NO_INTERACTIVE`| Set `1` to disable interactive prompts during installation (assumes 'yes'). | `0` |
 
 ### B. System & Runtime
 Settings controlling the MCP server loop and behaviors. Add these to your `env` config.
 
 #### 1. Core & System
-Essential settings for basic operation.
+Essential settings for basic operation. (`SARI_` prefix is also supported for backward compatibility).
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DECKARD_WORKSPACE_ROOT` | **(Required)** Absolute path to the project root. Auto-detected if omitted. | Auto-detect |
+| `SARI_WORKSPACE_ROOT` | **(Required)** Absolute path to the project root. Auto-detected if omitted. | Auto-detect |
 | `SARI_ROOTS_JSON` | JSON array of strings for multiple workspace roots. e.g., `["/path/a", "/path/b"]` | - |
-| `DECKARD_DB_PATH` | Custom path for the SQLite database file. | `~/.local/share/sari/data/<hash>/index.db` |
-| `DECKARD_CONFIG` | Path to a specific config file to load. | `~/.config/sari/config.json` |
-| `DECKARD_RESPONSE_COMPACT` | Minify JSON responses (`pack` format) to save LLM tokens. Set `0` for pretty-print debugging. | `1` (Enabled) |
-| `DECKARD_FORMAT` | Output format for CLI tools. `pack` (text-based) or `json`. | `pack` |
+| `SARI_DB_PATH` | Custom path for the SQLite database file. | `~/.local/share/sari/data/<hash>/index.db` |
+| `SARI_CONFIG` | Path to a specific config file to load. | `~/.config/sari/config.json` |
+| `SARI_RESPONSE_COMPACT` | Minify JSON responses (`pack` format) to save LLM tokens. Set `0` for pretty-print debugging. | `1` (Enabled) |
+| `SARI_FORMAT` | Output format for CLI tools. `pack` (text-based) or `json`. | `pack` |
 
 #### 2. Search Engine
 Settings to tune search quality and backend behavior.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DECKARD_ENGINE_MODE` | Search backend. `embedded` uses Tantivy (faster, smart ranking), `sqlite` uses FTS5 (slower, fallback). | `embedded` |
-| `DECKARD_ENGINE_TOKENIZER` | Tokenizer strategy. `auto` (detects), `cjk` (optimized for KR/CN/JP), `latin` (standard). | `auto` |
-| `DECKARD_ENGINE_AUTO_INSTALL` | Automatically install engine binaries (Tantivy) if missing. | `1` (Enabled) |
-| `DECKARD_ENGINE_SUGGEST_FILES`| File count threshold to suggest upgrading to Tantivy engine in status checks. | `10000` |
-| `DECKARD_LINDERA_DICT_PATH` | Path to custom Lindera dictionary for CJK tokenization (Advanced). | - |
+| `SARI_ENGINE_MODE` | Search backend. `embedded` uses Tantivy (faster, smart ranking), `sqlite` uses FTS5 (slower, fallback). | `embedded` |
+| `SARI_ENGINE_TOKENIZER` | Tokenizer strategy. `auto` (detects), `cjk` (optimized for KR/CN/JP), `latin` (standard). | `auto` |
+| `SARI_ENGINE_AUTO_INSTALL` | Automatically install engine binaries (Tantivy) if missing. | `1` (Enabled) |
+| `SARI_ENGINE_SUGGEST_FILES`| File count threshold to suggest upgrading to Tantivy engine in status checks. | `10000` |
+| `SARI_LINDERA_DICT_PATH` | Path to custom Lindera dictionary for CJK tokenization (Advanced). | - |
 
 #### 3. Indexing & Performance
 Fine-tune resource usage and concurrency.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DECKARD_COALESCE_SHARDS` | Number of lock shards for indexing concurrency. Increase for massive repos with frequent changes. | `16` |
-| `DECKARD_PARSE_TIMEOUT_SECONDS`| Timeout per file parsing in seconds. Set `0` to disable timeout. Prevents parser hangs. | `0` |
-| `DECKARD_PARSE_TIMEOUT_WORKERS`| Worker threads for parsing with timeout. | `2` |
-| `DECKARD_MAX_PARSE_BYTES` | Max file size to attempt parsing (bytes). Larger files are skipped or sampled. | `16MB` |
-| `DECKARD_MAX_AST_BYTES` | Max file size to attempt AST extraction (bytes). | `8MB` |
-| `DECKARD_GIT_CHECKOUT_DEBOUNCE`| Seconds to wait after git checkout before starting bulk indexing. | `3.0` |
-| `DECKARD_FOLLOW_SYMLINKS` | Follow symbolic links during file scanning. **Caution:** May cause infinite loops if circular links exist. | `0` (Disabled) |
-| `DECKARD_READ_MAX_BYTES` | Max bytes returned by `read_file` tool. Prevents context overflow. | `1MB` |
+| `SARI_COALESCE_SHARDS` | Number of lock shards for indexing concurrency. Increase for massive repos with frequent changes. | `16` |
+| `SARI_PARSE_TIMEOUT_SECONDS`| Timeout per file parsing in seconds. Set `0` to disable timeout. Prevents parser hangs. | `0` |
+| `SARI_PARSE_TIMEOUT_WORKERS`| Worker threads for parsing with timeout. | `2` |
+| `SARI_MAX_PARSE_BYTES` | Max file size to attempt parsing (bytes). Larger files are skipped or sampled. | `16MB` |
+| `SARI_MAX_AST_BYTES` | Max file size to attempt AST extraction (bytes). | `8MB` |
+| `SARI_GIT_CHECKOUT_DEBOUNCE`| Seconds to wait after git checkout before starting bulk indexing. | `3.0` |
+| `SARI_FOLLOW_SYMLINKS` | Follow symbolic links during file scanning. **Caution:** May cause infinite loops if circular links exist. | `0` (Disabled) |
+| `SARI_READ_MAX_BYTES` | Max bytes returned by `read_file` tool. Prevents context overflow. | `1MB` |
 
 #### 4. Network & Security
 Connectivity settings for the daemon.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DECKARD_DAEMON_HOST` | Host address for the background daemon. | `127.0.0.1` |
-| `DECKARD_DAEMON_PORT` | TCP port for the daemon. | `47779` |
-| `DECKARD_HTTP_API_PORT` | Port for the HTTP API server (optional). | `47777` |
-| `DECKARD_ALLOW_NON_LOOPBACK` | Allow connections from non-localhost IPs. **Security Risk:** Only enable in trusted networks. | `0` (Disabled) |
+| `SARI_DAEMON_HOST` | Host address for the background daemon. | `127.0.0.1` |
+| `SARI_DAEMON_PORT` | TCP port for the daemon. | `47779` |
+| `SARI_HTTP_API_PORT` | Port for the HTTP API server (optional). | `47777` |
+| `SARI_ALLOW_NON_LOOPBACK` | Allow connections from non-localhost IPs. **Security Risk:** Only enable in trusted networks. | `0` (Disabled) |
 
 #### 5. Advanced / Debug
 Developer options for debugging and plugin extension.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DECKARD_CALLGRAPH_PLUGIN` | Python module path for custom static analysis plugin. | - |
-| `DECKARD_DRYRUN_LINT` | Enable linter checks (ruff/eslint) in `dry_run_diff` tool. | `0` |
-| `DECKARD_DLQ_POLL_SECONDS` | Interval to retry failed indexing tasks (Dead Letter Queue). | `60` |
-| `DECKARD_LOG_LEVEL` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `INFO` |
+| `SARI_LOG_LEVEL` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `INFO` |
+| `SARI_DRYRUN_LINT` | Enable syntax checking (linting) in `dry-run-diff`. | `0` (Disabled) |
+| `SARI_PERSIST_ROOTS` | Set `1` to persist detected roots to `config.json`. | `0` (Disabled) |
+| `SARI_CALLGRAPH_PLUGIN` | Python module path for custom static analysis plugin. | - |
+| `SARI_DLQ_POLL_SECONDS` | Interval to retry failed indexing tasks (Dead Letter Queue). | `60` |
 
 ---
 
@@ -218,7 +257,7 @@ curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | 
 
 The uninstall command also scans your home directory for `.codex/tools/sari` caches and removes them (best effort).
 
-If you set `SARI_CONFIG` or `DECKARD_CONFIG` to a custom path and want that file removed too, pass:
+If you set `SARI_CONFIG` or `SARI_CONFIG` to a custom path and want that file removed too, pass:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - --uninstall --force-config

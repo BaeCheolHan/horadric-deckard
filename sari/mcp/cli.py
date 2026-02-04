@@ -55,8 +55,9 @@ DEFAULT_HTTP_PORT = 47777
 
 def get_daemon_address():
     """Get daemon host and port from environment or defaults."""
-    host = os.environ.get("DECKARD_DAEMON_HOST", DEFAULT_HOST)
-    port = int(os.environ.get("DECKARD_DAEMON_PORT", DEFAULT_PORT))
+    # PRIORITY: SARI_ Only
+    host = os.environ.get("SARI_DAEMON_HOST", DEFAULT_HOST)
+    port = int(os.environ.get("SARI_DAEMON_PORT", DEFAULT_PORT))
     return host, port
 
 
@@ -114,40 +115,8 @@ def _enforce_loopback(host: str) -> None:
 def _get_http_host_port() -> tuple[str, int]:
     """Get active HTTP server address with Environment priority ."""
     # 0. Environment Override (Highest Priority for testing/isolation)
-    env_host = (
-        os.environ.get("DECKARD_HTTP_API_HOST")
-        or os.environ.get("DECKARD_HTTP_HOST")
-        or os.environ.get("LOCAL_SEARCH_HTTP_HOST")
-        or os.environ.get("DECKARD_HOST")
-    )
-    env_port_raw = (
-        os.environ.get("DECKARD_HTTP_API_PORT")
-        or os.environ.get("DECKARD_HTTP_PORT")
-        or os.environ.get("LOCAL_SEARCH_HTTP_PORT")
-        or os.environ.get("DECKARD_PORT")
-    )
-    env_port = None if env_port_raw in (None, "", "0") else env_port_raw
-    if env_host or env_port:
-        return str(env_host or DEFAULT_HTTP_HOST), int(env_port or DEFAULT_HTTP_PORT)
-
-    workspace_root = WorkspaceManager.resolve_workspace_root()
-
-    # 1. Try Global Registry
-    try:
-        inst = ServerRegistry().get_instance(workspace_root)
-        if inst and inst.get("port"):
-            return str(inst.get("host", DEFAULT_HTTP_HOST)), int(inst["port"])
-    except Exception:
-        pass
-
-    # 2. Legacy server.json
-    server_info = _load_server_info(workspace_root)
-    if server_info:
-        try:
-            return str(server_info.get("host", DEFAULT_HTTP_HOST)), int(server_info.get("port", DEFAULT_HTTP_PORT))
-        except Exception:
-            pass
-
+    # PRIORITY: SARI_
+    env_host = os.environ.get("SARI_HTTP_API_HOST") or os.environ.get("SARI_HTTP_HOST")
     # 3. Fallback to Config
     cfg = _load_http_config(workspace_root) or {}
     host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
@@ -617,7 +586,7 @@ def cmd_dry_run_diff(args):
     db, roots, _ = _load_local_db(args.workspace)
     try:
         if args.lint:
-            os.environ["DECKARD_DRYRUN_LINT"] = "1"
+            os.environ["SARI_DRYRUN_LINT"] = "1"
         payload = build_dry_run_diff({"path": args.path, "content": args.content}, db, roots)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0

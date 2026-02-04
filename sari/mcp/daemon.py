@@ -9,10 +9,9 @@ from pathlib import Path
 from sari.core.workspace import WorkspaceManager
 
 def _resolve_log_dir() -> Path:
-    for env_key in ["DECKARD_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
-        val = (os.environ.get(env_key) or "").strip()
-        if val:
-            return Path(os.path.expanduser(val)).resolve()
+    val = (os.environ.get("SARI_LOG_DIR") or "").strip()
+    if val:
+        return Path(os.path.expanduser(val)).resolve()
     return WorkspaceManager.get_global_data_dir()
 
 def _init_logging() -> None:
@@ -45,8 +44,8 @@ PID_FILE = WorkspaceManager.get_global_data_dir() / "daemon.pid"
 
 class SariDaemon:
     def __init__(self):
-        self.host = os.environ.get("DECKARD_DAEMON_HOST", DEFAULT_HOST)
-        self.port = int(os.environ.get("DECKARD_DAEMON_PORT", DEFAULT_PORT))
+        self.host = os.environ.get("SARI_DAEMON_HOST", DEFAULT_HOST)
+        self.port = int(os.environ.get("SARI_DAEMON_PORT", DEFAULT_PORT))
         self.server = None
 
     def _write_pid(self):

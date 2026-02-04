@@ -85,25 +85,17 @@ def _symbol_id(path: str, kind: str, qualname: str) -> str:
     return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
 def _get_env_any(key_suffix: str, default: Any = None) -> Any:
-    for prefix in ("SARI_", "DECKARD_", "LOCAL_SEARCH_"):
-        val = os.environ.get(f"{prefix}{key_suffix}")
-        if val is not None:
-            return val
+    val = os.environ.get(f"SARI_{key_suffix}")
+    if val is not None:
+        return val
     return default
 
 def _env_flag(name_suffix: str, default: bool = False) -> bool:
-    # Supports SARI_NAME, DECKARD_NAME, etc.
-    # Pass suffix only (e.g. "STARTUP_INDEX") or full legacy name if needed?
-    # To keep it simple, we assume caller passes Suffix or we handle specific mapping.
-    # Existing calls use full name like "SARI_STARTUP_INDEX".
-    # Let's standardize on: try strict key first, then fallback to swapping prefix.
-    
     val = os.environ.get(name_suffix)
     if val is None:
         if name_suffix.startswith("SARI_"):
-            val = os.environ.get(name_suffix.replace("SARI_", "DECKARD_"))
-        elif name_suffix.startswith("DECKARD_"):
-            val = os.environ.get(name_suffix.replace("DECKARD_", "SARI_"))
+            # SARI_ -> (fallback? no hard migration)
+            pass
             
     if val is None:
         return default
@@ -986,7 +978,7 @@ class Indexer:
         self._drain_timeout = 2.0
         self._coalesce_max_keys = 100000
         try:
-            # CHECK SARI_, DECKARD_
+            # CHECK SARI_
             raw = _get_env_any("COALESCE_SHARDS", "16")
             shard_count = int(raw or 16)
         except Exception:

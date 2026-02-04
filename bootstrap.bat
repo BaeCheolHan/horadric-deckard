@@ -32,17 +32,14 @@ if "%~1"=="uninstall" (
     if exist "%ROOT_DIR%\install.py" (
         "%PY%" "%ROOT_DIR%\install.py" --uninstall --no-interactive >nul 2>nul
     ) else (
-        if exist "%INSTALL_DIR%\bootstrap.bat" (
-            call "%INSTALL_DIR%\bootstrap.bat" daemon stop >nul 2>nul
-        )
-        if exist "%INSTALL_DIR%" rd /s /q "%INSTALL_DIR%"
+        "%PY%" -m sari --cmd uninstall --no-interactive >nul 2>nul
     )
     echo [sari] done. >&2
     exit /b 0
 )
 
 :: Auto-install/Update logic
-if not defined DECKARD_BOOTSTRAP_DONE (
+if not defined SARI_BOOTSTRAP_DONE (
     if /I not "%ROOT_DIR%"=="%INSTALL_DIR%" (
         set "NEED_INSTALL=0"
         if not exist "%INSTALL_DIR%\bootstrap.bat" (
@@ -61,7 +58,7 @@ if not defined DECKARD_BOOTSTRAP_DONE (
         if "!NEED_INSTALL!"=="1" (
             if exist "%ROOT_DIR%\install.py" (
                 echo [sari] bootstrap: installing to %INSTALL_DIR%... >&2
-                set "DECKARD_BOOTSTRAP_DONE=1"
+                set "SARI_BOOTSTRAP_DONE=1"
                 "%PY%" "%ROOT_DIR%\install.py" --no-interactive >&2
                 if !ERRORLEVEL! neq 0 (
                     echo [sari] bootstrap: install failed. >&2
@@ -70,7 +67,7 @@ if not defined DECKARD_BOOTSTRAP_DONE (
         )
 
         if exist "%INSTALL_DIR%\bootstrap.bat" (
-            set "DECKARD_BOOTSTRAP_DONE=1"
+            set "SARI_BOOTSTRAP_DONE=1"
             call "%INSTALL_DIR%\bootstrap.bat" %*
             exit /b !ERRORLEVEL!
         )
@@ -86,20 +83,14 @@ for /f "tokens=*" %%v in ('%PY% -c "import importlib,sys; spec=importlib.util.fi
 )
 if /I "%SARI_VERSION%"=="None" set "SARI_VERSION="
 
-:: Check if sari.__main__ exists; fallback to deckard if missing
-"%PY%" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('sari.__main__') else 1)" >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    set "RUN_MOD=sari"
-) else (
-    set "RUN_MOD=deckard"
-)
+set "RUN_MOD=sari"
 
 :: Argument loop for --workspace-root
 set "ARGS="
 :argparse
 if "%~1"=="" goto run
 if "%~1"=="--workspace-root" (
-    set "DECKARD_WORKSPACE_ROOT=%~2"
+    set "SARI_WORKSPACE_ROOT=%~2"
     shift
     shift
     goto argparse

@@ -2,6 +2,7 @@ dist/
 *.egg-info/
 .coverage
 .coveragerc
+htmlcov/
 *.db
 *.db-shm
 *.db-wal

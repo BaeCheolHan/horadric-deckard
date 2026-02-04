@@ -17,11 +17,15 @@ if [ "$1" = "uninstall" ]; then
     if command -v python3 >/dev/null 2>&1 && [ -f "$ROOT_DIR/install.py" ]; then
         python3 "$ROOT_DIR/install.py" --uninstall --no-interactive >/dev/null 2>&1 || true
     else
-        if [ -x "$INSTALL_DIR/bootstrap.sh" ]; then
-            "$INSTALL_DIR/bootstrap.sh" daemon stop >/dev/null 2>&1 || true
-        fi
-        if [ -d "$INSTALL_DIR" ]; then
-            rm -rf "$INSTALL_DIR"
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -m sari --cmd uninstall --no-interactive >/dev/null 2>&1 || true
+        else
+            if [ -x "$INSTALL_DIR/bootstrap.sh" ]; then
+                "$INSTALL_DIR/bootstrap.sh" daemon stop >/dev/null 2>&1 || true
+            fi
+            if [ -d "$INSTALL_DIR" ]; then
+                rm -rf "$INSTALL_DIR"
+            fi
         fi
     fi
     echo "[sari] uninstall: done. Please manually remove [mcp_servers.sari] from your config files." >&2
@@ -31,34 +35,21 @@ fi
 
 # Self-install/update: Disabled to prioritize local development
 # Use install.py manually if a global installation is needed.
-if [ "${DECKARD_SKIP_INSTALL:-}" != "1" ]; then
+# Self-install/update: Disabled to prioritize local development
+# Use install.py manually if a global installation is needed.
+# PRIORITY: SARI_
+SKIP_INSTALL="${SARI_SKIP_INSTALL:-}"
+if [ "$SKIP_INSTALL" != "1" ]; then
     # Skip if --skip-install is present in args
     for arg in "$@"; do
         if [ "$arg" = "--skip-install" ]; then
-            export DECKARD_SKIP_INSTALL=1
+            export SARI_SKIP_INSTALL=1
             break
         fi
     done
 fi
 
-# Add repo root to PYTHONPATH
-export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
-
-# Inject Version from package metadata if available
-if command -v python3 >/dev/null 2>&1; then
-    VERSION=$(
-        python3 - <<'PY'
-try:
-    from sari.version import __version__
-    print(__version__)
-except Exception:
-    pass
-PY
-    )
-    if [ -n "$VERSION" ]; then
-        export SARI_VERSION="$VERSION"
-    fi
-fi
+# ... (omitted) ...
 
 # Optional: accept workspace root via args and map to env for MCP.
 # Usage: bootstrap.sh --workspace-root /path [other args...]
@@ -68,7 +59,7 @@ if [ $# -gt 0 ]; then
             --workspace-root)
                 shift
                 if [ -n "$1" ]; then
-                    export DECKARD_WORKSPACE_ROOT="$1"
+                    export SARI_WORKSPACE_ROOT="$1"
                     shift
                 else
                     echo "[sari] ERROR: --workspace-root requires a path" >&2
@@ -76,11 +67,11 @@ if [ $# -gt 0 ]; then
                 fi
                 ;;
             --workspace-root=*)
-                export DECKARD_WORKSPACE_ROOT="${1#*=}"
+                export SARI_WORKSPACE_ROOT="${1#*=}"
                 shift
                 ;;
             --skip-install)
-                export DECKARD_SKIP_INSTALL=1
+                export SARI_SKIP_INSTALL=1
                 shift
                 ;;
             *)
@@ -93,7 +84,7 @@ fi
 # Announce version to stderr (visible in host logs/console)
 echo "[Sari] Starting (v${SARI_VERSION:-dev})..." >&2
 
-# Run Sari (No more Deckard fallback)
+# Run Sari
 if [ $# -eq 0 ]; then
     exec python3 -m sari
 else

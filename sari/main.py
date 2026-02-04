@@ -66,7 +66,7 @@ def _write_json_settings(cfg_path: Path, command: str, args: List[str], env: dic
 def _cmd_install(host: str, do_print: bool) -> int:
     ssot = WorkspaceManager.resolve_config_path(str(Path.cwd()))
     env = {
-        "DECKARD_CONFIG": ssot,
+        "SARI_CONFIG": ssot,
     }
     args = ["--transport", "stdio", "--format", "pack"]
     command = "sari"
@@ -297,6 +297,9 @@ def run_cmd(argv: List[str]) -> int:
             return _cmd_engine_rebuild()
         if action == "verify":
             return _cmd_engine_verify()
+    if argv[0] == "uninstall":
+        from sari import uninstall as uninstall_mod
+        return uninstall_mod.main(argv[1:])
     print(f"Unknown subcommand: {argv[0]}", file=sys.stderr)
     return 2
 
@@ -329,11 +332,11 @@ def main(argv: List[str] = None) -> int:
         print(LocalSearchMCPServer.SERVER_VERSION)
         return 0
 
-    os.environ["DECKARD_FORMAT"] = ns.format
+    os.environ["SARI_FORMAT"] = ns.format
 
     if ns.http_api:
         if ns.http_api_port:
-            os.environ["DECKARD_HTTP_API_PORT"] = str(ns.http_api_port)
+            os.environ["SARI_HTTP_API_PORT"] = str(ns.http_api_port)
         from sari.core.main import main as http_main
         return http_main()
 

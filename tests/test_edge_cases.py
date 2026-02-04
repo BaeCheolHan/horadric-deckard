@@ -152,8 +152,8 @@ def test_doctor_auto_fix_rescan(tmp_path, monkeypatch):
         json.dumps({"db_path": str(db_path), "workspace_roots": [str(tmp_path)]}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("DECKARD_CONFIG", str(config_path))
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_CONFIG", str(config_path))
+    monkeypatch.setenv("SARI_FORMAT", "json")
 
     # Ensure DB exists
     db = LocalSearchDB(str(db_path))
@@ -167,8 +167,8 @@ def test_doctor_auto_fix_rescan(tmp_path, monkeypatch):
     names = [r["name"] for r in payload.get("results", [])]
     assert "Auto Fix Rescan Start" in names
     assert "Auto Fix Rescan" in names
-    monkeypatch.delenv("DECKARD_CONFIG", raising=False)
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_CONFIG", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_doctor_auto_fix_rescan_skipped(tmp_path, monkeypatch):
@@ -178,8 +178,8 @@ def test_doctor_auto_fix_rescan_skipped(tmp_path, monkeypatch):
         json.dumps({"db_path": str(db_path), "workspace_roots": [str(tmp_path)]}),
         encoding="utf-8",
     )
-    monkeypatch.setenv("DECKARD_CONFIG", str(config_path))
-    monkeypatch.setenv("DECKARD_FORMAT", "json")
+    monkeypatch.setenv("SARI_CONFIG", str(config_path))
+    monkeypatch.setenv("SARI_FORMAT", "json")
     db = LocalSearchDB(str(db_path))
     db.close()
 
@@ -191,8 +191,8 @@ def test_doctor_auto_fix_rescan_skipped(tmp_path, monkeypatch):
     payload = json.loads(text)
     names = [r["name"] for r in payload.get("results", [])]
     assert "Auto Fix Rescan Skipped" in names
-    monkeypatch.delenv("DECKARD_CONFIG", raising=False)
-    monkeypatch.delenv("DECKARD_FORMAT", raising=False)
+    monkeypatch.delenv("SARI_CONFIG", raising=False)
+    monkeypatch.delenv("SARI_FORMAT", raising=False)
 
 
 def test_snippet_update_skipped_on_invalid_remap(tmp_path):

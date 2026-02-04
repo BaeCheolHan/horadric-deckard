@@ -92,8 +92,9 @@ def print_warn(msg):
 
 def confirm(question, default=True):
     """Ask a yes/no question via input()."""
-    if os.environ.get("DECKARD_NO_INTERACTIVE"):
-        return default
+    # Non-interactive mode force (env var)
+    if os.environ.get("SARI_NO_INTERACTIVE") == "1":
+        return True
 
     valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
     prompt = " [Y/n] " if default else " [y/N] "
@@ -112,15 +113,59 @@ def confirm(question, default=True):
             return valid[choice]
         sys.stdout.write("Please respond with 'yes' or 'no'.\n")
 
+# ... (omitted) ...
+
+    def _remove_custom_config():
+        if not args.force_config:
+            return
+        # Check SARI_CONFIG first
+        for env_key in ["SARI_CONFIG"]:
+            val = (os.environ.get(env_key) or "").strip()
+            if not val:
+                continue
+            cfg_path = Path(os.path.expanduser(val))
+            _safe_unlink(cfg_path)
+            # If the config file lives in a sari-named dir, remove that dir too.
+            if cfg_path.parent.name.lower() == "sari":
+                _safe_unlink(cfg_path.parent)
+
+    def _remove_workspace_cache():
+        ws_root = (
+            (args.workspace_root or "").strip()
+            or (os.environ.get("SARI_WORKSPACE_ROOT") or "").strip()
+            or (os.environ.get("SARI_WORKSPACE_ROOT") or "").strip()
+        )
+        if not ws_root:
+            return
+        root = Path(os.path.expanduser(ws_root))
+# ... (omitted) ...
+
+    if args.yes or args.quiet or args.json:
+        os.environ["SARI_NO_INTERACTIVE"] = "1"
+        args.yes = True
+    elif not sys.stdin.isatty():
+        os.environ["SARI_NO_INTERACTIVE"] = "1"
+        args.yes = True
+
 def _create_bootstrap_script(install_dir: Path):
     """Create a bootstrap script that runs 'python -m sari'."""
     if IS_WINDOWS:
         script_path = install_dir / "bootstrap.bat"
+        py = sys.executable
         content = (
             "@echo off\r\n"
             "REM Sari Bootstrap Script (Windows)\r\n"
             "REM Auto-update logic can be added here if needed\r\n"
-            f'\"{sys.executable}\" -m sari %*\r\n'
+            "REM Uninstall helper\r\n"
+            "if \"%~1\"==\"uninstall\" (\r\n"
+            "  if exist \"%~dp0install.py\" (\r\n"
+            f"    \"{py}\" \"%~dp0install.py\" --uninstall --no-interactive\r\n"
+            "  ) else (\r\n"
+            f"    \"{py}\" -m sari --cmd uninstall --no-interactive\r\n"
+            "  )\r\n"
+            "  exit /b 0\r\n"
+            ")\r\n"
+            f"\"{py}\" -m sari %*\r\n"
         )
     else:
         script_path = install_dir / "bootstrap.sh"
@@ -130,6 +175,20 @@ def _create_bootstrap_script(install_dir: Path):
             "# Starts the server in Proxy Mode (stdio <-> Daemon)\n\n"
             "# Optional: Auto-update on start\n"
             "# python3 -m pip install --upgrade sari >/dev/null 2>&1 &\n\n"
+            "# Uninstall helper\n"
+            "if [ \"$1\" = \"uninstall\" ]; then\n"
+            "  if [ -f \"$0\" ]; then\n"
+            "    DIR=\"$( cd \"$( dirname \"${BASH_SOURCE[0]}\" )\" && pwd )\"\n"
+            "  else\n"
+            "    DIR=\"$(pwd)\"\n"
+            "  fi\n"
+            "  if [ -f \"$DIR/install.py\" ]; then\n"
+            "    python3 \"$DIR/install.py\" --uninstall --no-interactive >/dev/null 2>&1 || true\n"
+            "  else\n"
+            "    python3 -m sari --cmd uninstall --no-interactive >/dev/null 2>&1 || true\n"
+            "  fi\n"
+            "  exit 0\n"
+            "fi\n\n"
             "exec python3 -m sari \"$@\"\n"
         )
 
@@ -144,6 +203,7 @@ def do_install(args):
     # Part 1: Handle global installation/update
     perform_global_install = False
     bootstrap_name = "bootstrap.bat" if IS_WINDOWS else "bootstrap.sh"
+    install_source = (os.environ.get("SARI_INSTALL_SOURCE") or "").strip()
 
     if args.update:
         if not args.yes and not confirm(f"Sari will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
@@ -161,20 +221,31 @@ def do_install(args):
     if perform_global_install:
         INSTALL_DIR.mkdir(parents=True, exist_ok=True)
 
+        if args.update and INSTALL_DIR.exists():
+            try:
+                shutil.rmtree(INSTALL_DIR)
+            except Exception:
+                pass
+            INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+
         # 1. Install via Pip
         # Check if we are running inside the sari repository itself
         is_repo = (Path.cwd() / "pyproject.toml").exists() and (Path.cwd() / "sari").exists()
 
-        if is_repo:
+        if install_source:
+            pass
+        elif is_repo:
             print_step("Detected Sari repository. Installing in editable mode...")
             pip_cmd = [sys.executable, "-m", "pip", "install", "-e", "."]
         else:
             print_step("Installing 'sari' package via pip...")
             pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "sari"]
 
-        should_skip = os.environ.get("DECKARD_SKIP_INSTALL") == "1"
+        should_skip = os.environ.get("SARI_SKIP_INSTALL") == "1"
         if should_skip:
-            print_warn("Skipping pip install (DECKARD_SKIP_INSTALL=1)")
+            print_warn("Skipping pip install (SARI_SKIP_INSTALL=1)")
+        elif install_source:
+            print_step("Using SARI_INSTALL_SOURCE (local/clone) - skipping pip install.")
         else:
             try:
                 subprocess.run(
@@ -188,10 +259,44 @@ def do_install(args):
                     print_error(f"Pip error output: {e.stderr.decode('utf-8', errors='replace')}")
                 sys.exit(1)
 
-        # 2. Create Bootstrap Script
+        # 2. Optional: install from source (copy or clone)
+        if install_source:
+            source_path = install_source
+            if source_path.startswith("file://"):
+                source_path = source_path[7:]
+            src = Path(os.path.expanduser(source_path))
+            copied = False
+
+            def _copy_from(src_dir: Path):
+                def _ignore(_, names):
+                    skip = {".git", ".idea", ".vscode", "__pycache__", ".pytest_cache", ".mypy_cache", "htmlcov"}
+                    return {n for n in names if n in skip}
+                shutil.copytree(src_dir, INSTALL_DIR, dirs_exist_ok=True, ignore=_ignore)
+
+            if src.exists():
+                _copy_from(src)
+                copied = True
+            else:
+                tmp_dir = None
+                try:
+                    import tempfile
+                    tmp_dir = Path(tempfile.mkdtemp())
+                    subprocess.run(["git", "clone", install_source, str(tmp_dir)], check=True, capture_output=CONFIG["quiet"])
+                    _copy_from(tmp_dir)
+                    copied = True
+                except Exception:
+                    pass
+                finally:
+                    if tmp_dir and tmp_dir.exists():
+                        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+            if not copied and is_repo:
+                _copy_from(Path.cwd())
+
+        # 3. Create Bootstrap Script
         _create_bootstrap_script(INSTALL_DIR)
 
-        # 3. Create Version File (from installed package)
+        # 4. Create Version File (from installed package)
         try:
             ver_res = subprocess.run(
                 [sys.executable, "-c", "import sari.version; print(sari.version.__version__)"],
@@ -262,7 +367,7 @@ def do_uninstall(args):
     def _remove_custom_config():
         if not args.force_config:
             return
-        for env_key in ["SARI_CONFIG", "DECKARD_CONFIG"]:
+        for env_key in ["SARI_CONFIG"]:
             val = (os.environ.get(env_key) or "").strip()
             if not val:
                 continue
@@ -275,8 +380,7 @@ def do_uninstall(args):
     def _remove_workspace_cache():
         ws_root = (
             (args.workspace_root or "").strip()
-            or (os.environ.get("DECKARD_WORKSPACE_ROOT") or "").strip()
-            or (os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT") or "").strip()
+            or (os.environ.get("SARI_WORKSPACE_ROOT") or "").strip()
         )
         if not ws_root:
             return
@@ -400,10 +504,10 @@ def main():
     CONFIG["verbose"] = args.verbose
 
     if args.yes or args.quiet or args.json:
-        os.environ["DECKARD_NO_INTERACTIVE"] = "1"
+        os.environ["SARI_NO_INTERACTIVE"] = "1"
         args.yes = True
     elif not sys.stdin.isatty():
-        os.environ["DECKARD_NO_INTERACTIVE"] = "1"
+        os.environ["SARI_NO_INTERACTIVE"] = "1"
         args.yes = True
 
     try:

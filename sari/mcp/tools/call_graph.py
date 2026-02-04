@@ -479,10 +479,10 @@ def _manifest_signature(path: str) -> str:
 
 
 def _load_manifest_plugins() -> List[str]:
-    manifest = os.environ.get("DECKARD_CALLGRAPH_PLUGIN_MANIFEST", "").strip()
+    manifest = os.environ.get("SARI_CALLGRAPH_PLUGIN_MANIFEST", "").strip()
     if not manifest:
         return []
-    strict = os.environ.get("DECKARD_CALLGRAPH_PLUGIN_MANIFEST_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
+    strict = os.environ.get("SARI_CALLGRAPH_PLUGIN_MANIFEST_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
     try:
         path = Path(manifest).expanduser().resolve()
         if not path.exists():
@@ -501,8 +501,8 @@ def _load_manifest_plugins() -> List[str]:
 
 
 def _load_plugins() -> List[Any]:
-    mod_path = os.environ.get("DECKARD_CALLGRAPH_PLUGIN", "").strip()
-    manifest = os.environ.get("DECKARD_CALLGRAPH_PLUGIN_MANIFEST", "").strip()
+    mod_path = os.environ.get("SARI_CALLGRAPH_PLUGIN", "").strip()
+    manifest = os.environ.get("SARI_CALLGRAPH_PLUGIN_MANIFEST", "").strip()
     cache_key = f"{mod_path}|{_manifest_signature(manifest)}"
     if _PLUGIN_CACHE.get("key") == cache_key:
         return list(_PLUGIN_CACHE.get("mods") or [])
@@ -544,7 +544,7 @@ def _apply_plugin(direction: str, neighbors: List[Dict[str, Any]], context: Dict
             if hasattr(plugin, "filter_neighbors"):
                 neighbors = plugin.filter_neighbors(direction, neighbors, context)  # type: ignore
         except Exception:
-            logger = os.environ.get("DECKARD_CALLGRAPH_PLUGIN_LOG", "").strip()
+            logger = os.environ.get("SARI_CALLGRAPH_PLUGIN_LOG", "").strip()
             if logger:
                 try:
                     with open(logger, "a", encoding="utf-8") as f:

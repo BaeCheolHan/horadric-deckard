@@ -1,6 +1,6 @@
 # Call Graph Plugins
 
-환경변수 `DECKARD_CALLGRAPH_PLUGIN` 으로 플러그인을 연결할 수 있습니다.
+환경변수 `SARI_CALLGRAPH_PLUGIN` 으로 플러그인을 연결할 수 있습니다.
 
 ## 인터페이스
 

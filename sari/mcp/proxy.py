@@ -235,7 +235,15 @@ def forward_stdin_to_socket(sock, mode_holder):
                     params = obj.get("params") or {}
                     if params.get("rootUri") or params.get("rootPath"):
                         return obj, False
-                    ws = os.environ.get("DECKARD_WORKSPACE_ROOT") or os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT")
+                    if params.get("rootUri") or params.get("rootPath"):
+                        return obj, False
+                    
+                    # PRIORITY: SARI_
+                    ws = None
+                    val = os.environ.get("SARI_WORKSPACE_ROOT")
+                    if val:
+                        ws = val
+                    
                     if not ws:
                         return obj, False
                     params = dict(params)
@@ -273,16 +281,20 @@ def forward_stdin_to_socket(sock, mode_holder):
 def main():
     # Log startup context for diagnostics
     _log_info(
-        "Proxy startup: cwd=%s argv=%s env.DECKARD_WORKSPACE_ROOT=%s env.LOCAL_SEARCH_WORKSPACE_ROOT=%s"
+        "Proxy startup: cwd=%s argv=%s SARI_ROOT=%s"
         % (
             os.getcwd(),
             sys.argv,
-            os.environ.get("DECKARD_WORKSPACE_ROOT"),
-            os.environ.get("LOCAL_SEARCH_WORKSPACE_ROOT"),
+            os.environ.get("SARI_WORKSPACE_ROOT"),
         )
     )
-    host = os.environ.get("DECKARD_DAEMON_HOST", DEFAULT_HOST)
-    port = int(os.environ.get("DECKARD_DAEMON_PORT", DEFAULT_PORT))
+    
+    host = DEFAULT_HOST
+    port = DEFAULT_PORT
+    
+    # Priority: SARI_
+    host = os.environ.get("SARI_DAEMON_HOST", DEFAULT_HOST)
+    port = int(os.environ.get("SARI_DAEMON_PORT", DEFAULT_PORT))
 
     if not start_daemon_if_needed(host, port):
         sys.exit(1)
