@@ -55,10 +55,10 @@ class DebouncedEventHandler(FileSystemEventHandler):
     def on_any_event(self, event):
         if event.is_directory:
             return
-        
+
         # We care about Created, Modified, Moved, Deleted
         # watchdog event types: 'created', 'deleted', 'modified', 'moved'
-        
+
         evt_kind = None
         if event.event_type == 'created':
             evt_kind = FsEventKind.CREATED
@@ -149,7 +149,7 @@ class FileWatcher:
 
         self.observer = Observer()
         try:
-            git_debounce = float(os.environ.get("DECKARD_GIT_CHECKOUT_DEBOUNCE", "3") or 3)
+            git_debounce = float(os.environ.get("SARI_GIT_CHECKOUT_DEBOUNCE", "3") or 3)
         except Exception:
             git_debounce = 3.0
         handler = DebouncedEventHandler(
@@ -158,7 +158,7 @@ class FileWatcher:
             git_callback=self.git_callback,
             git_debounce_seconds=max(1.0, git_debounce),
         )
-        
+
         started_any = False
         for p in self.paths:
             if os.path.exists(p):
@@ -168,7 +168,7 @@ class FileWatcher:
                 except Exception as e:
                     if self.logger:
                         self.logger.log_error(f"Failed to watch path {p}: {e}")
-        
+
         if started_any:
             try:
                 self.observer.start()
@@ -206,7 +206,7 @@ class FileWatcher:
                     pass
             self.observer = Observer()
             try:
-                git_debounce = float(os.environ.get("DECKARD_GIT_CHECKOUT_DEBOUNCE", "3") or 3)
+                git_debounce = float(os.environ.get("SARI_GIT_CHECKOUT_DEBOUNCE", "3") or 3)
             except Exception:
                 git_debounce = 3.0
             handler = DebouncedEventHandler(
@@ -240,7 +240,7 @@ class FileWatcher:
 
     def _monitor_loop(self):
         try:
-            interval = float(os.environ.get("DECKARD_WATCHER_MONITOR_SECONDS", "10"))
+            interval = float(os.environ.get("SARI_WATCHER_MONITOR_SECONDS", "10"))
         except Exception:
             interval = 10.0
         while not self._stop_event.is_set():

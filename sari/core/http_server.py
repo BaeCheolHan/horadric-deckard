@@ -80,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
                 index_version = st.index_version
                 if engine_mode == "embedded" and not st.engine_ready:
                     if st.reason == "NOT_INSTALLED":
-                        auto_install = (os.environ.get("DECKARD_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
+                        auto_install = (os.environ.get("SARI_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
                         if not auto_install:
                             return self._json({"ok": False, "error": "engine not installed", "hint": "sari --cmd engine install"}, status=503)
                         if hasattr(engine, "install"):
@@ -142,15 +142,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, version: str = "dev", workspace_root: str = "") -> tuple:
-    """Start HTTP server with Registry-based port allocation (v2.7.0).
-    
+    """Start HTTP server with Registry-based port allocation.
+
     Returns:
         tuple: (HTTPServer, actual_port)
     """
     import socket
     import sys
     import os
-    
+
     # Try importing registry, fallback if missing
     try:
         from .registry import ServerRegistry  # type: ignore
@@ -174,7 +174,7 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     except Exception:
         BoundHandler.root_ids = []  # type: ignore
 
-    strategy = (os.environ.get("DECKARD_HTTP_API_PORT_STRATEGY") or "auto").strip().lower()
+    strategy = (os.environ.get("SARI_HTTP_API_PORT_STRATEGY") or "auto").strip().lower()
     actual_port = port
     httpd = None
     try:
@@ -190,13 +190,13 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
             actual_port = httpd.server_address[1]
         except OSError:
             raise RuntimeError("Failed to create HTTP server")
-    
+
     if httpd is None:
         raise RuntimeError("Failed to create HTTP server")
 
     actual_port = httpd.server_address[1]
     BoundHandler.server_port = actual_port  # type: ignore
-    
+
     # Register in server.json
     if has_registry and workspace_root:
         try:
@@ -212,7 +212,7 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     # But serve_forever is called in thread usually.
     # The caller (mcp.server) is responsible for unregistering OR we trust 'pid' check.
     # Let's rely on PID check for now (lazy cleanup), but try to unregister if possible.
-    
+
     th = threading.Thread(target=httpd.serve_forever, daemon=True)
     th.start()
     return (httpd, actual_port)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sari Universal Installer/Uninstaller (v2.7.0)
+Sari Universal Installer/Uninstaller
 - Install: pip install sari
 - Uninstall: removes files, cleans configs
 - Features: Interactive/JSON/Quiet modes, Network Diagnostics
@@ -75,7 +75,7 @@ def print_error(msg):
     if CONFIG["json"]:
         _print_json("error", msg)
         return
-        
+
     print(f"{C_RED}[ERROR]{C_RESET} {msg}")
 
 def print_warn(msg):
@@ -89,11 +89,11 @@ def confirm(question, default=True):
     """Ask a yes/no question via input()."""
     if os.environ.get("DECKARD_NO_INTERACTIVE"):
         return default
-    
+
     valid = {"yes": True, "y": True, "ye": True, "no": False, "n": False}
     prompt = " [Y/n] " if default else " [y/N] "
     if default is None: prompt = " [y/n] "
-    
+
     while True:
         sys.stdout.write(question + prompt)
         sys.stdout.flush()
@@ -124,11 +124,11 @@ def _create_bootstrap_script(install_dir: Path):
             "# python3 -m pip install --upgrade sari >/dev/null 2>&1 &\n\n"
             "exec python3 -m sari \"$@\"\n"
         )
-    
+
     script_path.write_text(content, encoding="utf-8")
     if not IS_WINDOWS:
         os.chmod(script_path, 0o755)
-    
+
     print_step(f"Created bootstrap script: {script_path}")
     return script_path
 
@@ -136,7 +136,7 @@ def do_install(args):
     # Part 1: Handle global installation/update
     perform_global_install = False
     bootstrap_name = "bootstrap.bat" if IS_WINDOWS else "bootstrap.sh"
-    
+
     if args.update:
         if not args.yes and not confirm(f"Sari will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
             print_step("Update cancelled. Workspace will still be configured.")
@@ -152,12 +152,21 @@ def do_install(args):
 
     if perform_global_install:
         INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         # 1. Install via Pip
-        print_step("Installing 'sari' package via pip...")
+        # Check if we are running inside the sari repository itself
+        is_repo = (Path.cwd() / "pyproject.toml").exists() and (Path.cwd() / "sari").exists()
+
+        if is_repo:
+            print_step("Detected Sari repository. Installing in editable mode...")
+            pip_cmd = [sys.executable, "-m", "pip", "install", "-e", "."]
+        else:
+            print_step("Installing 'sari' package via pip...")
+            pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "sari"]
+
         try:
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "sari"],
+                pip_cmd,
                 check=True,
                 capture_output=CONFIG["quiet"]
             )
@@ -169,7 +178,7 @@ def do_install(args):
 
         # 2. Create Bootstrap Script
         _create_bootstrap_script(INSTALL_DIR)
-        
+
         # 3. Create Version File (from installed package)
         try:
             ver_res = subprocess.run(
@@ -185,7 +194,7 @@ def do_install(args):
 
     # Part 2: print manual config instructions (no auto config writes)
     print_step("Manual MCP config required (no auto-write).")
-    
+
     if IS_WINDOWS:
         print_success("Add this block to your MCP config (Windows):")
         print(
@@ -226,7 +235,7 @@ def do_uninstall(args):
 
     if not INSTALL_DIR.exists():
         print_warn("Sari is not installed.")
-    
+
     if not args.yes and not confirm("Uninstall Sari? (Deletes DB & Configs)", default=False):
         return
 
@@ -263,12 +272,12 @@ def main():
     parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose")
-    
+
     args = parser.parse_args()
     CONFIG["quiet"] = args.quiet
     CONFIG["json"] = args.json
     CONFIG["verbose"] = args.verbose
-    
+
     if args.yes or args.quiet or args.json:
         os.environ["DECKARD_NO_INTERACTIVE"] = "1"
         args.yes = True

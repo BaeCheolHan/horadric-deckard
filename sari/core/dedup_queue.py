@@ -39,13 +39,13 @@ class DedupQueue:
 
     def get_batch(self, max_size: int = 50, timeout: float = 0.1) -> List[Any]:
         """
-        Get up to max_size items. 
-        Note: You must assume ownership of these items. 
+        Get up to max_size items.
+        Note: You must assume ownership of these items.
         We remove them from 'pending' set when we return them??
         Wait, usually 'task_done' is called after processing.
-        But for 'Dedup', if we pull it out, it's no longer 'pending in queue', 
+        But for 'Dedup', if we pull it out, it's no longer 'pending in queue',
         so we should allow re-queueing (e.g. if file changes again while we process).
-        So removing from 'pending' set immediately upon 'get' is correct for ensuring 
+        So removing from 'pending' set immediately upon 'get' is correct for ensuring
         "If it changes AGAIN, we queue it AGAIN".
         """
         items = []
@@ -57,7 +57,7 @@ class DedupQueue:
             with self.lock:
                 self.pending.discard(item)
             self.q.task_done() # We count 'task_done' regarding the queue generic logic
-            
+
             # Non-blocking for rest
             while len(items) < max_size:
                 try:
@@ -70,7 +70,7 @@ class DedupQueue:
                     break
         except queue.Empty:
             pass
-            
+
         return items
 
     def qsize(self) -> int:

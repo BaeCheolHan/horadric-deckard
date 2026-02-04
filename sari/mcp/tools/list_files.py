@@ -24,7 +24,7 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
     """Execute list_files tool."""
     start_ts = time.time()
     root_ids = resolve_root_ids(roots)
-    
+
     # Parse args
     repo = args.get("repo")
     path_pattern = args.get("path_pattern")
@@ -34,7 +34,7 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
         offset = int(args.get("offset", 0))
     except (ValueError, TypeError):
         offset = 0
-        
+
     try:
         limit_arg = int(args.get("limit", 100))
     except (ValueError, TypeError):
@@ -175,20 +175,20 @@ def execute_list_files(args: Dict[str, Any], db: LocalSearchDB, logger: Telemetr
 
     # Execute and Telemetry
     response = mcp_response("list_files", build_pack, build_json)
-    
+
     # Telemetry logging
     latency_ms = int((time.time() - start_ts) * 1000)
     # Estimate payload size (rough)
     payload_text = response["content"][0]["text"]
     payload_bytes = len(payload_text.encode('utf-8'))
-    
+
     # Log simplified telemetry
     repo_val = repo or "all"
     item_count = payload_text.count('\n') if "PACK1" in payload_text else 0 # Approximation for PACK
     if "PACK1" not in payload_text:
          # Rough count for JSON without parsing
          item_count = payload_text.count('"path":')
-         
+
     logger.log_telemetry(f"tool=list_files repo='{repo_val}' items={item_count} payload_bytes={payload_bytes} latency={latency_ms}ms")
-    
+
     return response

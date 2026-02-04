@@ -21,12 +21,12 @@ except ImportError:
 
 
 def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger, roots: List[str]) -> Dict[str, Any]:
-    """Execute read_symbol tool (v2.7.0)."""
+    """Execute read_symbol tool."""
     start_ts = time.time()
-    
+
     path = args.get("path")
     symbol_name = args.get("name")
-    
+
     if not path or not symbol_name:
         return mcp_response(
             "read_symbol",
@@ -45,7 +45,7 @@ def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: Telemet
         )
 
     block = db.get_symbol_block(db_path, symbol_name)
-    
+
     latency_ms = int((time.time() - start_ts) * 1000)
     logger.log_telemetry(f"tool=read_symbol path='{path}' name='{symbol_name}' found={bool(block)} latency={latency_ms}ms")
 
@@ -55,17 +55,17 @@ def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: Telemet
             lambda: pack_error("read_symbol", ErrorCode.NOT_INDEXED, f"Symbol '{symbol_name}' not found in '{db_path}' (or no block range available)."),
             lambda: {"error": {"code": ErrorCode.NOT_INDEXED.value, "message": f"Symbol '{symbol_name}' not found in '{db_path}' (or no block range available)."}, "isError": True},
         )
-    
+
     # Format output
     doc = block.get('docstring', '')
     meta = block.get('metadata', '{}')
-    
+
     header = [
         f"File: {db_path}",
         f"Symbol: {block['name']}",
         f"Range: L{block['start_line']} - L{block['end_line']}"
     ]
-    
+
     try:
         m = json.loads(meta)
         if m.get("annotations"):
@@ -78,10 +78,10 @@ def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: Telemet
         "\n".join(header),
         "--------------------------------------------------"
     ]
-    
+
     if doc:
         output_lines.append(f"/* DOCSTRING */\n{doc}\n")
-    
+
     output_lines.append(block['content'])
     output_lines.append("--------------------------------------------------")
 

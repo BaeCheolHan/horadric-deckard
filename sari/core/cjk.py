@@ -89,7 +89,7 @@ def _find_dict_root(base: Path) -> Optional[str]:
 
 
 def _resolve_dict_path() -> str:
-    env = (os.environ.get("DECKARD_LINDERA_DICT_PATH") or "").strip()
+    env = (os.environ.get("SARI_LINDERA_DICT_PATH") or "").strip()
     if env:
         p = Path(os.path.expanduser(env))
         if p.exists():

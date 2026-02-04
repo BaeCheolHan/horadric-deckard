@@ -3,7 +3,7 @@
 MCP Server for Local Search (STDIO mode)
 Follows Model Context Protocol specification: https://modelcontextprotocol.io/specification/2025-11-25
 
-v2.5.0 enhancements:
+Enhancements:
 - Search pagination (offset, total, has_more)
 - Detailed status stats (repo_stats)
 - Improved UX (root display, fallback reasons)
@@ -55,25 +55,26 @@ from sari.mcp.tools.registry import ToolContext, build_default_registry
 
 class LocalSearchMCPServer:
     """MCP Server for Local Search - STDIO mode."""
-    
+
     PROTOCOL_VERSION = "2025-11-25"
     SERVER_NAME = "sari"
-    # Version is injected via environment variable by the bootstrapper
+    # Resolve version from package metadata first; env is fallback for overrides.
     @staticmethod
     def _resolve_version() -> str:
-        v = (os.environ.get("DECKARD_VERSION") or "").strip()
+        # 1. Try to import from version.py
+        try:
+            from sari.version import __version__
+            return __version__
+        except ImportError:
+            pass
+        # 2. Environment Variable (override in bootstrap/test)
+        v = (os.environ.get("SARI_VERSION") or "").strip()
         if v:
             return v
-        ver_path = REPO_ROOT / "VERSION"
-        if ver_path.exists():
-            try:
-                return ver_path.read_text(encoding="utf-8").strip() or "dev"
-            except Exception:
-                pass
         return "dev"
 
     SERVER_VERSION = _resolve_version.__func__()
-    
+
     def __init__(self, workspace_root: str):
         self.workspace_root = workspace_root
         self._root_uri: Optional[str] = None
@@ -92,7 +93,7 @@ class LocalSearchMCPServer:
             "read_without_search": 0,
         }
         self._tool_registry = build_default_registry()
-        
+
         # Initialize telemetry logger
         self.logger = TelemetryLogger(WorkspaceManager.get_global_log_dir())
 
@@ -146,12 +147,12 @@ class LocalSearchMCPServer:
         warnings.append("Search-first policy (advisory): call search/search_symbols before read_file/read_symbol.")
         result["warnings"] = warnings
         return result
-    
+
     def _ensure_initialized(self) -> None:
         """Lazy initialization of database and indexer."""
         if self._initialized:
             return
-        
+
         with self._init_lock:
             # Double-check after acquiring lock
             if self._initialized:
@@ -160,7 +161,7 @@ class LocalSearchMCPServer:
             try:
                 config_path = WorkspaceManager.resolve_config_path(self.workspace_root)
                 self.cfg = Config.load(str(config_path), workspace_root_override=self.workspace_root, root_uri=self._root_uri)
-                
+
                 db_path = Path(self.cfg.db_path)
 
                 db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -171,14 +172,14 @@ class LocalSearchMCPServer:
                 except Exception as e:
                     self.logger.log_error(f"engine init failed: {e}")
                 self.logger.log_info(f"DB path: {db_path}")
-                
+
                 from sari.core.indexer import resolve_indexer_settings
                 mode, enabled, startup_enabled, lock_handle = resolve_indexer_settings(str(db_path))
                 self.indexer = Indexer(self.cfg, self.db, self.logger, indexer_mode=mode, indexing_enabled=enabled, startup_index_enabled=startup_enabled, lock_handle=lock_handle)
-                
+
                 self._indexer_thread = threading.Thread(target=self.indexer.run_forever, daemon=True)
                 self._indexer_thread.start()
-                
+
                 init_timeout = float(os.environ.get("DECKARD_INIT_TIMEOUT") or os.environ.get("LOCAL_SEARCH_INIT_TIMEOUT") or "5")
                 if init_timeout > 0:
                     wait_iterations = int(init_timeout * 10)
@@ -186,13 +187,13 @@ class LocalSearchMCPServer:
                         if self.indexer.status.index_ready:
                             break
                         time.sleep(0.1)
-                
+
                 self._initialized = True
             except Exception as e:
                 self.logger.log_error(f"Initialization failed: {e}")
                 raise
-    
-    
+
+
     def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         # Trace full initialize payload to verify what clients send.
         try:
@@ -202,12 +203,12 @@ class LocalSearchMCPServer:
             )
         except Exception as e:
             self.logger.log_error(f"Initialize params log failed: {e}")
-        
+
         # Parse rootUri from client or detect fallback
         root_uri = params.get("rootUri") or params.get("rootPath")
         roots = WorkspaceManager.resolve_workspace_roots(root_uri=root_uri)
         new_workspace = roots[0] if roots else WorkspaceManager.resolve_workspace_root()
-        
+
         # Thread-safe workspace change
         with self._init_lock:
             if new_workspace != self.workspace_root:
@@ -215,7 +216,7 @@ class LocalSearchMCPServer:
                 self._root_uri = root_uri
                 self._initialized = False  # Force re-initialization with new workspace
                 self.logger.log_info(f"Workspace set to: {self.workspace_root}")
-        
+
         return {
             "protocolVersion": self.PROTOCOL_VERSION,
             "serverInfo": {
@@ -226,17 +227,17 @@ class LocalSearchMCPServer:
                 "tools": {},
             },
         }
-    
+
     def handle_initialized(self, params: Dict[str, Any]) -> None:
         self._ensure_initialized()
-    
+
     def handle_tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle tools/list request - v2.5.0 enhanced schema."""
+        """Handle tools/list request -  enhanced schema."""
         return {"tools": self._tool_registry.list_tools()}
-    
+
     def handle_tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
         self._ensure_initialized()
-        
+
         tool_name = params.get("name")
         args = params.get("arguments", {})
         ctx = ToolContext(
@@ -262,20 +263,20 @@ class LocalSearchMCPServer:
             return self._tool_doctor(args)
 
         return self._tool_registry.execute(tool_name, ctx, args)
-    
+
     def _tool_search(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute enhanced search tool (v2.5.0)."""
+        """Execute enhanced search tool ."""
         result = search_tool.execute_search(args, self.db, self.logger, self.cfg.workspace_roots, engine=self.db.engine)
         if not result.get("isError"):
             self._mark_search("search")
         return result
-    
+
     def _tool_status(self, args: Dict[str, Any]) -> Dict[str, Any]:
         return status_tool.execute_status(args, self.indexer, self.db, self.cfg, self.workspace_root, self.SERVER_VERSION)
-    
+
     def _tool_repo_candidates(self, args: Dict[str, Any]) -> Dict[str, Any]:
         return repo_candidates_tool.execute_repo_candidates(args, self.db, self.logger, self.cfg.workspace_roots)
-    
+
     def _tool_list_files(self, args: Dict[str, Any]) -> Dict[str, Any]:
         return list_files_tool.execute_list_files(args, self.db, self.logger, self.cfg.workspace_roots)
 
@@ -292,7 +293,7 @@ class LocalSearchMCPServer:
         if not result.get("isError"):
             self._mark_search("search_symbols")
         return result
-        
+
     def _tool_read_symbol(self, args: Dict[str, Any]) -> Dict[str, Any]:
         if self._search_first_mode != "off" and not self._has_search_context():
             if self._search_first_mode == "enforce":
@@ -306,14 +307,14 @@ class LocalSearchMCPServer:
         payload["search_usage"] = dict(self._search_usage)
         payload["search_first_mode"] = self._search_first_mode
         return doctor_tool.execute_doctor(payload)
-    
+
     def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         method = request.get("method")
         params = request.get("params", {})
         msg_id = request.get("id")
-        
+
         is_notification = msg_id is None
-        
+
         try:
             if method == "initialize":
                 result = self.handle_initialize(params)
@@ -337,10 +338,10 @@ class LocalSearchMCPServer:
                         "message": f"Method not found: {method}",
                     },
                 }
-            
+
             if is_notification:
                 return None
-            
+
             return {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -358,7 +359,7 @@ class LocalSearchMCPServer:
                     "message": str(e),
                 },
             }
-    
+
     def shutdown(self) -> None:
         """Stops the indexer and closes the database."""
         self.logger.log_info(f"Shutting down server for workspace: {self.workspace_root}")
@@ -366,7 +367,7 @@ class LocalSearchMCPServer:
             self.indexer.stop()
         if self.db:
             self.db.close()
-            
+
     def run(self) -> None:
         self.logger.log_info(f"Starting MCP server (workspace: {self.workspace_root})")
         use_text_io = not hasattr(sys.stdin, "buffer") or not hasattr(sys.stdout, "buffer")
@@ -510,7 +511,7 @@ class LocalSearchMCPServer:
 def main() -> None:
     # Use WorkspaceManager for workspace detection
     workspace_root = WorkspaceManager.resolve_workspace_root()
-    
+
     server = LocalSearchMCPServer(workspace_root)
     server.run()
 

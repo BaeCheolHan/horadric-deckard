@@ -25,10 +25,15 @@ except ImportError:
 
 
 def _default_engine_package() -> str:
-    env = (os.environ.get("DECKARD_ENGINE_PACKAGE") or "").strip()
+    env = (os.environ.get("SARI_ENGINE_PACKAGE") or "").strip()
     if env:
         return env
-    ver = (os.environ.get("DECKARD_VERSION") or "").strip()
+    ver = ""
+    try:
+        from sari.version import __version__
+        ver = __version__
+    except Exception:
+        ver = (os.environ.get("SARI_VERSION") or "").strip()
     if ver:
         parts = ver.split(".")
         if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
@@ -164,7 +169,7 @@ class EmbeddedEngine:
         self._cache_dir = WorkspaceManager.get_engine_cache_dir()
         self._venv_dir = WorkspaceManager.get_engine_venv_dir()
         self._index_version_path = self._index_dir / "index_version.json"
-        self._auto_install = (os.environ.get("DECKARD_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
+        self._auto_install = (os.environ.get("SARI_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
         self._tantivy = None
         self._index = None
         self._schema = None
@@ -205,9 +210,9 @@ class EmbeddedEngine:
             return "unknown", ""
 
     def _engine_limits(self) -> Tuple[int, int, int]:
-        mem_mb = _env_int("DECKARD_ENGINE_MEM_MB", _DEFAULT_ENGINE_MEM_MB)
-        index_mem_mb = _env_int("DECKARD_ENGINE_INDEX_MEM_MB", _DEFAULT_ENGINE_INDEX_MEM_MB)
-        threads = _env_int("DECKARD_ENGINE_THREADS", _DEFAULT_ENGINE_THREADS)
+        mem_mb = _env_int("SARI_ENGINE_MEM_MB", _DEFAULT_ENGINE_MEM_MB)
+        index_mem_mb = _env_int("SARI_ENGINE_INDEX_MEM_MB", _DEFAULT_ENGINE_INDEX_MEM_MB)
+        threads = _env_int("SARI_ENGINE_THREADS", _DEFAULT_ENGINE_THREADS)
         mem_mb = max(64, mem_mb)
         index_mem_mb = max(64, index_mem_mb)
         if index_mem_mb > (mem_mb // 2):
@@ -244,14 +249,14 @@ class EmbeddedEngine:
             "exclude_dirs": list(getattr(self._cfg, "exclude_dirs", [])),
             "exclude_globs": list(getattr(self._cfg, "exclude_globs", [])),
             "max_file_bytes": int(getattr(self._cfg, "max_file_bytes", 0) or 0),
-            "size_profile": (os.environ.get("DECKARD_SIZE_PROFILE") or "default").strip().lower(),
-            "max_parse_bytes": int(os.environ.get("DECKARD_MAX_PARSE_BYTES", "0") or 0),
-            "max_ast_bytes": int(os.environ.get("DECKARD_MAX_AST_BYTES", "0") or 0),
-            "follow_symlinks": (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on")),
+            "size_profile": (os.environ.get("SARI_SIZE_PROFILE") or "default").strip().lower(),
+            "max_parse_bytes": int(os.environ.get("SARI_MAX_PARSE_BYTES", "0") or 0),
+            "max_ast_bytes": int(os.environ.get("SARI_MAX_AST_BYTES", "0") or 0),
+            "follow_symlinks": (os.environ.get("SARI_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on")),
             "engine_version": self._engine_version(),
-            "max_doc_bytes": int(os.environ.get("DECKARD_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304),
-            "preview_bytes": int(os.environ.get("DECKARD_ENGINE_PREVIEW_BYTES", "8192") or 8192),
-            "engine_tokenizer": (os.environ.get("DECKARD_ENGINE_TOKENIZER") or "auto").strip().lower(),
+            "max_doc_bytes": int(os.environ.get("SARI_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304),
+            "preview_bytes": int(os.environ.get("SARI_ENGINE_PREVIEW_BYTES", "8192") or 8192),
+            "engine_tokenizer": (os.environ.get("SARI_ENGINE_TOKENIZER") or "auto").strip().lower(),
         }
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
@@ -303,7 +308,7 @@ class EmbeddedEngine:
             return
 
     def _resolve_body_tokenizer(self) -> str:
-        mode = (os.environ.get("DECKARD_ENGINE_TOKENIZER") or "auto").strip().lower()
+        mode = (os.environ.get("SARI_ENGINE_TOKENIZER") or "auto").strip().lower()
         if mode == "latin":
             return "tokenizer_latin"
         if mode == "cjk":

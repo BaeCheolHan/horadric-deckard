@@ -35,7 +35,7 @@ class Config:
     commit_batch_size: int
     http_api_host: str = "127.0.0.1"
     http_api_port: int = 7331
-    exclude_content_bytes: int = 104857600 
+    exclude_content_bytes: int = 104857600
     workspace_roots: list[str] = field(default_factory=list) # Optional for compatibility
 
     def __post_init__(self):
@@ -48,7 +48,7 @@ class Config:
 
     @staticmethod
     def get_defaults(workspace_root: str) -> dict:
-        """Central source for default configuration values (v2.7.0)."""
+        """Central source for default configuration values."""
         return {
             "workspace_roots": [workspace_root],
             "workspace_root": workspace_root,
@@ -133,7 +133,7 @@ class Config:
                     raw = json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load config from {path}: {e}")
-        
+
         # Backward compatibility: legacy "indexing" schema
         legacy_indexing = raw.get("indexing", {}) if isinstance(raw, dict) else {}
         if "include_ext" not in raw and "include_extensions" in legacy_indexing:
@@ -154,44 +154,44 @@ class Config:
         config_roots = raw.get("roots") or raw.get("workspace_roots") or []
         if not config_roots and raw.get("workspace_root"):
             config_roots = [raw.get("workspace_root")]
-             
+
         # Resolve base roots (env + config + legacy + optional root_uri).
         final_roots = WorkspaceManager.resolve_workspace_roots(
             root_uri=root_uri,
             config_roots=config_roots
         )
         if workspace_root_override:
-            follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+            follow_symlinks = (os.environ.get("SARI_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
             try:
                 override_norm = WorkspaceManager._normalize_path(workspace_root_override, follow_symlinks=follow_symlinks)  # type: ignore
             except Exception:
                 override_norm = workspace_root_override
             # Put override first, keep others after
             final_roots = [override_norm] + [r for r in final_roots if r != override_norm]
-        
+
         if not final_roots:
              final_roots = [os.getcwd()]
-             
+
         primary_root = final_roots[0]
-        
+
         defaults = Config.get_defaults(primary_root)
 
         # Support port override (legacy)
-        port_override = os.environ.get("DECKARD_PORT") or os.environ.get("LOCAL_SEARCH_PORT_OVERRIDE")
+        port_override = os.environ.get("SARI_PORT") or os.environ.get("LOCAL_SEARCH_PORT_OVERRIDE")
         server_port = int(port_override) if port_override else int(raw.get("server_port", defaults["server_port"]))
 
         # HTTP API port override (SSOT)
         http_port_override = (
-            os.environ.get("DECKARD_HTTP_API_PORT")
-            or os.environ.get("DECKARD_HTTP_PORT")
+            os.environ.get("SARI_HTTP_API_PORT")
+            or os.environ.get("SARI_HTTP_PORT")
             or os.environ.get("LOCAL_SEARCH_HTTP_PORT")
         )
         http_api_port = int(http_port_override) if http_port_override else int(raw.get("http_api_port", defaults["http_api_port"]))
 
         # Unified DB path resolution
         # Priority: Env > Config File > Default(primary_root)
-        env_db_path = (os.environ.get("DECKARD_DB_PATH") or os.environ.get("LOCAL_SEARCH_DB_PATH") or "").strip()
-        
+        env_db_path = (os.environ.get("SARI_DB_PATH") or os.environ.get("LOCAL_SEARCH_DB_PATH") or "").strip()
+
         db_path = ""
         if env_db_path:
             expanded = _expanduser(env_db_path)
@@ -199,7 +199,7 @@ class Config:
                 db_path = expanded
             else:
                 logger.warning(f"Ignoring relative DB_PATH '{env_db_path}'. Absolute path required.")
-        
+
         if not db_path:
             raw_db_path = raw.get("db_path", "")
             # Check if packaged config logic applies (skip relative path check for packaged default?)
@@ -208,7 +208,7 @@ class Config:
                  expanded = _expanduser(raw_db_path)
                  if os.path.isabs(expanded):
                      db_path = expanded
-        
+
         if not db_path:
             db_path = str(WorkspaceManager.get_local_db_path(primary_root))
 
@@ -232,20 +232,20 @@ class Config:
             commit_batch_size=int(raw.get("commit_batch_size", defaults["commit_batch_size"])),
             exclude_content_bytes=int(raw.get("exclude_content_bytes", defaults["exclude_content_bytes"])),
         )
-        
+
         # --- Write-back (Persist) Logic ---
-        persist_flag = os.environ.get("DECKARD_PERSIST_ROOTS", os.environ.get("DECKARD_PERSIST_PATHS", "0")).strip().lower()
+        persist_flag = os.environ.get("SARI_PERSIST_ROOTS", os.environ.get("SARI_PERSIST_PATHS", "0")).strip().lower()
         should_persist = persist_flag in ("1", "true", "yes", "on")
-        
+
         if should_persist and path:
             extra = {
-                "install_dir": (os.environ.get("DECKARD_INSTALL_DIR") or "").strip(),
-                "data_dir": (os.environ.get("DECKARD_DATA_DIR") or "").strip(),
-                "db_path": (os.environ.get("DECKARD_DB_PATH") or "").strip(),
-                "config_path": (os.environ.get("DECKARD_CONFIG") or "").strip(),
+                "install_dir": (os.environ.get("SARI_INSTALL_DIR") or "").strip(),
+                "data_dir": (os.environ.get("SARI_DATA_DIR") or "").strip(),
+                "db_path": (os.environ.get("SARI_DB_PATH") or "").strip(),
+                "config_path": (os.environ.get("SARI_CONFIG") or "").strip(),
             }
             cfg.save_paths_only(path, extra_paths=extra)
-            
+
         return cfg
 
 

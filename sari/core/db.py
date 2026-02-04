@@ -56,8 +56,8 @@ class LocalSearchDB:
     - Low IO overhead: batch writes, WAL.
     - Thread safety: separate read/write connections.
     - Safer defaults: DB stored under user cache dir by default.
-    
-    v2.3.1 enhancements:
+
+     enhancements:
     - File type filtering
     - Path pattern matching (glob)
     - Exclude patterns
@@ -76,10 +76,10 @@ class LocalSearchDB:
         self._read_local = threading.local()
         self._read_conns: Dict[int, sqlite3.Connection] = {}
         self._read_conns_lock = threading.Lock()
-        self._read_pool_max = int(os.environ.get("DECKARD_READ_POOL_MAX", "32") or 32)
+        self._read_pool_max = int(os.environ.get("SARI_READ_POOL_MAX", "32") or 32)
 
-        # Register decompression function (v2.7.0)
-        self._write.create_function("deckard_decompress", 1, _decompress)
+        # Register decompression function
+        self._write.create_function("SARI_decompress", 1, _decompress)
 
         self._lock = threading.Lock()
 
@@ -90,12 +90,12 @@ class LocalSearchDB:
 
         self._fts_enabled = self._try_enable_fts(self._write)
         self._init_schema()
-        
-        # TTL Cache for stats (v2.5.1)
+
+        # TTL Cache for stats
         self._stats_cache: dict[str, Any] = {}
         self._stats_cache_ts = 0.0
         self._stats_cache_ttl = 60.0 # 60 seconds
-        
+
         self.engine = get_registry().create("sqlite", self)
 
     def set_engine(self, engine: Any) -> None:
@@ -113,7 +113,7 @@ class LocalSearchDB:
     def _open_read_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.create_function("deckard_decompress", 1, _decompress)
+        conn.create_function("SARI_decompress", 1, _decompress)
         self._apply_pragmas(conn)
         try:
             conn.execute("PRAGMA query_only=ON;")
@@ -218,7 +218,7 @@ class LocalSearchDB:
             """,
             rows_list,
         )
-        # Clear old symbols for updated paths to ensure consistency (v2.8.0)
+        # Clear old symbols for updated paths to ensure consistency
         cur.executemany("DELETE FROM symbols WHERE path = ?", [(r[0],) for r in rows_list])
         return len(rows_list)
 
@@ -434,7 +434,7 @@ class LocalSearchDB:
                 """
             )
 
-            
+
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS repo_meta (
@@ -447,7 +447,7 @@ class LocalSearchDB:
                 """
             )
 
-            # v2.6.0: Symbols table for code intelligence
+            # Symbols table for code intelligence
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS symbols (
@@ -466,7 +466,7 @@ class LocalSearchDB:
                 );
                 """
             )
-            # v2.7.0/v2.9.0: Migration for symbols table
+            # /Migration for symbols table
             try:
                 cur.execute("ALTER TABLE symbols ADD COLUMN end_line INTEGER DEFAULT 0")
             except sqlite3.OperationalError: pass
@@ -488,7 +488,7 @@ class LocalSearchDB:
             except sqlite3.OperationalError:
                 pass
 
-            # v2.9.0: Symbol Relations table
+            # Symbol Relations table
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS symbol_relations (
@@ -525,8 +525,8 @@ class LocalSearchDB:
             # Index for efficient filtering
             cur.execute("CREATE INDEX IF NOT EXISTS idx_files_repo ON files(repo);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_files_mtime ON files(mtime DESC);")
-            
-            # v2.5.3: Migration for existing users
+
+            # Migration for existing users
             try:
                 cur.execute("ALTER TABLE files ADD COLUMN last_seen INTEGER DEFAULT 0")
                 self._write.commit()
@@ -534,7 +534,7 @@ class LocalSearchDB:
                 # Column already exists or table doesn't exist yet
                 pass
 
-            # v2.10.0: 3-stage collection columns
+            # 3-stage collection columns
             for stmt in [
                 "ALTER TABLE files ADD COLUMN parse_status TEXT NOT NULL DEFAULT 'none'",
                 "ALTER TABLE files ADD COLUMN parse_reason TEXT NOT NULL DEFAULT 'none'",
@@ -650,10 +650,10 @@ class LocalSearchDB:
                     pass
             cur.execute("CREATE INDEX IF NOT EXISTS idx_contexts_topic ON contexts(topic);")
 
-            # v2.7.0+: FTS uses uncompressed content to avoid query-time decompression
+            # +: FTS uses uncompressed content to avoid query-time decompression
             try:
                 cur.execute(
-                    "UPDATE files SET fts_content = deckard_decompress(content) "
+                    "UPDATE files SET fts_content = SARI_decompress(content) "
                     "WHERE (fts_content IS NULL OR fts_content = '') AND content IS NOT NULL"
                 )
                 self._write.commit()
@@ -671,9 +671,9 @@ class LocalSearchDB:
                 FROM files;
                 """
             )
-            
+
             if self._fts_enabled:
-                # Drop old FTS if it exists to ensure new schema (v2.7.0)
+                # Drop old FTS if it exists to ensure new schema
                 # But only if it's not already using the VIEW to avoid unnecessary drops.
                 # For safety in this update, we'll try to migrate.
                 try:
@@ -691,7 +691,7 @@ class LocalSearchDB:
                 cur.execute(
                     """
                     CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN
-                      INSERT INTO files_fts(rowid, path, repo, content) 
+                      INSERT INTO files_fts(rowid, path, repo, content)
                       VALUES (new.rowid, new.path, new.repo, new.fts_content);
                     END;
                     """
@@ -699,7 +699,7 @@ class LocalSearchDB:
                 cur.execute(
                     """
                     CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN
-                      INSERT INTO files_fts(files_fts, rowid, path, repo, content) 
+                      INSERT INTO files_fts(files_fts, rowid, path, repo, content)
                       VALUES('delete', old.rowid, old.path, old.repo, old.fts_content);
                     END;
                     """
@@ -707,9 +707,9 @@ class LocalSearchDB:
                 cur.execute(
                     """
                     CREATE TRIGGER files_au AFTER UPDATE ON files BEGIN
-                      INSERT INTO files_fts(files_fts, rowid, path, repo, content) 
+                      INSERT INTO files_fts(files_fts, rowid, path, repo, content)
                       VALUES('delete', old.rowid, old.path, old.repo, old.fts_content);
-                      INSERT INTO files_fts(rowid, path, repo, content) 
+                      INSERT INTO files_fts(rowid, path, repo, content)
                       VALUES (new.rowid, new.path, new.repo, new.fts_content);
                     END;
                     """
@@ -741,7 +741,7 @@ class LocalSearchDB:
         return count
 
     def get_symbol_block(self, path: str, name: str) -> Optional[dict[str, Any]]:
-        """Get the full content block for a specific symbol (v2.7.0)."""
+        """Get the full content block for a specific symbol ."""
         sql = """
             SELECT s.line, s.end_line, s.metadata, s.docstring, f.content
             FROM symbols s
@@ -752,24 +752,24 @@ class LocalSearchDB:
         """
         conn = self.get_read_connection()
         row = conn.execute(sql, (path, name)).fetchone()
-            
+
         if not row:
             return None
-            
+
         line_start = row["line"]
         line_end = row["end_line"]
         full_content = _decompress(row["content"])
-        
+
         # Extract lines
         lines = full_content.splitlines()
 
         # 1-based index to 0-based
         if line_end <= 0: # fallback if end_line not parsed
-             line_end = line_start + 10 
-             
+             line_end = line_start + 10
+
         start_idx = max(0, line_start - 1)
         end_idx = min(len(lines), line_end)
-        
+
         block = "\n".join(lines[start_idx:end_idx])
         return {
             "name": name,
@@ -794,7 +794,7 @@ class LocalSearchDB:
         return count
 
     def update_last_seen(self, paths: Iterable[str], timestamp: int) -> int:
-        """Update last_seen timestamp for existing files (v2.5.3)."""
+        """Update last_seen timestamp for existing files ."""
         paths_list = list(paths)
         if not paths_list:
             return 0
@@ -807,16 +807,16 @@ class LocalSearchDB:
         return count
 
     def delete_unseen_files(self, timestamp_limit: int) -> int:
-        """Delete files that were not seen in the latest scan (v2.5.3)."""
+        """Delete files that were not seen in the latest scan ."""
         self._assert_writer_thread()
         with self._lock:
             cur = self._write.cursor()
             # Cascade delete should handle symbols if FK is enabled, but sqlite default often disabled.
-            # Manually delete symbols for cleanliness or rely on trigger? 
+            # Manually delete symbols for cleanliness or rely on trigger?
             # Safest to delete manually if FKs aren't reliable.
             # Let's check keys.
-            cur.execute("PRAGMA foreign_keys = ON;") 
-            
+            cur.execute("PRAGMA foreign_keys = ON;")
+
             cur.execute("DELETE FROM files WHERE last_seen < ?", (timestamp_limit,))
             count = cur.rowcount
             self._write.commit()
@@ -849,12 +849,12 @@ class LocalSearchDB:
         return int(row["mtime"]), int(row["size"])
 
     def get_index_status(self) -> dict[str, Any]:
-        """Get index metadata for debugging/UI (v2.4.2)."""
+        """Get index metadata for debugging/UI ."""
         conn = self.get_read_connection()
         row = conn.execute("SELECT COUNT(1) AS c, MAX(mtime) AS last_mtime FROM files").fetchone()
         count = int(row["c"]) if row and row["c"] else 0
         last_mtime = int(row["last_mtime"]) if row and row["last_mtime"] else 0
-        
+
         return {
             "total_files": count,
             "last_scan_time": last_mtime,
@@ -892,7 +892,7 @@ class LocalSearchDB:
         self._stats_cache_ts = 0.0
 
     def get_repo_stats(self, force_refresh: bool = False, root_ids: Optional[list[str]] = None) -> dict[str, int]:
-        """Get file counts per repo with TTL cache (v2.5.1)."""
+        """Get file counts per repo with TTL cache ."""
         now = time.time()
         if root_ids:
             force_refresh = True
@@ -918,7 +918,7 @@ class LocalSearchDB:
             return {}
 
     def upsert_repo_meta(self, repo_name: str, tags: str = "", domain: str = "", description: str = "", priority: int = 0) -> None:
-        """Upsert repository metadata (v2.4.3)."""
+        """Upsert repository metadata ."""
         self._assert_writer_thread()
         with self._lock:
             cur = self._write.cursor()
@@ -939,7 +939,7 @@ class LocalSearchDB:
         return {row["repo_name"]: dict(row) for row in rows}
 
     def delete_file(self, path: str) -> None:
-        """Delete a file and its symbols by path (v2.7.2)."""
+        """Delete a file and its symbols by path ."""
         self._assert_writer_thread()
         with self._lock:
             cur = self._write.cursor()
@@ -957,13 +957,13 @@ class LocalSearchDB:
         offset: int = 0,
         root_ids: Optional[list[str]] = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """List indexed files for debugging (v2.4.0)."""
+        """List indexed files for debugging ."""
         limit = min(int(limit), 500)
         offset = max(int(offset), 0)
-        
+
         where_clauses = []
         params: list[Any] = []
-        
+
         # 0. Root filter
         if root_ids:
             root_clauses = []
@@ -977,12 +977,12 @@ class LocalSearchDB:
         if repo:
             where_clauses.append("f.repo = ?")
             params.append(repo)
-        
+
         # 2. Hidden files filter
         if not include_hidden:
             where_clauses.append("f.path NOT LIKE '%/.%'")
             where_clauses.append("f.path NOT LIKE '.%'")
-            
+
         # 3. File types filter
         if file_types:
             type_clauses = []
@@ -992,15 +992,15 @@ class LocalSearchDB:
                 params.append(f"%.{ext}")
             if type_clauses:
                 where_clauses.append("(" + " OR ".join(type_clauses) + ")")
-                
+
         # 4. Path pattern filter
         if path_pattern:
             sql_pattern = glob_to_like(path_pattern)
             where_clauses.append("f.path LIKE ?")
             params.append(sql_pattern)
-        
+
         where = " AND ".join(where_clauses) if where_clauses else "1=1"
-        
+
         sql = f"""
             SELECT f.repo AS repo,
                    f.path AS path,
@@ -1011,13 +1011,13 @@ class LocalSearchDB:
             ORDER BY f.repo, f.path
             LIMIT ? OFFSET ?;
         """
-        
+
         # Data query params
         data_params = params + [limit, offset]
-        
+
         conn = self.get_read_connection()
         rows = conn.execute(sql, data_params).fetchall()
-        
+
         files: list[dict[str, Any]] = []
         for r in rows:
             files.append({
@@ -1027,10 +1027,10 @@ class LocalSearchDB:
                 "size": int(r["size"]),
                 "file_type": get_file_extension(r["path"]),
             })
-        
+
         # Count query params (no limit/offset)
         count_sql = f"SELECT COUNT(1) AS c FROM files f WHERE {where}"
-        
+
         repo_where = where if where else "1=1"
         repo_sql = f"""
             SELECT repo, COUNT(1) AS file_count
@@ -1043,9 +1043,9 @@ class LocalSearchDB:
         count_res = conn.execute(count_sql, params).fetchone()
         total = count_res["c"] if count_res else 0
         repo_rows = conn.execute(repo_sql, params).fetchall()
-            
+
         repos = [{"repo": r["repo"], "file_count": r["file_count"]} for r in repo_rows]
-        
+
         meta = {
             "total": total,
             "returned": len(files),
@@ -1054,23 +1054,23 @@ class LocalSearchDB:
             "repos": repos,
             "include_hidden": include_hidden,
         }
-        
+
         return files, meta
 
-    # ========== Helper Methods ========== 
+    # ========== Helper Methods ==========
 
     # Delegated search logic in SearchEngine
 
-    # ========== Main Search Methods ========== 
+    # ========== Main Search Methods ==========
 
 
     def search_symbols(self, query: str, repo: Optional[str] = None, limit: int = 20, root_ids: Optional[list[str]] = None) -> list[dict[str, Any]]:
-        """Search for symbols by name (v2.6.0)."""
+        """Search for symbols by name ."""
         limit = min(limit, 100)
         query = query.strip()
         if not query:
             return []
-            
+
         sql = """
             SELECT s.path, s.name, s.kind, s.line, s.end_line, s.content, s.docstring, s.metadata,
                    s.qualname, s.symbol_id, f.repo, f.mtime, f.size
@@ -1091,13 +1091,13 @@ class LocalSearchDB:
         if repo:
             sql += " AND f.repo = ?"
             params.append(repo)
-            
+
         sql += " ORDER BY length(s.name) ASC, s.path ASC LIMIT ?"
         params.append(limit)
-        
+
         conn = self.get_read_connection()
         rows = conn.execute(sql, params).fetchall()
-            
+
         return [
             {
                 "path": r["path"],
@@ -1117,13 +1117,13 @@ class LocalSearchDB:
         ]
 
     def read_file(self, path: str) -> Optional[str]:
-        """Read full file content from DB (v2.6.0)."""
+        """Read full file content from DB ."""
         conn = self.get_read_connection()
         row = conn.execute("SELECT content FROM files WHERE path = ?", (path,)).fetchone()
         if not row:
             return None
         content = _decompress(row["content"])
-        max_bytes = int(os.environ.get("DECKARD_READ_MAX_BYTES", "1048576") or 1048576)
+        max_bytes = int(os.environ.get("SARI_READ_MAX_BYTES", "1048576") or 1048576)
         if max_bytes > 0:
             raw = content.encode("utf-8")
             if len(raw) > max_bytes:
@@ -1138,8 +1138,8 @@ class LocalSearchDB:
         return _decompress(row["content"]) if row else None
 
     def iter_engine_documents(self, root_ids: list[str]) -> Iterable[Dict[str, Any]]:
-        max_doc_bytes = int(os.environ.get("DECKARD_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304)
-        preview_bytes = int(os.environ.get("DECKARD_ENGINE_PREVIEW_BYTES", "8192") or 8192)
+        max_doc_bytes = int(os.environ.get("SARI_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304)
+        preview_bytes = int(os.environ.get("SARI_ENGINE_PREVIEW_BYTES", "8192") or 8192)
         head_bytes = max_doc_bytes // 2
         tail_bytes = max_doc_bytes - head_bytes
         conn = self.get_read_connection()
@@ -1189,7 +1189,7 @@ class LocalSearchDB:
     def search_v2(self, opts: SearchOptions) -> Tuple[List[SearchHit], Dict[str, Any]]:
         return self.engine.search_v2(opts)
 
-    # Compatibility shims for legacy tests (v2.7.x)
+    # Compatibility shims for legacy tests (.x)
     def _search_like(self, opts: SearchOptions, terms: List[str],
                      meta: Dict[str, Any], no_slice: bool = False) -> Tuple[List[SearchHit], Dict[str, Any]]:
         return self.engine._search_like(opts, terms, meta, no_slice=no_slice)
@@ -1216,24 +1216,24 @@ class LocalSearchDB:
         return self.search_v2(opts)
 
     def _get_enclosing_symbol(self, path: str, line_no: int) -> Optional[str]:
-        """Find the nearest symbol definition above the given line (v2.6.0)."""
+        """Find the nearest symbol definition above the given line ."""
         # Optimized query: find symbol with max line that is <= line_no
         sql = """
-            SELECT kind, name 
-            FROM symbols 
-            WHERE path = ? AND line <= ? 
-            ORDER BY line DESC 
+            SELECT kind, name
+            FROM symbols
+            WHERE path = ? AND line <= ?
+            ORDER BY line DESC
             LIMIT 1
         """
         conn = self.get_read_connection()
         row = conn.execute(sql, (path, line_no)).fetchone()
-        
+
         if row:
             return f"{row['kind']}: {row['name']}"
         return None
 
     def _is_exact_symbol(self, name: str) -> bool:
-        """Check if a symbol with this exact name exists (v2.6.0)."""
+        """Check if a symbol with this exact name exists ."""
         conn = self.get_read_connection()
         row = conn.execute("SELECT 1 FROM symbols WHERE name = ? LIMIT 1", (name,)).fetchone()
         return bool(row)

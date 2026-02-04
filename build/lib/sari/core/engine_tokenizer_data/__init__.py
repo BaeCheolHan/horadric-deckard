@@ -1,1 +1,0 @@
-"""Tokenizer bundle data (packaged)."""

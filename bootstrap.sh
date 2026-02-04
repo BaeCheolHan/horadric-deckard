@@ -49,66 +49,35 @@ PY
     exit 0
 fi
 
-# Self-install/update: if running from repo (not install dir), bootstrap install dir first
-if [ "${DECKARD_BOOTSTRAP_DONE:-}" != "1" ] && [ "$ROOT_DIR" != "$INSTALL_DIR" ] && [ "${DECKARD_SKIP_INSTALL:-}" != "1" ]; then
+# Self-install/update: Disabled to prioritize local development
+# Use install.py manually if a global installation is needed.
+if [ "${DECKARD_SKIP_INSTALL:-}" != "1" ]; then
     # Skip if --skip-install is present in args
-    SKIP=0
     for arg in "$@"; do
         if [ "$arg" = "--skip-install" ]; then
-            SKIP=1
+            export DECKARD_SKIP_INSTALL=1
             break
         fi
     done
-
-    if [ "$SKIP" = "0" ]; then
-        # Determine repo version (if available)
-        REPO_VERSION=""
-        if [ -d "$ROOT_DIR/.git" ] && command -v git >/dev/null 2>&1; then
-            REPO_VERSION=$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null)
-            REPO_VERSION=${REPO_VERSION#v}
-        fi
-
-        INST_VERSION=""
-        if [ -f "$INSTALL_DIR/VERSION" ]; then
-            INST_VERSION=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d '\n')
-        fi
-
-        NEED_INSTALL=0
-        if [ ! -x "$INSTALL_DIR/bootstrap.sh" ]; then
-            NEED_INSTALL=1
-        elif [ -n "$REPO_VERSION" ] && [ "$REPO_VERSION" != "$INST_VERSION" ]; then
-            NEED_INSTALL=1
-        fi
-
-        if [ "$NEED_INSTALL" = "1" ] && [ -f "$ROOT_DIR/install.py" ]; then
-            echo "[sari] bootstrap: installing to $INSTALL_DIR" >&2
-            # Redirect stdout to stderr to protect MCP protocol, but show errors
-            DECKARD_BOOTSTRAP_DONE=1 python3 "$ROOT_DIR/install.py" --no-interactive 1>&2
-            if [ $? -ne 0 ]; then
-                echo "[sari] bootstrap: installation failed. Check install.log." >&2
-                # Don't swallow error, exit
-                exit 1
-            fi
-        fi
-
-        if [ -x "$INSTALL_DIR/bootstrap.sh" ]; then
-            exec "$INSTALL_DIR/bootstrap.sh" "$@"
-        fi
-    fi
 fi
 
 # Add repo root to PYTHONPATH
 export PYTHONPATH="$ROOT_DIR:$PYTHONPATH"
 
-# Inject Version from Git or File
-if [ -d "$ROOT_DIR/.git" ] && command -v git >/dev/null 2>&1; then
-    VERSION=$(git -C "$ROOT_DIR" describe --tags --abbrev=0 2>/dev/null)
+# Inject Version from package metadata if available
+if command -v python3 >/dev/null 2>&1; then
+    VERSION=$(
+        python3 - <<'PY'
+try:
+    from sari.version import __version__
+    print(__version__)
+except Exception:
+    pass
+PY
+    )
     if [ -n "$VERSION" ]; then
-        # Strip leading 'v'
-        export DECKARD_VERSION="${VERSION#v}"
+        export SARI_VERSION="$VERSION"
     fi
-elif [ -f "$ROOT_DIR/VERSION" ]; then
-    export DECKARD_VERSION="$(cat "$ROOT_DIR/VERSION" | tr -d '\n')"
 fi
 
 # Optional: accept workspace root via args and map to env for MCP.
@@ -142,7 +111,7 @@ if [ $# -gt 0 ]; then
 fi
 
 # Announce version to stderr (visible in host logs/console)
-echo "[Sari] Starting (v${DECKARD_VERSION:-dev})..." >&2
+echo "[Sari] Starting (v${SARI_VERSION:-dev})..." >&2
 
 # Run Sari (No more Deckard fallback)
 if [ $# -eq 0 ]; then

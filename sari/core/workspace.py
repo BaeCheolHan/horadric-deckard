@@ -26,7 +26,7 @@ class WorkspaceManager:
     @staticmethod
     def root_id(path: str) -> str:
         """Stable root id derived from normalized path."""
-        follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+        follow_symlinks = (os.environ.get("SARI_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
         norm = WorkspaceManager._normalize_path(path, follow_symlinks=follow_symlinks)
         digest = hashlib.sha1(norm.encode("utf-8")).hexdigest()[:8]
         return f"root-{digest}"
@@ -40,23 +40,23 @@ class WorkspaceManager:
     ) -> list[str]:
         """
         Resolve multiple workspace roots with priority, normalization, and deduplication.
-        
+
         Priority (Union & Merge):
         1. config.roots
-        2. DECKARD_ROOTS_JSON
-        3. DECKARD_ROOT_1..N
-        4. DECKARD_WORKSPACE_ROOT (legacy)
+        2. SARI_ROOTS_JSON
+        3. SARI_ROOT_1..N
+        4. SARI_WORKSPACE_ROOT (legacy)
         5. LOCAL_SEARCH_WORKSPACE_ROOT (legacy)
         6. root_uri (MCP initialize param, ephemeral)
         7. Fallback to cwd (only if no candidates)
-        
+
         Returns:
             List of absolute, normalized paths.
         """
         candidates: list[tuple[str, str]] = []
         env_vars = roots_env if roots_env is not None else os.environ
-        follow_symlinks = (env_vars.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
-        keep_nested = (env_vars.get("DECKARD_KEEP_NESTED_ROOTS", "0").strip().lower() in ("1", "true", "yes", "on"))
+        follow_symlinks = (env_vars.get("SARI_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+        keep_nested = (env_vars.get("SARI_KEEP_NESTED_ROOTS", "0").strip().lower() in ("1", "true", "yes", "on"))
 
         # 1. config.roots
         if config_roots:
@@ -64,9 +64,9 @@ class WorkspaceManager:
                 if x:
                     candidates.append((str(x), "config"))
 
-        # 2. DECKARD_ROOTS_JSON
+        # 2. SARI_ROOTS_JSON
         import json
-        json_str = roots_json or env_vars.get("DECKARD_ROOTS_JSON", "")
+        json_str = roots_json or env_vars.get("SARI_ROOTS_JSON", "")
         if json_str:
             try:
                 loaded = json.loads(json_str)
@@ -76,15 +76,15 @@ class WorkspaceManager:
                             candidates.append((str(x), "env"))
             except Exception:
                 pass
-                
-        # 3. DECKARD_ROOT_1..N
+
+        # 3. SARI_ROOT_1..N
         for k, v in env_vars.items():
-            if k.startswith("DECKARD_ROOT_") and k[13:].isdigit():
+            if k.startswith("SARI_ROOT_") and k[13:].isdigit():
                 if v and v.strip():
                     candidates.append((v.strip(), "env"))
-                    
-        # 4. Legacy DECKARD_WORKSPACE_ROOT (Higher priority than LOCAL_SEARCH)
-        legacy_val = (env_vars.get("DECKARD_WORKSPACE_ROOT") or "").strip()
+
+        # 4. Legacy SARI_WORKSPACE_ROOT (Higher priority than LOCAL_SEARCH)
+        legacy_val = (env_vars.get("SARI_WORKSPACE_ROOT") or "").strip()
         if legacy_val:
             if legacy_val == "${cwd}":
                 candidates.append((os.getcwd(), "env"))
@@ -98,7 +98,7 @@ class WorkspaceManager:
                 candidates.append((os.getcwd(), "env"))
             else:
                 candidates.append((ls_val, "env"))
-        
+
         # 6. root_uri (ephemeral)
         if root_uri:
             uri_path = root_uri[7:] if root_uri.startswith("file://") else root_uri
@@ -109,11 +109,11 @@ class WorkspaceManager:
                         candidates.append((candidate, "root_uri"))
             except Exception:
                 pass
-        
+
         # 7. Fallback to cwd
         if not candidates:
             candidates.append((os.getcwd(), "fallback"))
-            
+
         # Normalization
         resolved_paths: list[tuple[str, str]] = []
         seen = set()
@@ -125,7 +125,7 @@ class WorkspaceManager:
                     seen.add(abs_path)
             except Exception:
                 continue
-                
+
         # Inclusion check while preserving priority order (first seen wins)
         final_roots: list[str] = []
         final_meta: list[tuple[str, str]] = []
@@ -176,7 +176,7 @@ class WorkspaceManager:
     def is_path_allowed(path: str, roots: list[str]) -> bool:
         """Check if path is within any of the roots."""
         try:
-            follow_symlinks = (os.environ.get("DECKARD_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
+            follow_symlinks = (os.environ.get("SARI_FOLLOW_SYMLINKS", "0").strip().lower() in ("1", "true", "yes", "on"))
             p = Path(WorkspaceManager._normalize_path(path, follow_symlinks=follow_symlinks))
             for r in roots:
                 root_path = Path(WorkspaceManager._normalize_path(r, follow_symlinks=follow_symlinks))
@@ -195,12 +195,12 @@ class WorkspaceManager:
     def resolve_config_path(workspace_root: str) -> str:
         """
         Resolve config path with unified priority.
-        
+
         Priority:
-        1. DECKARD_CONFIG environment variable (SSOT)
+        1. SARI_CONFIG environment variable (SSOT)
         2. Default SSOT path (~/.config/sari/config.json or %APPDATA%/sari/config.json)
         """
-        val = (os.environ.get("DECKARD_CONFIG") or "").strip()
+        val = (os.environ.get("SARI_CONFIG") or "").strip()
         if val:
             p = Path(os.path.expanduser(val))
             if p.exists():
@@ -216,8 +216,8 @@ class WorkspaceManager:
 
         # Legacy migration (one-time copy + backup)
         legacy_candidates = [
-            Path(workspace_root) / ".codex" / "tools" / "deckard" / "config" / "config.json",
-            Path.home() / ".deckard" / "config.json",
+            Path(workspace_root) / ".codex" / "tools" / "SARI" / "config" / "config.json",
+            Path.home() / ".SARI" / "config.json",
         ]
         for legacy in legacy_candidates:
             if legacy.exists():
@@ -236,14 +236,14 @@ class WorkspaceManager:
                 break
 
         return str(ssot.resolve())
-    
+
     @staticmethod
     def get_global_data_dir() -> Path:
         """Get global data directory: ~/.local/share/sari/ (or AppData/Local on Win)"""
         if os.name == "nt":
             return Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "sari"
         return Path.home() / ".local" / "share" / "sari"
-    
+
     @staticmethod
     def get_global_db_path() -> Path:
         """Get global DB path: ~/.local/share/sari/index.db (Opt-in only)"""
@@ -253,11 +253,11 @@ class WorkspaceManager:
     def get_local_db_path(workspace_root: str) -> Path:
         """Get workspace-local DB path: .codex/tools/sari/data/index.db"""
         return Path(workspace_root) / ".codex" / "tools" / "sari" / "data" / "index.db"
-    
+
     @staticmethod
     def get_global_log_dir() -> Path:
         """Get global log directory, with env override."""
-        for env_key in ["DECKARD_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
+        for env_key in ["SARI_LOG_DIR", "LOCAL_SEARCH_LOG_DIR"]:
             val = (os.environ.get(env_key) or "").strip()
             if val:
                 return Path(os.path.expanduser(val)).resolve()

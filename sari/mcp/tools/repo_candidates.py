@@ -25,14 +25,14 @@ def execute_repo_candidates(args: Dict[str, Any], db: LocalSearchDB, logger: Tel
         limit_arg = min(int(args.get("limit", 3)), 5)
     except (ValueError, TypeError):
         limit_arg = 3
-    
+
     if not query.strip():
         return mcp_response(
             "repo_candidates",
             lambda: pack_error("repo_candidates", ErrorCode.INVALID_ARGS, "query is required"),
             lambda: {"error": {"code": ErrorCode.INVALID_ARGS.value, "message": "query is required"}, "isError": True},
         )
-    
+
     def get_candidates():
         root_ids = resolve_root_ids(list(roots or []))
         candidates = db.repo_candidates(q=query, limit=limit_arg, root_ids=root_ids)
@@ -59,13 +59,13 @@ def execute_repo_candidates(args: Dict[str, Any], db: LocalSearchDB, logger: Tel
     # --- PACK1 Builder ---
     def build_pack() -> str:
         candidates = get_candidates()
-        
+
         # Header
         kv = {"q": pack_encode_text(query), "limit": limit_arg}
         lines = [
             pack_header("repo_candidates", kv, returned=len(candidates))
         ]
-        
+
         # Records
         for c in candidates:
             # r:repo=<repo> score=<score> reason=<reason>
@@ -75,13 +75,13 @@ def execute_repo_candidates(args: Dict[str, Any], db: LocalSearchDB, logger: Tel
                 "reason": pack_encode_text(c["reason"])
             }
             lines.append(pack_line("r", kv_line))
-            
+
         return "\n".join(lines)
 
     if logger:
         # We need candidate count for logging, but don't want to run query twice optimally.
-        # But for simplicity in this structure, we let builders run query. 
-        # Telemetry here might be slightly off if we don't capture result from mcp_response, 
+        # But for simplicity in this structure, we let builders run query.
+        # Telemetry here might be slightly off if we don't capture result from mcp_response,
         # but execute_repo_candidates returns the result, so we can't easily hook in unless we move logging inside builders or after mcp_response.
         # Let's log *after* mcp_response call by peeking result, or just log query intent.
         logger.log_telemetry(f"tool=repo_candidates query='{query}' limit={limit_arg}")

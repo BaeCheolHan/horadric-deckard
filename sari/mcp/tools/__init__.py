@@ -8,7 +8,7 @@ from .list_files import execute_list_files
 
 __all__ = [
     "execute_search",
-    "execute_status", 
+    "execute_status",
     "execute_repo_candidates",
     "execute_list_files",
 ]

@@ -83,11 +83,11 @@ class SariDaemon:
             )
 
         self._write_pid()
-        
+
         self.server = await asyncio.start_server(
             self.handle_client, self.host, self.port
         )
-        
+
         addr = self.server.sockets[0].getsockname()
         logger.info(f"Sari Daemon serving on {addr}")
 
@@ -97,46 +97,46 @@ class SariDaemon:
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info('peername')
         logger.info(f"Accepted connection from {addr}")
-        
+
         session = Session(reader, writer)
         await session.handle_connection()
-        
+
         logger.info(f"Closed connection from {addr}")
 
     def shutdown(self):
         if self.server:
             self.server.close()
-            
+
         # Shutdown all workspaces to stop indexers and close DBs
         from .registry import Registry
         Registry.get_instance().shutdown_all()
-        
+
         self._remove_pid()
 
 async def main():
     daemon = SariDaemon()
-    
+
     # Handle signals
     loop = asyncio.get_running_loop()
     stop = asyncio.Future()
-    
+
     def _handle_signal():
         stop.set_result(None)
-    
+
     loop.add_signal_handler(signal.SIGTERM, _handle_signal)
     loop.add_signal_handler(signal.SIGINT, _handle_signal)
-    
+
     daemon_task = asyncio.create_task(daemon.start())
-    
+
     logger.info("Daemon started. Press Ctrl+C to stop.")
-    
+
     try:
         await stop
     finally:
         logger.info("Stopping daemon...")
         daemon.shutdown()
         # Wait for server to close? asyncio.start_server manages this in async with
-        # but we created a task. 
+        # but we created a task.
         # Actually server.serve_forever() runs until cancelled.
         daemon_task.cancel()
         try:

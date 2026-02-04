@@ -12,8 +12,8 @@ if not IS_WINDOWS:
     import fcntl
 
 # Local Standard Path
-if os.environ.get("DECKARD_REGISTRY_FILE"):
-    REGISTRY_FILE = Path(os.environ["DECKARD_REGISTRY_FILE"]).resolve()
+if os.environ.get("SARI_REGISTRY_FILE"):
+    REGISTRY_FILE = Path(os.environ["SARI_REGISTRY_FILE"]).resolve()
     REGISTRY_DIR = REGISTRY_FILE.parent
 else:
     REGISTRY_DIR = Path.home() / ".local" / "share" / "sari"
@@ -66,11 +66,11 @@ class ServerRegistry:
         """Register a running daemon."""
         # Normalize path
         workspace_root = str(Path(workspace_root).resolve())
-        
-        # Read-Modify-Write loop needs EX lock on read too if strict, 
+
+        # Read-Modify-Write loop needs EX lock on read too if strict,
         # but simple file lock wrapper is okay for low contention.
         # Ideally open "r+" with LOCK_EX, read, seek 0, write, truncate.
-        
+
         with open(REGISTRY_FILE, "r+") as f:
             if not IS_WINDOWS:
                 fcntl.flock(f, fcntl.LOCK_EX)
@@ -79,7 +79,7 @@ class ServerRegistry:
                     data = json.load(f)
                 except:
                     data = {"version": "1.0", "instances": {}}
-                
+
                 instances = data.get("instances", {})
                 instances[workspace_root] = {
                     "port": port,
@@ -88,7 +88,7 @@ class ServerRegistry:
                     "status": "active"
                 }
                 data["instances"] = instances
-                
+
                 f.seek(0)
                 json.dump(data, f, indent=2)
                 f.truncate()
@@ -99,7 +99,7 @@ class ServerRegistry:
     def unregister(self, workspace_root: str) -> None:
         """Remove a daemon (on shutdown)."""
         workspace_root = str(Path(workspace_root).resolve())
-        
+
         with open(REGISTRY_FILE, "r+") as f:
             if not IS_WINDOWS:
                 fcntl.flock(f, fcntl.LOCK_EX)
@@ -108,12 +108,12 @@ class ServerRegistry:
                     data = json.load(f)
                 except:
                     return
-                
+
                 instances = data.get("instances", {})
                 if workspace_root in instances:
                     del instances[workspace_root]
                     data["instances"] = instances
-                    
+
                     f.seek(0)
                     json.dump(data, f, indent=2)
                     f.truncate()
@@ -126,10 +126,10 @@ class ServerRegistry:
         workspace_root = str(Path(workspace_root).resolve())
         data = self._load()
         inst = data.get("instances", {}).get(workspace_root)
-        
+
         if not inst:
             return None
-            
+
         # Check if process is actually alive
         pid = inst.get("pid")
         if not self._is_process_alive(pid):
@@ -137,7 +137,7 @@ class ServerRegistry:
             # Let's clean up lazily if we have the lock, but here we just have read lock (via load).
             # Just return None, cleanup happens on next write or dedicated gc.
             return None
-            
+
         return inst
 
     def _is_process_alive(self, pid: int) -> bool:
@@ -156,11 +156,11 @@ class ServerRegistry:
             info["port"] for info in data.get("instances", {}).values()
             if self._is_process_alive(info.get("pid"))
         }
-        
+
         for port in range(start_port, max_port + 1):
             if port in used_ports:
                 continue
-                
+
             # 2. Check OS binding
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -168,5 +168,5 @@ class ServerRegistry:
                     return port
             except OSError:
                 continue
-                
+
         raise RuntimeError("No free ports available")

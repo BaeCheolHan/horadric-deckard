@@ -112,15 +112,15 @@ def _parse_size(value: Optional[str], default: int) -> int:
         return default
 
 def _resolve_size_limits() -> tuple[int, int]:
-    profile = (os.environ.get("DECKARD_SIZE_PROFILE") or "default").strip().lower()
+    profile = (os.environ.get("SARI_SIZE_PROFILE") or "default").strip().lower()
     if profile == "heavy":
         parse_default = 40 * 1024 * 1024
         ast_default = 40 * 1024 * 1024
     else:
         parse_default = 16 * 1024 * 1024
         ast_default = 8 * 1024 * 1024
-    parse_limit = _parse_size(os.environ.get("DECKARD_MAX_PARSE_BYTES"), parse_default)
-    ast_limit = _parse_size(os.environ.get("DECKARD_MAX_AST_BYTES"), ast_default)
+    parse_limit = _parse_size(os.environ.get("SARI_MAX_PARSE_BYTES"), parse_default)
+    ast_limit = _parse_size(os.environ.get("SARI_MAX_AST_BYTES"), ast_default)
     return parse_limit, ast_limit
 
 def _sample_file(path: Path, size: int) -> bytes:
@@ -261,10 +261,10 @@ class ShardedLock:
 
 
 def resolve_indexer_settings(db_path: str) -> tuple[str, bool, bool, Any]:
-    mode = (os.environ.get("DECKARD_INDEXER_MODE") or "auto").strip().lower()
+    mode = (os.environ.get("SARI_INDEXER_MODE") or "auto").strip().lower()
     if mode not in {"auto", "leader", "follower", "off"}:
         mode = "auto"
-    startup_index_enabled = (os.environ.get("DECKARD_STARTUP_INDEX", "1").strip().lower() not in ("0", "false", "no", "off"))
+    startup_index_enabled = (os.environ.get("SARI_STARTUP_INDEX", "1").strip().lower() not in ("0", "false", "no", "off"))
 
     if mode in {"off", "follower"}:
         return mode, False, startup_index_enabled, None
@@ -330,7 +330,7 @@ class BaseParser:
             if c.startswith("/**"): c = c[3:].strip()
             elif c.startswith("/*"): c = c[2:].strip()
             if c.endswith("*/"): c = c[:-2].strip()
-            # v2.7.5: Robust Javadoc '*' cleaning (strip all leading decorations for modern standard)
+            # Robust Javadoc '*' cleaning (strip all leading decorations for modern standard)
             while c.startswith("*") or c.startswith(" "):
                 c = c[1:]
             if c: cleaned.append(c)
@@ -359,7 +359,7 @@ class PythonParser(BaseParser):
                         kind = "class" if isinstance(child, ast.ClassDef) else ("method" if parent_name else "function")
                         start, end = child.lineno, getattr(child, "end_lineno", child.lineno)
                         doc = self.clean_doc((ast.get_docstring(child) or "").splitlines())
-                        # v2.5.0: Align with tests (use 'decorators', 'annotations', and '@' prefix)
+                        # Align with tests (use 'decorators', 'annotations', and '@' prefix)
                         decorators, annos = [], []
                         meta = {}
                         if hasattr(child, "decorator_list"):
@@ -376,7 +376,7 @@ class PythonParser(BaseParser):
                                             arg = dec.args[0]
                                             val = getattr(arg, "value", getattr(arg, "s", ""))
                                             if isinstance(val, str): meta["http_path"] = val
-                                            
+
                                     if attr:
                                         if isinstance(dec, ast.Call):
                                             decorators.append(f"@{attr}(...)")
@@ -386,8 +386,8 @@ class PythonParser(BaseParser):
                                 except: pass
                         meta["decorators"] = decorators
                         meta["annotations"] = annos
-                        
-                        # v2.7.4: Extract docstring from internal doc or leading comment
+
+                        # Extract docstring from internal doc or leading comment
                         doc = ast.get_docstring(child) or ""
                         if not doc and start > 1:
                             # Look back for Javadoc-style comment
@@ -438,7 +438,7 @@ class PythonParser(BaseParser):
                     else: _visit(child, parent_name, parent_qual, current_symbol, current_sid)
             _visit(tree)
         except Exception:
-            # v2.7.4: Fallback to regex parser if AST fails (useful for legacy tests or malformed files)
+            # Fallback to regex parser if AST fails (useful for legacy tests or malformed files)
             config = {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bdef\s+([a-zA-Z0-9_]+)\b\s*\(")}
             gen = GenericRegexParser(config, ".py")
             return gen.extract(path, content)
@@ -525,18 +525,18 @@ class GenericRegexParser(BaseParser):
                 method_line = f"{pending_method_prefix} {clean}"
                 pending_method_prefix = None
 
-            # v2.7.4: Simplify annotations to satisfy legacy count tests (2 == 2)
+            # Simplify annotations to satisfy legacy count tests (2 == 2)
             m_annos = list(self.re_anno.finditer(line))
             if m_annos:
                 for m_anno in m_annos:
                     tag = m_anno.group(1)
                     tag_upper = tag.upper()
                     prefixed = f"@{tag}"
-                    if prefixed not in pending_annos: 
+                    if prefixed not in pending_annos:
                         pending_annos.append(prefixed)
                     if tag_upper not in pending_annos:
                         pending_annos.append(tag_upper)
-                    # v2.7.4: Extract path from complex annotation string
+                    # Extract path from complex annotation string
                     path_match = re.search(r"\"([^\"]+)\"", m_anno.group(0))
                     if path_match: last_path = path_match.group(1)
                 if clean.startswith("@"): continue
@@ -557,7 +557,7 @@ class GenericRegexParser(BaseParser):
                         chunk = m_cont.group(1)
                         if pending_inheritance_mode == "extends": pending_inheritance_extends.extend(self._split_inheritance_list(chunk))
                         else: pending_inheritance_impls.extend(self._split_inheritance_list(chunk))
-                
+
                 if "{" in clean:
                     flush_inheritance(line_no, clean)
 
@@ -573,21 +573,21 @@ class GenericRegexParser(BaseParser):
                 sid = _symbol_id(path, kind, qual)
                 pending_type_decl = (name, line_no, sid)
                 pending_inheritance_mode, pending_inheritance_extends, pending_inheritance_impls = None, [], []
-                
+
                 # Check for inline inheritance
                 m_ext_inline = self.re_extends.search(clean, m.end())
                 if m_ext_inline:
                     pending_inheritance_mode = "extends"
                     pending_inheritance_extends.extend(self._split_inheritance_list(m_ext_inline.group(1)))
-                
+
                 m_impl_inline = self.re_implements.search(clean, m.end())
                 if m_impl_inline:
                     pending_inheritance_mode = "implements"
                     pending_inheritance_impls.extend(self._split_inheritance_list(m_impl_inline.group(1)))
-                
+
                 if clean.rstrip().endswith(("extends", ":")): pending_inheritance_mode = "extends"
                 elif clean.rstrip().endswith("implements"): pending_inheritance_mode = "implements"
-                
+
                 if "{" in clean:
                     flush_inheritance(line_no, clean)
 
@@ -964,7 +964,7 @@ class Indexer:
         self._drain_timeout = 2.0
         self._coalesce_max_keys = 100000
         try:
-            shard_count = int(os.environ.get("DECKARD_COALESCE_SHARDS", "16") or 16)
+            shard_count = int(os.environ.get("SARI_COALESCE_SHARDS", "16") or 16)
         except Exception:
             shard_count = 16
         if shard_count <= 0:
@@ -1001,12 +1001,12 @@ class Indexer:
         self._parse_timeout_seconds = 0.0
         self._parse_executor = None
         try:
-            self._parse_timeout_seconds = float(os.environ.get("DECKARD_PARSE_TIMEOUT_SECONDS", "0") or 0)
+            self._parse_timeout_seconds = float(os.environ.get("SARI_PARSE_TIMEOUT_SECONDS", "0") or 0)
         except Exception:
             self._parse_timeout_seconds = 0.0
         if self._parse_timeout_seconds > 0:
             try:
-                parse_workers = int(os.environ.get("DECKARD_PARSE_TIMEOUT_WORKERS", "2") or 2)
+                parse_workers = int(os.environ.get("SARI_PARSE_TIMEOUT_WORKERS", "2") or 2)
             except Exception:
                 parse_workers = 2
             if parse_workers <= 0:
@@ -1057,7 +1057,7 @@ class Indexer:
             self.status.index_ready = True
             return
         self._start_pipeline()
-        # v2.7.0: Start watcher if available and not already running
+        # Start watcher if available and not already running
         if FileWatcher and not self.watcher:
             try:
                 # Watch all roots
@@ -1331,7 +1331,7 @@ class Indexer:
 
     def _dlq_loop(self) -> None:
         try:
-            interval = float(os.environ.get("DECKARD_DLQ_POLL_SECONDS", "60") or 60)
+            interval = float(os.environ.get("SARI_DLQ_POLL_SECONDS", "60") or 60)
         except Exception:
             interval = 60.0
         while not self._stop.is_set():
@@ -1427,8 +1427,8 @@ class Indexer:
         rel_path = Path(rel_to_root).as_posix()
         root_id = doc_id.split("/", 1)[0] if "/" in doc_id else ""
         path_text = f"{doc_id} {rel_path}"
-        max_doc_bytes = int(os.environ.get("DECKARD_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304)
-        preview_bytes = int(os.environ.get("DECKARD_ENGINE_PREVIEW_BYTES", "8192") or 8192)
+        max_doc_bytes = int(os.environ.get("SARI_ENGINE_MAX_DOC_BYTES", "4194304") or 4194304)
+        preview_bytes = int(os.environ.get("SARI_ENGINE_PREVIEW_BYTES", "8192") or 8192)
         body_text = ""
         preview = ""
         if parse_status == "ok":
@@ -1471,10 +1471,10 @@ class Indexer:
                     return {"type": "unchanged", "rel": db_path}
 
             parse_limit, ast_limit = _resolve_size_limits()
-            exclude_parse = _env_flag("DECKARD_EXCLUDE_APPLIES_TO_PARSE", True)
-            exclude_ast = _env_flag("DECKARD_EXCLUDE_APPLIES_TO_AST", True)
-            sample_large = _env_flag("DECKARD_SAMPLE_LARGE_FILES", False)
-            decode_policy = (os.environ.get("DECKARD_UTF8_DECODE_POLICY") or "strong").strip().lower()
+            exclude_parse = _env_flag("SARI_EXCLUDE_APPLIES_TO_PARSE", True)
+            exclude_ast = _env_flag("SARI_EXCLUDE_APPLIES_TO_AST", True)
+            sample_large = _env_flag("SARI_SAMPLE_LARGE_FILES", False)
+            decode_policy = (os.environ.get("SARI_UTF8_DECODE_POLICY") or "strong").strip().lower()
 
             include_ext = {e.lower() for e in getattr(self.cfg, "include_ext", [])}
             include_files = set(getattr(self.cfg, "include_files", []))
@@ -1694,7 +1694,7 @@ class Indexer:
     def _scan_once(self):
         # Optional: purge legacy db paths (one-time)
         if not self._legacy_purge_done:
-            flag = os.environ.get("DECKARD_PURGE_LEGACY_PATHS", "0").strip().lower()
+            flag = os.environ.get("SARI_PURGE_LEGACY_PATHS", "0").strip().lower()
             if flag in ("1", "true", "yes", "on"):
                 try:
                     purged = self.db.purge_legacy_paths()
@@ -1708,16 +1708,16 @@ class Indexer:
         # Iterate over all workspace roots
         all_roots = [Path(os.path.expanduser(r)).absolute() for r in self.cfg.workspace_roots]
         valid_roots = [r for r in all_roots if r.exists()]
-        
+
         now, scan_ts = time.time(), int(time.time())
         self.status.last_scan_ts, self.status.scanned_files = now, 0
-        
+
         batch_files, batch_syms, batch_rels, unchanged = [], [], [], []
-        
+
         chunk_size = 100
         chunk = []
-        
-        exclude_meta = _env_flag("DECKARD_EXCLUDE_APPLIES_TO_META", True)
+
+        exclude_meta = _env_flag("SARI_EXCLUDE_APPLIES_TO_META", True)
         for root in valid_roots:
             for entry in self._iter_file_entries_stream(root, apply_exclude=exclude_meta):
                 chunk.append(entry)
@@ -1744,7 +1744,7 @@ class Indexer:
 
     def _process_chunk(self, root, chunk, scan_ts, now, batch_files, batch_syms, batch_rels, unchanged):
         futures = [self._executor.submit(self._process_file_task, root, f, s, scan_ts, now, excluded) for f, s, excluded in chunk]
-            
+
         for f, s, _ in chunk:
             if f.name == "package.json":
                 rel = str(f.relative_to(root))
@@ -1761,7 +1761,7 @@ class Indexer:
                     self._enqueue_update_last_seen(unchanged)
                     unchanged.clear()
                 continue
-                
+
             batch_files.append(
                 (
                     res["rel"],
@@ -1783,7 +1783,7 @@ class Indexer:
                 batch_syms.extend(res["symbols"])
             if res.get("relations"):
                 batch_rels.extend(res["relations"])
-                
+
             if len(batch_files) >= 50:
                 self._enqueue_db_tasks(batch_files, batch_syms, batch_rels)
                 self.status.indexed_files += len(batch_files)

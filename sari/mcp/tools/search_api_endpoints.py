@@ -30,7 +30,7 @@ def execute_search_api_endpoints(args: Dict[str, Any], db: Any, roots: List[str]
         root_clause = " OR ".join(["path LIKE ?"] * len(root_ids))
         sql += f" AND ({root_clause})"
         params.extend([f"{rid}/%" for rid in root_ids])
-    
+
     conn = db.get_read_connection() if hasattr(db, "get_read_connection") else db._read
     rows = conn.execute(sql, params).fetchall()
 

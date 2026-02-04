@@ -109,7 +109,7 @@ def _enforce_loopback(host: str) -> None:
 
 
 def _get_http_host_port() -> tuple[str, int]:
-    """Get active HTTP server address with Environment priority (v2.7.0)."""
+    """Get active HTTP server address with Environment priority ."""
     # 0. Environment Override (Highest Priority for testing/isolation)
     env_host = (
         os.environ.get("DECKARD_HTTP_API_HOST")
@@ -128,7 +128,7 @@ def _get_http_host_port() -> tuple[str, int]:
         return str(env_host or DEFAULT_HTTP_HOST), int(env_port or DEFAULT_HTTP_PORT)
 
     workspace_root = WorkspaceManager.resolve_workspace_root()
-    
+
     # 1. Try Global Registry
     try:
         inst = ServerRegistry().get_instance(workspace_root)
@@ -136,7 +136,7 @@ def _get_http_host_port() -> tuple[str, int]:
             return str(inst.get("host", DEFAULT_HTTP_HOST)), int(inst["port"])
     except Exception:
         pass
-    
+
     # 2. Legacy server.json
     server_info = _load_server_info(workspace_root)
     if server_info:
@@ -190,17 +190,17 @@ def remove_pid() -> None:
 def cmd_daemon_start(args):
     """Start the daemon."""
     host, port = get_daemon_address()
-    
+
     if is_daemon_running(host, port):
         print(f"✅ Daemon already running on {host}:{port}")
         return 0
-    
+
     repo_root = Path(__file__).parent.parent.resolve()
-    
+
     if args.daemonize:
         # Start in background
         print(f"Starting daemon on {host}:{port} (background)...")
-        
+
         proc = subprocess.Popen(
             [sys.executable, "-m", "mcp.daemon"],
             cwd=repo_root,
@@ -208,22 +208,22 @@ def cmd_daemon_start(args):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        
+
         # PID file will be written by the daemon process itself
-        
+
         # Wait for startup
         for _ in range(30):
             if is_daemon_running(host, port):
                 print(f"✅ Daemon started (PID: {proc.pid})")
                 return 0
             time.sleep(0.1)
-        
+
         print("❌ Daemon failed to start", file=sys.stderr)
         return 1
     else:
         # Start in foreground
         print(f"Starting daemon on {host}:{port} (foreground, Ctrl+C to stop)...")
-        
+
         try:
             # Import and run directly
             from sari.mcp.daemon import main as daemon_main
@@ -231,21 +231,21 @@ def cmd_daemon_start(args):
             asyncio.run(daemon_main())
         except KeyboardInterrupt:
             print("\nDaemon stopped.")
-        
+
         return 0
 
 
 def cmd_daemon_stop(args):
     """Stop the daemon."""
     host, port = get_daemon_address()
-    
+
     if not is_daemon_running(host, port):
         print("Daemon is not running")
         remove_pid()
         return 0
-    
+
     pid = read_pid()
-    
+
     if pid:
         try:
             if os.name == 'nt':
@@ -255,7 +255,7 @@ def cmd_daemon_stop(args):
             else:
                 os.kill(pid, signal.SIGTERM)
                 print(f"Sent SIGTERM to PID {pid}")
-            
+
             # Wait for shutdown
             for _ in range(30):
                 if not is_daemon_running(host, port):
@@ -263,15 +263,15 @@ def cmd_daemon_stop(args):
                     remove_pid()
                     return 0
                 time.sleep(0.1)
-            
+
             # Force kill (Unix only, Windows already done with /F)
             if os.name != 'nt':
                 print("Daemon not responding, sending SIGKILL...")
                 os.kill(pid, signal.SIGKILL)
-            
+
             remove_pid()
             return 0
-            
+
         except (ProcessLookupError, PermissionError):
             print("PID not found or permission denied, daemon may have crashed or locked")
             remove_pid()
@@ -284,17 +284,17 @@ def cmd_daemon_stop(args):
 def cmd_daemon_status(args):
     """Check daemon status."""
     host, port = get_daemon_address()
-    
+
     running = is_daemon_running(host, port)
     pid = read_pid()
-    
+
     print(f"Host: {host}")
     print(f"Port: {port}")
     print(f"Status: {'🟢 Running' if running else '⚫ Stopped'}")
-    
+
     if pid:
         print(f"PID: {pid}")
-    
+
     if running:
         # Try to get workspace info
         try:
@@ -308,11 +308,11 @@ def cmd_daemon_status(args):
                     "params": {"name": "status", "arguments": {"details": True}}
                 }) + "\n"
                 sock.sendall(request.encode())
-                
+
                 # We'd need an initialize first, so just skip detailed status for now
         except Exception:
             pass
-    
+
     return 0 if running else 1
 
 
@@ -379,7 +379,7 @@ def cmd_status(args):
         if not is_daemon_running(host, port):
              print(f"❌ Error: Daemon is not running on {host}:{port}")
              return 1
-             
+
         data = _request_http("/status", {})
         print(json.dumps(data, ensure_ascii=False, indent=2))
         return 0
@@ -643,27 +643,27 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=epilog,
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", help="Commands")
-    
+
     # daemon subcommand
     daemon_parser = subparsers.add_parser("daemon", help="Daemon management")
     daemon_sub = daemon_parser.add_subparsers(dest="daemon_command")
-    
+
     # daemon start
     start_parser = daemon_sub.add_parser("start", help="Start daemon")
     start_parser.add_argument("-d", "--daemonize", action="store_true",
                               help="Run in background")
     start_parser.set_defaults(func=cmd_daemon_start)
-    
+
     # daemon stop
     stop_parser = daemon_sub.add_parser("stop", help="Stop daemon")
     stop_parser.set_defaults(func=cmd_daemon_stop)
-    
+
     # daemon status
     status_parser = daemon_sub.add_parser("status", help="Check status")
     status_parser.set_defaults(func=cmd_daemon_status)
-    
+
     # proxy subcommand
     proxy_parser = subparsers.add_parser("proxy", help="Run in proxy mode")
     proxy_parser.set_defaults(func=cmd_proxy)
@@ -786,20 +786,20 @@ def main():
     gar_parser.add_argument("--total-mode", default="exact", choices=["exact", "approx"], help="Total count mode")
     gar_parser.add_argument("--workspace", default="", help="Workspace root (default: auto-detect)")
     gar_parser.set_defaults(func=cmd_grep_and_read)
-    
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return 1
-    
+
     if args.command == "daemon" and not args.daemon_command:
         daemon_parser.print_help()
         return 1
-    
+
     if hasattr(args, "func"):
         return args.func(args)
-    
+
     return 0
 
 

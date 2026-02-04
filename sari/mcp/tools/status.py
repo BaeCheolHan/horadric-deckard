@@ -28,7 +28,7 @@ except ImportError:
 def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optional[LocalSearchDB], cfg: Optional[Config], workspace_root: str, server_version: str, logger: Optional[TelemetryLogger] = None) -> Dict[str, Any]:
     """Execute status tool."""
     details = bool(args.get("details", False))
-    
+
     # 1. Gather status data
     actual_http_port = None
     try:
@@ -96,7 +96,7 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
             status_data["dlq_failed_high"] = 0
     if indexer and hasattr(indexer, "get_queue_depths"):
         status_data["queue_depths"] = indexer.get_queue_depths()
-    
+
     if cfg:
         status_data["config"] = {
             "include_ext": cfg.include_ext,
@@ -105,13 +105,13 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
             "max_file_bytes": cfg.max_file_bytes,
             "http_api_port": cfg.http_api_port,
         }
-    
+
     repo_stats = None
     if details and db:
         root_ids = resolve_root_ids(cfg.workspace_roots if cfg else [])
         repo_stats = db.get_repo_stats(root_ids=root_ids)
         status_data["repo_stats"] = repo_stats
-    
+
     if logger:
         logger.log_telemetry(f"tool=status details={details} scanned={status_data['scanned_files']} indexed={status_data['indexed_files']}")
 
@@ -158,14 +158,14 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
     # --- PACK1 Builder ---
     def build_pack() -> str:
         metrics = []
-        
+
         # Base status
         for k, v in status_data.items():
             if k in {"config", "repo_stats", "queue_depths"}:
                 continue
             val = str(v).lower() if isinstance(v, bool) else str(v)
             metrics.append((k, val))
-            
+
         # Config (if exists)
         if "config" in status_data:
             c = status_data["config"]
@@ -177,12 +177,12 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
             metrics.append(("queue_watcher", str(q.get("watcher", 0))))
             metrics.append(("queue_db_writer", str(q.get("db_writer", 0))))
             metrics.append(("queue_telemetry", str(q.get("telemetry", 0))))
-            
+
         # Repo stats (if exists)
         if repo_stats:
             for r_name, r_count in repo_stats.items():
                 metrics.append((f"repo_{r_name}", str(r_count)))
-                
+
         # Build lines
         lines = [pack_header("status", {}, returned=len(metrics))]
         for k, v in metrics:
@@ -203,7 +203,7 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
             if hint:
                 text += f" ({hint})"
             lines.append(pack_line("w", single_value=pack_encode_text(text)))
-            
+
         return "\n".join(lines)
 
     return mcp_response("status", build_pack, build_json)

@@ -76,13 +76,11 @@ if not defined DECKARD_BOOTSTRAP_DONE (
 :: Regular Execution
 set "PYTHONPATH=%ROOT_DIR%;%PYTHONPATH%"
 
-:: Version from Git
-if exist "%ROOT_DIR%\.git" (
-    for /f "tokens=*" %%v in ('git -C "%ROOT_DIR%" describe --tags --abbrev=0 2^>nul') do (
-        set "V=%%v"
-        set "DECKARD_VERSION=!V:v=!"
-    )
+:: Version from package metadata
+for /f "tokens=*" %%v in ('%PY% -c "import importlib,sys; spec=importlib.util.find_spec(\"sari.version\"); print(__import__(\"sari.version\", fromlist=[\"__version__\"]).__version__) if spec else None" 2^>nul') do (
+    set "SARI_VERSION=%%v"
 )
+if /I "%SARI_VERSION%"=="None" set "SARI_VERSION="
 
 :: Check if sari.__main__ exists; fallback to deckard if missing
 "%PY%" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('sari.__main__') else 1)" >nul 2>nul

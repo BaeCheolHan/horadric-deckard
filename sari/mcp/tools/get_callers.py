@@ -39,7 +39,7 @@ def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict
         root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
         sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
         params.extend([f"{rid}/%" for rid in root_ids])
-    
+
     conn = db.get_read_connection() if hasattr(db, "get_read_connection") else db._read
     try:
         rows = conn.execute(sql, params).fetchall()

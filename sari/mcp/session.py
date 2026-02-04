@@ -32,13 +32,13 @@ class Session:
                     if not line:
                         self.running = False
                         break
-                    
+
                     line_str = line.decode("utf-8").strip()
                     line_count += 1
-                    
+
                     if not line_str:
                         break
-                    
+
                     # Protocol Check: First line must be Content-Length
                     if line_count == 1:
                         if line_str.startswith("{"):
@@ -46,7 +46,7 @@ class Session:
                             await self.send_error(None, -32700, "JSONL not supported. Use Content-Length framing.")
                             self.running = False
                             break
-                        
+
                         if not line_str.lower().startswith("content-length:"):
                             logger.error(f"First header must be Content-Length, got: {line_str!r}")
                             await self.send_error(None, -32700, "Invalid protocol framing: Content-Length header required first")
@@ -159,18 +159,18 @@ class Session:
             # Since LocalSearchMCPServer is synchronous
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
-                None, 
-                self.shared_state.server.handle_request, 
+                None,
+                self.shared_state.server.handle_request,
                 request
             )
-            
+
             if response:
                 await self.send_json(response)
 
     async def handle_initialize(self, request: Dict[str, Any]):
         params = request.get("params", {})
         msg_id = request.get("id")
-        
+
         root_uri = params.get("rootUri") or params.get("rootPath")
         if not root_uri:
             # Fallback for clients that omit rootUri/rootPath
@@ -189,7 +189,7 @@ class Session:
 
         self.workspace_root = workspace_root
         self.shared_state = self.registry.get_or_create(self.workspace_root)
-        
+
         # Delegate specific initialize logic to the server instance
         # We need to construct the result based on server's response
         # LocalSearchMCPServer.handle_initialize returns the result dict directly

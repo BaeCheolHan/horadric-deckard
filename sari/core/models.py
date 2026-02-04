@@ -8,20 +8,20 @@ class SearchHit:
     path: str
     score: float
     snippet: str
-    # v2.3.1: Added metadata
+    # Added metadata
     mtime: int = 0
     size: int = 0
     match_count: int = 0
     file_type: str = ""
-    hit_reason: str = ""  # v2.4.3: Added hit reason
-    context_symbol: str = ""  # v2.6.0: Enclosing symbol context
-    docstring: str = "" # v2.9.0: Docstring/Javadoc
-    metadata: str = "{}" # v2.9.0: Raw metadata JSON
+    hit_reason: str = ""  # Added hit reason
+    context_symbol: str = ""  # Enclosing symbol context
+    docstring: str = "" # Docstring/Javadoc
+    metadata: str = "{}" # Raw metadata JSON
 
 
 @dataclass
 class SearchOptions:
-    """Search configuration options (v2.5.1)."""
+    """Search configuration options ."""
     query: str = ""
     repo: Optional[str] = None
     limit: int = 20
@@ -35,5 +35,5 @@ class SearchOptions:
     use_regex: bool = False
     case_sensitive: bool = False
     root_ids: List[str] = field(default_factory=list)
-    # Pagination & Performance (v2.5.1)
+    # Pagination & Performance
     total_mode: str = "exact"  # "exact" | "approx"

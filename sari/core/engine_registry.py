@@ -48,7 +48,7 @@ def get_registry() -> EngineRegistry:
 
 
 def default_engine_name() -> str:
-    mode = (os.environ.get("DECKARD_ENGINE_MODE") or "embedded").strip().lower()
+    mode = (os.environ.get("SARI_ENGINE_MODE") or "embedded").strip().lower()
     return "embedded" if mode == "embedded" else "sqlite"
 
 

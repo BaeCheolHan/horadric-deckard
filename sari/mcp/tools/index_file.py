@@ -56,7 +56,7 @@ def execute_index_file(args: Dict[str, Any], indexer: Any, roots: List[str]) -> 
             indexer._process_watcher_event(evt)
         else:
             indexer._process_watcher_event(fs_path)
-             
+
         def build_pack() -> str:
             lines = [pack_header("index_file", {}, returned=1)]
             lines.append(pack_line("m", {"path": pack_encode_id(db_path), "requested": "true"}))

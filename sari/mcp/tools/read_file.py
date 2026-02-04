@@ -5,7 +5,7 @@ from sari.mcp.tools._util import mcp_response, pack_error, ErrorCode, resolve_db
 def execute_read_file(args: Dict[str, Any], db: LocalSearchDB, roots: List[str]) -> Dict[str, Any]:
     """
     Execute read_file tool.
-    
+
     Args:
         args: {"path": str}
         db: LocalSearchDB instance

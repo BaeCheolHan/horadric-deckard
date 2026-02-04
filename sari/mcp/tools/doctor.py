@@ -57,9 +57,9 @@ def _check_db(ws_root: str) -> list[dict[str, Any]]:
             return [r["name"] for r in cursor.fetchall()]
         symbols_cols = _cols("symbols")
         if "end_line" in symbols_cols:
-            results.append(_result("DB Schema v2.7.0", True))
+            results.append(_result("DB Schema", True))
         else:
-            results.append(_result("DB Schema v2.7.0", False, "Column 'end_line' missing in 'symbols'. Run update."))
+            results.append(_result("DB Schema", False, "Column 'end_line' missing in 'symbols'. Run update."))
         if "qualname" in symbols_cols and "symbol_id" in symbols_cols:
             results.append(_result("DB Schema Symbol IDs", True))
         else:

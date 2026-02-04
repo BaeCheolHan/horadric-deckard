@@ -90,7 +90,7 @@ def start_daemon_if_needed(host, port):
         try:
             # Acquire exclusive lock (blocking)
             _lock_file(lock_file)
-            
+
             # Double-check if daemon started while waiting for lock
             try:
                 with socket.create_connection((host, port), timeout=0.1):
@@ -99,13 +99,13 @@ def start_daemon_if_needed(host, port):
                 pass
 
             _log_info("Daemon not running, starting...")
-            
+
             # Assume we are in mcp/proxy.py, so parent of parent is repo root
             repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
             env = os.environ.copy()
             # Do not infer workspace root from marker; rely on explicit roots/env/config.
-            
+
             # Detach process
             subprocess.Popen(
                 [sys.executable, "-m", "mcp.daemon"],
@@ -115,7 +115,7 @@ def start_daemon_if_needed(host, port):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            
+
             # Wait for it to come up
             for _ in range(20):
                 try:
@@ -124,10 +124,10 @@ def start_daemon_if_needed(host, port):
                         return True
                 except (ConnectionRefusedError, OSError):
                     time.sleep(0.1)
-            
+
             _log_error("Failed to start daemon.")
             return False
-            
+
         finally:
             _unlock_file(lock_file)
 
@@ -147,18 +147,18 @@ def forward_socket_to_stdout(sock, mode_holder):
                 if ":" in line_str:
                     k, v = line_str.split(":", 1)
                     headers[k.strip().lower()] = v.strip()
-            
+
             if not headers and not line:
                 break
-            
+
             content_length = int(headers.get("content-length", 0))
             if content_length <= 0:
                 continue
-                
+
             body = f.read(content_length)
             if not body:
                 break
-                
+
             mode = mode_holder.get("mode") or _MODE_FRAMED
             if mode == _MODE_JSONL:
                 sys.stdout.buffer.write(body + b"\n")
@@ -262,7 +262,7 @@ def forward_stdin_to_socket(sock, mode_holder):
                 pass
             if mode_holder.get("mode") is None:
                 mode_holder["mode"] = mode
-            
+
             header = f"Content-Length: {len(msg)}\r\n\r\n".encode("ascii")
             sock.sendall(header + msg)
     except Exception as e:

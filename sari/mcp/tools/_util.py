@@ -71,20 +71,20 @@ def pack_header(tool: str, kv: Dict[str, Any], returned: Optional[int] = None,
     PACK1 tool=<tool> ok=true k=v ... [returned=<N>] [total=<M>] [total_mode=<mode>]
     """
     parts = ["PACK1", f"tool={tool}", "ok=true"]
-    
+
     # Add custom KV pairs
     for k, v in kv.items():
         parts.append(f"{k}={v}")
 
     if returned is not None:
         parts.append(f"returned={returned}")
-    
+
     if total_mode:
         parts.append(f"total_mode={total_mode}")
-        
+
     if total is not None and total_mode != "none":
         parts.append(f"total={total}")
-        
+
     return " ".join(parts)
 
 def pack_line(kind: str, kv: Optional[Dict[str, str]] = None, single_value: Optional[str] = None) -> str:
@@ -95,11 +95,11 @@ def pack_line(kind: str, kv: Optional[Dict[str, str]] = None, single_value: Opti
     """
     if single_value is not None:
         return f"{kind}:{single_value}"
-        
+
     if kv:
         field_strs = [f"{k}={v}" for k, v in kv.items()]
         return f"{kind}:{ ' '.join(field_strs) }"
-        
+
     return f"{kind}:"
 
 def pack_error(tool: str, code: Any, msg: str, hints: List[str] = None, trace: str = None, fields: Dict[str, Any] = None) -> str:
@@ -133,18 +133,18 @@ def pack_truncated(next_offset: int, limit: int, truncated_state: str) -> str:
 # --- Main Utility ---
 
 def mcp_response(
-    tool_name: str, 
-    pack_func: Callable[[], str], 
+    tool_name: str,
+    pack_func: Callable[[], str],
     json_func: Callable[[], Dict[str, Any]]
 ) -> Dict[str, Any]:
     """
     Helper to dispatch between PACK1 and JSON based on configuration.
-    
+
     pack_func: function that returns (str) - the full PACK1 text payload.
     json_func: function that returns (dict) - the dict for JSON serialization.
     """
     fmt = _get_format()
-    
+
     try:
         if fmt == "pack":
             text_output = pack_func()
@@ -154,12 +154,12 @@ def mcp_response(
         else:
             # JSON mode (Legacy/Debug)
             data = json_func()
-            
+
             if _compact_enabled():
                 json_text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
             else:
                 json_text = json.dumps(data, ensure_ascii=False, indent=2)
-                
+
             res = {"content": [{"type": "text", "text": json_text}]}
             if isinstance(data, dict):
                 res.update(data)
@@ -168,7 +168,7 @@ def mcp_response(
         import traceback
         err_msg = str(e)
         stack = traceback.format_exc()
-        
+
         if fmt == "pack":
             return {
                 "content": [{"type": "text", "text": pack_error(tool_name, ErrorCode.INTERNAL, err_msg, trace=stack)}],

@@ -30,14 +30,14 @@ def _repo_root() -> str:
 
 
 def main() -> int:
-    # v2.3.2: Auto-detect workspace root for HTTP fallback
+    # Auto-detect workspace root for HTTP fallback
     workspace_root = WorkspaceManager.resolve_workspace_root()
-    
+
     # Set env var so Config can pick it up
     os.environ["LOCAL_SEARCH_WORKSPACE_ROOT"] = workspace_root
-    
+
     cfg_path = resolve_config_path(workspace_root)
-    
+
     # Graceful config loading (Global Install Support)
     if os.path.exists(cfg_path):
         cfg = Config.load(cfg_path)
@@ -64,11 +64,11 @@ def main() -> int:
             "Set LOCAL_SEARCH_ALLOW_NON_LOOPBACK=1 to override (NOT recommended)."
         )
 
-    # v2.4.1: Workspace-local DB path enforcement (multi-workspace support)
+    # Workspace-local DB path enforcement (multi-workspace support)
     # DB path is now determined by Config.load
     db_path = cfg.db_path
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    
+
     print(f"[sari] DB path: {db_path}")
 
     db = LocalSearchDB(db_path)
@@ -82,8 +82,12 @@ def main() -> int:
     indexer = Indexer(cfg, db, indexer_mode=mode, indexing_enabled=enabled, startup_index_enabled=startup_enabled, lock_handle=lock_handle)
 
     # Start HTTP immediately so health checks don't block on initial indexing.
-    # v2.3.3: serve_forever returns (httpd, actual_port) for fallback tracking
-    version = os.environ.get("DECKARD_VERSION", "dev")
+    # serve_forever returns (httpd, actual_port) for fallback tracking
+    try:
+        from sari.version import __version__
+        version = __version__
+    except Exception:
+        version = os.environ.get("SARI_VERSION", "dev")
     httpd, actual_port = serve_forever(host, cfg.http_api_port, db, indexer, version=version, workspace_root=workspace_root)
 
     # Write server.json with actual binding info (single source of truth for port tracking)
@@ -92,7 +96,7 @@ def main() -> int:
     server_json = data_dir / "server.json"
     server_info = {
         "host": host,
-        "port": actual_port,  # v2.3.3: use actual bound port, not config port
+        "port": actual_port,  # use actual bound port, not config port
         "config_port": cfg.http_api_port,  # original requested port for reference
         "pid": os.getpid(),
         "started_at": datetime.now().isoformat(),
