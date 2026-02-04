@@ -44,8 +44,8 @@ class SharedState:
 
             # Start HTTP Server
             self.httpd, self.http_port = serve_forever(
-                host=cfg.server_host,
-                port=cfg.server_port,
+                host=cfg.http_api_host,
+                port=cfg.http_api_port,
                 db=self.server.db,
                 indexer=self.server.indexer,
                 version=self.server.SERVER_VERSION,

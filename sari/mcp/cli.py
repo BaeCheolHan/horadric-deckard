@@ -112,7 +112,7 @@ def _enforce_loopback(host: str) -> None:
         )
 
 
-def _get_http_host_port() -> tuple[str, int]:
+def _get_http_host_port(host_override: Optional[str] = None, port_override: Optional[int] = None) -> tuple[str, int]:
     """Get active HTTP server address with Environment priority ."""
     # 0. Environment Override (Highest Priority for testing/isolation)
     # PRIORITY: SARI_
@@ -122,12 +122,23 @@ def _get_http_host_port() -> tuple[str, int]:
     cfg = _load_http_config(workspace_root) or {}
     host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
     port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
+    if env_host:
+        host = env_host
+    if os.environ.get("SARI_HTTP_API_PORT") or os.environ.get("SARI_HTTP_PORT"):
+        try:
+            port = int(os.environ.get("SARI_HTTP_API_PORT") or os.environ.get("SARI_HTTP_PORT"))
+        except (TypeError, ValueError):
+            pass
+    if host_override:
+        host = host_override
+    if port_override is not None:
+        port = int(port_override)
     return host, port
 
 
 
-def _request_http(path: str, params: dict) -> dict:
-    host, port = _get_http_host_port()
+def _request_http(path: str, params: dict, host: Optional[str] = None, port: Optional[int] = None) -> dict:
+    host, port = _get_http_host_port(host, port)
     _enforce_loopback(host)
     qs = urllib.parse.urlencode(params)
     url = f"http://{host}:{port}{path}?{qs}"
@@ -162,7 +173,11 @@ def remove_pid() -> None:
 
 def cmd_daemon_start(args):
     """Start the daemon."""
-    host, port = get_daemon_address()
+    if args.daemon_host or args.daemon_port:
+        host = args.daemon_host or DEFAULT_HOST
+        port = int(args.daemon_port or DEFAULT_PORT)
+    else:
+        host, port = get_daemon_address()
     workspace_root = WorkspaceManager.resolve_workspace_root()
 
     if is_daemon_running(host, port):
@@ -177,6 +192,14 @@ def cmd_daemon_start(args):
     env = os.environ.copy()
     env["SARI_DAEMON_AUTOSTART"] = "1"
     env["SARI_WORKSPACE_ROOT"] = workspace_root
+    if args.daemon_host:
+        env["SARI_DAEMON_HOST"] = args.daemon_host
+    if args.daemon_port:
+        env["SARI_DAEMON_PORT"] = str(args.daemon_port)
+    if args.http_host:
+        env["SARI_HTTP_API_HOST"] = args.http_host
+    if args.http_port is not None:
+        env["SARI_HTTP_API_PORT"] = str(args.http_port)
 
     if args.daemonize:
         # Start in background
@@ -210,6 +233,14 @@ def cmd_daemon_start(args):
             # Import and run directly
             os.environ["SARI_DAEMON_AUTOSTART"] = "1"
             os.environ["SARI_WORKSPACE_ROOT"] = workspace_root
+            if args.daemon_host:
+                os.environ["SARI_DAEMON_HOST"] = args.daemon_host
+            if args.daemon_port:
+                os.environ["SARI_DAEMON_PORT"] = str(args.daemon_port)
+            if args.http_host:
+                os.environ["SARI_HTTP_API_HOST"] = args.http_host
+            if args.http_port is not None:
+                os.environ["SARI_HTTP_API_PORT"] = str(args.http_port)
             from sari.mcp.daemon import main as daemon_main
             import asyncio
             asyncio.run(daemon_main())
@@ -394,9 +425,13 @@ def cmd_auto(args):
 def cmd_status(args):
     """Query HTTP status endpoint."""
     try:
-        daemon_host, daemon_port = get_daemon_address()
+        if args.daemon_host or args.daemon_port:
+            daemon_host = args.daemon_host or DEFAULT_HOST
+            daemon_port = int(args.daemon_port or DEFAULT_PORT)
+        else:
+            daemon_host, daemon_port = get_daemon_address()
         daemon_running = is_daemon_running(daemon_host, daemon_port)
-        host, port = _get_http_host_port()
+        host, port = _get_http_host_port(args.http_host, args.http_port)
         http_running = is_daemon_running(host, port)
 
         if not daemon_running or not http_running:
@@ -406,7 +441,7 @@ def cmd_status(args):
             print("   Hint: Run `sari daemon start -d` to start both, or `sari --http-api` to start HTTP only.")
             return 1
 
-        data = _request_http("/status", {})
+        data = _request_http("/status", {}, host, port)
         print(json.dumps(data, ensure_ascii=False, indent=2))
         return 0
     except Exception as e:
@@ -680,6 +715,10 @@ def main():
     start_parser = daemon_sub.add_parser("start", help="Start daemon")
     start_parser.add_argument("-d", "--daemonize", action="store_true",
                               help="Run in background")
+    start_parser.add_argument("--daemon-host", default="", help="Daemon host override (default: 127.0.0.1)")
+    start_parser.add_argument("--daemon-port", type=int, default=None, help="Daemon port override (default: 47779)")
+    start_parser.add_argument("--http-host", default="", help="HTTP host override (default: 127.0.0.1)")
+    start_parser.add_argument("--http-port", type=int, default=None, help="HTTP port override (default: 47777)")
     start_parser.set_defaults(func=cmd_daemon_start)
 
     # daemon stop
@@ -700,6 +739,10 @@ def main():
 
     # status subcommand (HTTP)
     status_parser = subparsers.add_parser("status", help="Query HTTP status")
+    status_parser.add_argument("--daemon-host", default="", help="Daemon host override (default: 127.0.0.1)")
+    status_parser.add_argument("--daemon-port", type=int, default=None, help="Daemon port override (default: 47779)")
+    status_parser.add_argument("--http-host", default="", help="HTTP host override (default: 127.0.0.1)")
+    status_parser.add_argument("--http-port", type=int, default=None, help="HTTP port override (default: 47777)")
     status_parser.set_defaults(func=cmd_status)
 
     # doctor subcommand

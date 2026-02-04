@@ -248,6 +248,17 @@ sari daemon start -d
 SARI_WORKSPACE_ROOT=/path/to/workspace sari daemon start -d
 ```
 
+#### Zero-Downtime Upgrade (Port Split)
+You can run a new daemon+HTTP on different ports, switch clients, then stop the old one.
+
+```bash
+# Start new instance on alternate ports:
+sari daemon start -d --daemon-port 47790 --http-port 47778
+
+# Check new instance:
+sari status --daemon-port 47790 --http-port 47778
+```
+
 ### Run Doctor
 Diagnose issues with your environment or installation:
 
