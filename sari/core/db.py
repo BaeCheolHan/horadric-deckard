@@ -515,8 +515,24 @@ class LocalSearchDB:
 
             cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_path ON symbols(path);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_qual ON symbols(qualname);")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_sid ON symbols(symbol_id);")
+            try:
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_qual ON symbols(qualname);")
+            except sqlite3.OperationalError:
+                # Defensive migration for legacy DBs missing qualname column.
+                try:
+                    cur.execute("ALTER TABLE symbols ADD COLUMN qualname TEXT DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_qual ON symbols(qualname);")
+            try:
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_sid ON symbols(symbol_id);")
+            except sqlite3.OperationalError:
+                # Defensive migration for legacy DBs missing symbol_id column.
+                try:
+                    cur.execute("ALTER TABLE symbols ADD COLUMN symbol_id TEXT DEFAULT ''")
+                except sqlite3.OperationalError:
+                    pass
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_symbols_sid ON symbols(symbol_id);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_from ON symbol_relations(from_symbol);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_to ON symbol_relations(to_symbol);")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_relations_from_sid ON symbol_relations(from_symbol_id);")

@@ -47,6 +47,7 @@ class SariDaemon:
         self.host = os.environ.get("SARI_DAEMON_HOST", DEFAULT_HOST)
         self.port = int(os.environ.get("SARI_DAEMON_PORT", DEFAULT_PORT))
         self.server = None
+        self._pinned_workspace_root = None
 
     def _write_pid(self):
         """Write current PID to file."""
@@ -67,6 +68,23 @@ class SariDaemon:
         except Exception as e:
             logger.error(f"Failed to remove PID file: {e}")
 
+    def _autostart_workspace(self) -> None:
+        val = (os.environ.get("SARI_DAEMON_AUTOSTART") or "").strip().lower()
+        if val not in {"1", "true", "yes", "on"}:
+            return
+
+        workspace_root = (os.environ.get("SARI_WORKSPACE_ROOT") or "").strip()
+        if not workspace_root:
+            workspace_root = WorkspaceManager.resolve_workspace_root()
+
+        try:
+            from .registry import Registry
+            Registry.get_instance().get_or_create(workspace_root)
+            self._pinned_workspace_root = workspace_root
+            logger.info(f"Auto-started workspace HTTP server for {workspace_root}")
+        except Exception as e:
+            logger.error(f"Failed to auto-start workspace HTTP server: {e}")
+
     async def start(self):
         host = (self.host or "127.0.0.1").strip()
         try:
@@ -81,6 +99,7 @@ class SariDaemon:
             )
 
         self._write_pid()
+        self._autostart_workspace()
 
         self.server = await asyncio.start_server(
             self.handle_client, self.host, self.port

@@ -227,6 +227,27 @@ You can check the daemon status and indexing progress:
 sari status
 ```
 
+#### If Daemon Port Is Busy
+If you see a message like "Daemon already running" but things still don't work,
+another process may be using the default port.
+
+```bash
+# Try a different daemon port:
+SARI_DAEMON_PORT=47790 sari daemon start -d
+```
+
+#### Run Daemon + HTTP Together
+`sari status` talks to the HTTP server, so you should run the daemon and HTTP together.
+The daemon auto-starts HTTP for the current workspace.
+
+```bash
+# Start both (daemon will auto-start HTTP):
+sari daemon start -d
+
+# If you need a custom workspace:
+SARI_WORKSPACE_ROOT=/path/to/workspace sari daemon start -d
+```
+
 ### Run Doctor
 Diagnose issues with your environment or installation:
 

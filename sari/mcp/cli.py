@@ -118,6 +118,7 @@ def _get_http_host_port() -> tuple[str, int]:
     # PRIORITY: SARI_
     env_host = os.environ.get("SARI_HTTP_API_HOST") or os.environ.get("SARI_HTTP_HOST")
     # 3. Fallback to Config
+    workspace_root = WorkspaceManager.resolve_workspace_root()
     cfg = _load_http_config(workspace_root) or {}
     host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
     port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
@@ -162,12 +163,20 @@ def remove_pid() -> None:
 def cmd_daemon_start(args):
     """Start the daemon."""
     host, port = get_daemon_address()
+    workspace_root = WorkspaceManager.resolve_workspace_root()
 
     if is_daemon_running(host, port):
+        pid = read_pid()
         print(f"✅ Daemon already running on {host}:{port}")
+        if not pid:
+            print("⚠️  PID file missing. Another process may be using this port.")
+            print("   Hint: Try a different port: SARI_DAEMON_PORT=47790 sari daemon start -d")
         return 0
 
     repo_root = Path(__file__).parent.parent.resolve()
+    env = os.environ.copy()
+    env["SARI_DAEMON_AUTOSTART"] = "1"
+    env["SARI_WORKSPACE_ROOT"] = workspace_root
 
     if args.daemonize:
         # Start in background
@@ -178,7 +187,8 @@ def cmd_daemon_start(args):
             cwd=repo_root,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
+            env=env,
         )
 
         # PID file will be written by the daemon process itself
@@ -198,6 +208,8 @@ def cmd_daemon_start(args):
 
         try:
             # Import and run directly
+            os.environ["SARI_DAEMON_AUTOSTART"] = "1"
+            os.environ["SARI_WORKSPACE_ROOT"] = workspace_root
             from sari.mcp.daemon import main as daemon_main
             import asyncio
             asyncio.run(daemon_main())
@@ -347,12 +359,17 @@ def cmd_auto(args):
     # Try to start daemon in background, then proxy.
     if not is_daemon_running(host, port):
         repo_root = Path(__file__).parent.parent.resolve()
+        workspace_root = WorkspaceManager.resolve_workspace_root()
+        env = os.environ.copy()
+        env["SARI_DAEMON_AUTOSTART"] = "1"
+        env["SARI_WORKSPACE_ROOT"] = workspace_root
         subprocess.Popen(
             [sys.executable, "-m", "sari.mcp.daemon"],
             cwd=repo_root,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=env,
         )
         for _ in range(30):
             try:
@@ -377,11 +394,17 @@ def cmd_auto(args):
 def cmd_status(args):
     """Query HTTP status endpoint."""
     try:
+        daemon_host, daemon_port = get_daemon_address()
+        daemon_running = is_daemon_running(daemon_host, daemon_port)
         host, port = _get_http_host_port()
-        # Fast check if port is even open
-        if not is_daemon_running(host, port):
-             print(f"❌ Error: Daemon is not running on {host}:{port}")
-             return 1
+        http_running = is_daemon_running(host, port)
+
+        if not daemon_running or not http_running:
+            print("❌ Error: Sari services are not fully running.")
+            print(f"   Daemon: {'🟢' if daemon_running else '⚫'} {daemon_host}:{daemon_port}")
+            print(f"   HTTP:   {'🟢' if http_running else '⚫'} {host}:{port}")
+            print("   Hint: Run `sari daemon start -d` to start both, or `sari --http-api` to start HTTP only.")
+            return 1
 
         data = _request_http("/status", {})
         print(json.dumps(data, ensure_ascii=False, indent=2))

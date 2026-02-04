@@ -232,6 +232,10 @@ class WorkspaceManager:
     @staticmethod
     def get_global_data_dir() -> Path:
         """Get global data directory: ~/.local/share/sari/ (or AppData/Local on Win)"""
+        for env_key in ["SARI_DATA_DIR", "SARI_GLOBAL_DATA_DIR"]:
+            val = (os.environ.get(env_key) or "").strip()
+            if val:
+                return Path(os.path.expanduser(val)).resolve()
         if os.name == "nt":
             return Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))) / "sari"
         return Path.home() / ".local" / "share" / "sari"
