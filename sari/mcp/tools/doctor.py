@@ -116,8 +116,8 @@ def _check_engine_tokenizer_data() -> dict[str, Any]:
     try:
         import lindera_python_ipadic
         return _result("CJK Tokenizer Data", True, f"installed ({getattr(lindera_python_ipadic, '__version__', 'unknown')})")
-    except ImportError:
-        return _result("CJK Tokenizer Data", False, "package 'lindera-python-ipadic' not installed (optional)")
+    except ImportError as e:
+        return _result("CJK Tokenizer Data", False, f"Import failed: {e} (package 'lindera-python-ipadic' optional)")
     except Exception as e:
         return _result("CJK Tokenizer Data", False, str(e))
 

@@ -83,6 +83,50 @@ sari doctor
 
 ---
 
+## 🔌 클라이언트 연동 (Client Configuration)
+
+AI 어시스턴트 설정 파일에 아래 내용을 추가하세요.
+
+### 1. Gemini CLI / Codex CLI
+설정 파일: `~/.gemini/settings.json` (또는 `.codex/config.toml`)
+
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "command": "uv",
+      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "env": {
+        "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project"
+      }
+    }
+  }
+}
+```
+
+### 2. Claude Desktop & Cursor
+설정 파일:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Cursor:** `.cursor/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "command": "uv",
+      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "env": {
+        "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project",
+        "SARI_RESPONSE_COMPACT": "1"
+      }
+    }
+  }
+}
+```
+
+---
+
 ## ⚙️ 설정 레퍼런스 (Configuration)
 
 설정값은 성격에 따라 **설치 시점(Installation)**과 **실행 시점(Runtime)**으로 나뉩니다.

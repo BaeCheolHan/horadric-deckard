@@ -83,7 +83,57 @@ sari doctor
 
 ---
 
-## ⚙️ MCP Configuration
+## 🔌 Client Configuration
+
+To use Sari with your AI assistant, add it to your MCP configuration file.
+
+### 1. Gemini CLI / Codex CLI
+File: `~/.gemini/settings.json` (or `.codex/config.toml`)
+
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "command": "uv",
+      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "env": {
+        "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project"
+      }
+    }
+  }
+}
+```
+
+### 2. Claude Desktop & Cursor
+File:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Cursor:** `.cursor/mcp.json` (or via Settings UI)
+
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "command": "uv",
+      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "env": {
+        "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project",
+        "SARI_RESPONSE_COMPACT": "1"
+      }
+    }
+  }
+}
+```
+
+### 3. Claude Code (CLI)
+Run the following command:
+```bash
+claude mcp add sari -- uv tool run sari --transport stdio --format pack
+```
+
+---
+
+## ⚙️ Configuration Reference
 
 Variables are categorized into **Installation-time** and **Runtime** settings.
 
