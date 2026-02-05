@@ -224,6 +224,13 @@ class LocalSearchDB:
     def clear_failed_tasks_tx(self, cur: sqlite3.Cursor, paths: List[str]):
         cur.executemany("DELETE FROM failed_tasks WHERE path = ?", [(p,) for p in paths])
 
+    def count_failed_tasks(self) -> Tuple[int, int]:
+        """Returns (total_failed, high_attempts_failed)"""
+        cur = self._get_conn().cursor()
+        total = cur.execute("SELECT COUNT(*) FROM failed_tasks").fetchone()[0]
+        high = cur.execute("SELECT COUNT(*) FROM failed_tasks WHERE attempts >= 3").fetchone()[0]
+        return total, high
+
     def mark_embeddings_stale(self, cur: sqlite3.Cursor, root_id: str, path: str, hash: str):
         cur.execute("UPDATE embeddings SET status = 'stale', updated_ts = ? WHERE root_id = ? AND entity_id = ? AND content_hash != ?", (int(time.time()), root_id, path, hash))
 
