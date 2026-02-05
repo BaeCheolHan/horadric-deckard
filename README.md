@@ -14,11 +14,25 @@
 
 ## 🚀 Installation & Setup
 
-Sari supports **automatic installation** via MCP configuration (Recommended) or manual installation via `pip`.
+Sari uses a **two-step flow**:
+1) Install Sari explicitly.
+2) Add MCP configuration that only *runs* the server (no downloads on launch).
 
-### Option 1: Automatic Installation (Recommended)
+### Step 1: Install
 
-Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.). Sari will be automatically installed (via `pip`) and updated upon launch.
+#### macOS / Linux
+```bash
+curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y --update
+```
+
+#### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y --update
+```
+
+---
+
+### Step 2: MCP Configuration (No Auto-Download)
 
 #### 🍎 macOS / Linux
 
@@ -27,11 +41,8 @@ Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.
 {
   "mcpServers": {
     "sari": {
-      "command": "bash",
-      "args": [
-        "-lc",
-        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh auto"
-      ],
+      "command": "sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/path/to/your/project",
         "SARI_RESPONSE_COMPACT": "1"
@@ -48,13 +59,8 @@ Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.
 {
   "mcpServers": {
     "sari": {
-      "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-Command",
-        "irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y; & $env:LOCALAPPDATA\\sari\\bootstrap.bat auto"
-      ],
+      "command": "sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "C:\\path\\to\\your\\project",
         "SARI_RESPONSE_COMPACT": "1"
@@ -68,21 +74,18 @@ Add the following configuration to your MCP client (Cursor, Claude Desktop, etc.
 
 ### Gemini CLI
 
-Gemini CLI reads MCP servers from `settings.json`. Add a Sari entry to your Gemini settings and restart the CLI. citeturn0search1turn0search5
+Gemini CLI reads MCP servers from `settings.json`. Add a Sari entry to your Gemini settings and restart the CLI.
 
 **Settings file locations:**
 - **macOS/Linux:** `~/.gemini/settings.json`
-- **Windows:** `%USERPROFILE%\.gemini\settings.json` citeturn0search5
+- **Windows:** `%USERPROFILE%\.gemini\settings.json`
 
 ```json
 {
   "mcpServers": {
     "sari": {
-      "command": "bash",
-      "args": [
-        "-lc",
-        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh auto"
-      ],
+      "command": "sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/path/to/your/project",
         "SARI_RESPONSE_COMPACT": "1"
@@ -117,7 +120,7 @@ If you prefer to manage the package manually:
 pip install sari
 
 # Run MCP Server
-python3 -m sari auto
+sari --transport stdio --format pack
 ```
 
 ---
@@ -144,7 +147,7 @@ Settings affecting the installation scripts (`install.py`, `bootstrap.sh`).
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `XDG_DATA_HOME` | Custom data directory for installation. Sari installs to `$XDG_DATA_HOME/sari`. | `~/.local/share` |
-| `SARI_SKIP_INSTALL` | Set `1` to skip automatic pip install/upgrade on startup. Useful for development or offline usage. | `0` |
+| `SARI_SKIP_INSTALL` | Set `1` to skip automatic pip install/upgrade on startup **when using the bootstrap script**. Useful for development or offline usage. | `0` |
 | `SARI_NO_INTERACTIVE`| Set `1` to disable interactive prompts during installation (assumes 'yes'). | `0` |
 
 ### B. System & Runtime
@@ -235,10 +238,6 @@ Once connected, your AI assistant can use these tools:
 You can check the daemon status and indexing progress:
 
 ```bash
-# If installed automatically:
-~/.local/share/sari/bootstrap.sh status
-
-# If installed via pip:
 sari status
 ```
 
@@ -283,10 +282,6 @@ sari status --daemon-port 47790 --http-port 47778
 Diagnose issues with your environment or installation:
 
 ```bash
-# If installed automatically:
-~/.local/share/sari/bootstrap.sh doctor --auto-fix
-
-# If installed via pip:
 sari doctor --auto-fix
 ```
 

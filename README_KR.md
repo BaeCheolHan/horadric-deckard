@@ -14,29 +14,40 @@
 
 ## 🚀 설치 및 설정 가이드
 
-Sari는 **MCP 설정**을 통한 자동 설치(권장)와 `pip`를 이용한 수동 설치를 모두 지원합니다.
-사용하시는 도구에 맞는 설정을 적용해 주세요.
+Sari는 **설치와 실행을 분리**하는 방식이 안정적입니다.
+1) 먼저 설치를 완료하고,
+2) MCP 설정에는 실행 명령만 추가합니다.
 
-### 1. Codex (CLI / App)
+### 0. 설치 (공통)
 
-Codex 환경에서는 `.codex/config.toml` (프로젝트별) 또는 `~/.codex/config.toml` (글로벌) 파일에 아래 설정을 추가합니다. 자동 업데이트와 의존성 관리가 포함된 부트스트랩 스크립트를 사용합니다.
+#### macOS / Linux
+```bash
+curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y --update
+```
 
-**설정 파일:** `.codex/config.toml`
+#### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y --update
+```
+
+### 1. Codex (CLI / App, HTTP MCP)
+
+Codex는 HTTP 기반 MCP를 사용합니다. Sari를 HTTP 모드로 실행한 뒤 URL을 설정하세요.
+
+**실행:**
+```bash
+sari --transport http --http-api-port 47777
+```
+
+**설정 파일:** `.codex/config.toml` 또는 `~/.codex/config.toml`
 
 ```toml
 [mcp_servers.sari]
-command = "bash"
-args = [
-  "-lc",
-  # 설치 스크립트를 다운로드하고 실행한 뒤, 부트스트랩으로 서버를 시작합니다.
-  "curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y; exec ~/.local/share/sari/bootstrap.sh auto"
-]
-env = { SARI_WORKSPACE_ROOT = "/path/to/your/project", SARI_RESPONSE_COMPACT = "1" }
+url = "http://127.0.0.1:47777/mcp"
+enabled = true
 ```
 
-> **참고:** `SARI_WORKSPACE_ROOT`는 생략 시 현재 작업 디렉토리를 자동으로 감지하지만, 명시적으로 설정하는 것이 권장됩니다.
-
-### 2. Cursor / Claude Desktop
+### 2. Cursor / Claude Desktop (stdio)
 
 Cursor와 Claude Desktop은 JSON 형식의 설정을 사용합니다.
 
@@ -50,11 +61,8 @@ Cursor와 Claude Desktop은 JSON 형식의 설정을 사용합니다.
 {
   "mcpServers": {
     "sari": {
-      "command": "bash",
-      "args": [
-        "-lc",
-        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh auto"
-      ],
+      "command": "sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/Users/username/projects/my-app",
         "SARI_RESPONSE_COMPACT": "1"
@@ -70,13 +78,8 @@ Cursor와 Claude Desktop은 JSON 형식의 설정을 사용합니다.
 {
   "mcpServers": {
     "sari": {
-      "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-Command",
-        "irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y; & $env:LOCALAPPDATA\\sari\\bootstrap.bat auto"
-      ],
+      "command": "sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "C:\\Projects\\MyApp",
         "SARI_RESPONSE_COMPACT": "1"
@@ -86,23 +89,20 @@ Cursor와 Claude Desktop은 JSON 형식의 설정을 사용합니다.
 }
 ```
 
-### 3. Gemini CLI
+### 3. Gemini CLI (stdio)
 
-Gemini CLI는 `settings.json`의 MCP 서버 설정을 읽습니다. Gemini 설정에 Sari 항목을 추가한 뒤 CLI를 재시작하세요. citeturn0search1turn0search5
+Gemini CLI는 `settings.json`의 MCP 서버 설정을 읽습니다. Gemini 설정에 Sari 항목을 추가한 뒤 CLI를 재시작하세요.
 
 **설정 파일 위치:**
 - **macOS/Linux:** `~/.gemini/settings.json`
-- **Windows:** `%USERPROFILE%\\.gemini\\settings.json` citeturn0search5
+- **Windows:** `%USERPROFILE%\\.gemini\\settings.json`
 
 ```json
 {
   "mcpServers": {
     "sari": {
-      "command": "bash",
-      "args": [
-        "-lc",
-        "export PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.local/bin && (curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y || true) && exec ~/.local/share/sari/bootstrap.sh auto"
-      ],
+      "command": "sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/path/to/your/project",
         "SARI_RESPONSE_COMPACT": "1"
@@ -125,7 +125,7 @@ Python 환경에서 직접 패키지를 관리하고 싶다면 `pip`로 설치�
 pip install sari
 
 # MCP 서버 실행 (Stdio 모드)
-python3 -m sari auto
+sari --transport stdio --format pack
 ```
 
 ---
@@ -140,7 +140,7 @@ python3 -m sari auto
 | 변수명 | 설명 | 기본값 |
 |--------|------|--------|
 | `XDG_DATA_HOME` | 설치 경로를 변경합니다. 설정 시 `$XDG_DATA_HOME/sari`에 설치됩니다. | `~/.local/share` |
-| `SARI_SKIP_INSTALL` | `1`로 설정 시 시작할 때 `pip install` 자동 업데이트를 건너뜁니다. 개발 환경이나 오프라인에서 유용합니다. | `0` |
+| `SARI_SKIP_INSTALL` | `1`로 설정 시 **부트스트랩 사용 시** `pip install` 자동 업데이트를 건너뜁니다. 개발 환경이나 오프라인에서 유용합니다. | `0` |
 | `SARI_NO_INTERACTIVE` | `1`로 설정 시 설치 스크립트의 대화형 질문을 끄고 기본값(Yes)으로 진행합니다. | `0` |
 
 ### B. 시스템 및 런타임 (System & Runtime)
@@ -211,10 +211,6 @@ MCP 서버가 실행되는 동안 동작을 제어하는 설정입니다. `env` 
 설치된 Sari 데몬이 정상 작동 중인지 확인하려면 다음 명령어를 터미널에서 실행하세요.
 
 ```bash
-# 자동 설치된 경우:
-~/.local/share/sari/bootstrap.sh doctor --auto-fix
-
-# 수동 설치된 경우:
 sari doctor --auto-fix
 ```
 
