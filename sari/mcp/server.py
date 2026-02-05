@@ -140,6 +140,11 @@ class LocalSearchMCPServer:
             pass
 
     def _worker_loop(self) -> None:
+        # Capture original stdout for response writing
+        self._original_stdout = sys.stdout
+        # Redirect global stdout to stderr to prevent pollution
+        sys.stdout = sys.stderr
+        
         while not self._stop.is_set():
             try:
                 req = self._req_queue.get(timeout=0.2)
@@ -160,12 +165,25 @@ class LocalSearchMCPServer:
             resp = self.handle_request(req)
             if resp:
                 with self._stdout_lock:
-                    print(_json_dumps(resp), flush=True)
+                    # Write directly to original stdout (bypassing the redirect)
+                    # Use write() + flush() for raw stream access if needed, 
+                    # but _original_stdout is a TextIOWrapper so print(file=) works.
+                    print(_json_dumps(resp), file=self._original_stdout, flush=True)
         except Exception:
             pass
 
 def main() -> None:
+    # Redirect stdout immediately to catch import-time noise
+    original_stdout = sys.stdout
+    sys.stdout = sys.stderr
+    
+    # Restore for server initialization, but _worker_loop will grab it again
+    # Actually, let's keep it redirected globally, and pass original_stdout to server.
+    # But server class is initialized before main() in some flows? No, here it is.
+    
     server = LocalSearchMCPServer(WorkspaceManager.resolve_workspace_root())
+    # Inject the clean stdout handle for response writing
+    server._original_stdout = original_stdout
     server.run()
 
 if __name__ == "__main__":
