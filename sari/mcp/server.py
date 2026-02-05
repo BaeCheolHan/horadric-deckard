@@ -152,9 +152,16 @@ class LocalSearchMCPServer:
                     if content_length <= 0:
                         continue
 
-                    body_bytes = input_stream.read(content_length)
-                    if not body_bytes:
+                    body_bytes = b""
+                    while len(body_bytes) < content_length:
+                        chunk = input_stream.read(content_length - len(body_bytes))
+                        if not chunk:
+                            break
+                        body_bytes += chunk
+                    
+                    if len(body_bytes) < content_length:
                         break
+                    
                     body_str = body_bytes.decode("utf-8")
                 else:
                     # Unknown line, skip
