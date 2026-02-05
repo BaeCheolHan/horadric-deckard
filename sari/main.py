@@ -364,6 +364,8 @@ def main(argv: List[str] = None) -> int:
 
     if ns.http_api:
         _set_http_api_port(ns.http_api_port)
+        if _should_http_daemon(ns):
+            return _spawn_http_daemon(ns)
         return _run_http_server()
 
     if ns.transport == "http":

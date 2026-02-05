@@ -43,6 +43,8 @@ class Config:
     http_api_host: str = "127.0.0.1"
     http_api_port: int = 47777
     exclude_content_bytes: int = 104857600
+    engine_mode: str = "embedded"
+    engine_auto_install: bool = True
     workspace_roots: list[str] = field(default_factory=list) # Optional for compatibility
 
     def __post_init__(self):
@@ -101,6 +103,8 @@ class Config:
             "redact_enabled": True,
             "commit_batch_size": 500,
             "exclude_content_bytes": 104857600, # 100MB default for full content storage
+            "engine_mode": "embedded",
+            "engine_auto_install": True,
         }
 
     def save_paths_only(self, path: str, extra_paths: dict = None) -> None:
@@ -191,6 +195,20 @@ class Config:
         http_port_override = _get_env_any("HTTP_API_PORT") or _get_env_any("HTTP_PORT")
         http_api_port = int(http_port_override) if http_port_override else int(raw.get("http_api_port", defaults["http_api_port"]))
 
+        # Engine overrides (normalized into Config)
+        env_engine_mode = (_get_env_any("ENGINE_MODE") or "").strip().lower()
+        engine_mode = env_engine_mode or str(raw.get("engine_mode", defaults["engine_mode"])).strip().lower()
+        if engine_mode not in ("embedded", "sqlite"):
+            engine_mode = "embedded"
+
+        env_auto_install = (_get_env_any("ENGINE_AUTO_INSTALL") or "").strip().lower()
+        if env_auto_install in ("0", "false", "no", "off"):
+            engine_auto_install = False
+        elif env_auto_install in ("1", "true", "yes", "on"):
+            engine_auto_install = True
+        else:
+            engine_auto_install = bool(raw.get("engine_auto_install", defaults["engine_auto_install"]))
+
         # Unified DB path resolution
         # Priority: Env > Config File > Default(primary_root)
         env_db_path = (_get_env_any("DB_PATH") or "").strip()
@@ -234,6 +252,8 @@ class Config:
             redact_enabled=bool(raw.get("redact_enabled", defaults["redact_enabled"])),
             commit_batch_size=int(raw.get("commit_batch_size", defaults["commit_batch_size"])),
             exclude_content_bytes=int(raw.get("exclude_content_bytes", defaults["exclude_content_bytes"])),
+            engine_mode=engine_mode,
+            engine_auto_install=engine_auto_install,
         )
 
         # --- Write-back (Persist) Logic ---

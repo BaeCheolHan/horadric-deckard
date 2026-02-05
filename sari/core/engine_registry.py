@@ -34,7 +34,7 @@ class EngineRegistry:
         return self._factories[name](db, cfg, roots)
 
     def default(self, db: Any, cfg: Any = None, roots: Any = None) -> SearchEngineInterface:
-        name = default_engine_name()
+        name = default_engine_name(cfg)
         return self.create(name, db, cfg, roots)
 
 
@@ -47,7 +47,11 @@ def get_registry() -> EngineRegistry:
     return _REGISTRY
 
 
-def default_engine_name() -> str:
+def default_engine_name(cfg: Any = None) -> str:
+    if cfg is not None:
+        mode = (getattr(cfg, "engine_mode", "") or "").strip().lower()
+        if mode in {"embedded", "sqlite"}:
+            return mode
     mode = (os.environ.get("SARI_ENGINE_MODE") or "embedded").strip().lower()
     return "embedded" if mode == "embedded" else "sqlite"
 

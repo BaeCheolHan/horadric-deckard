@@ -94,14 +94,9 @@ def _package_config_path() -> Path:
     return Path(__file__).parent.parent / "config" / "config.json"
 
 
-def _load_http_config(workspace_root: str) -> Optional[dict]:
-    try:
-        from sari.core.workspace import WorkspaceManager
-        from sari.core.config import Config
-        cfg_path = WorkspaceManager.resolve_config_path(workspace_root)
-        return json.loads(Path(cfg_path).read_text(encoding="utf-8")) if Path(cfg_path).exists() else None
-    except Exception:
-        return None
+def _load_config(workspace_root: str) -> Config:
+    cfg_path = WorkspaceManager.resolve_config_path(workspace_root)
+    return Config.load(cfg_path, workspace_root_override=workspace_root)
 
 
 def _load_local_db(workspace_root: Optional[str] = None):
@@ -151,48 +146,35 @@ def _enforce_loopback(host: str) -> None:
 
 
 def _get_http_host_port(host_override: Optional[str] = None, port_override: Optional[int] = None) -> tuple[str, int]:
-    """Get active HTTP server address with Environment priority."""
-    # 0. Environment Override (Highest Priority for testing/isolation)
-    # PRIORITY: SARI_
+    """Get active HTTP server address with explicit/env/server/registry/config priority."""
     env_host = os.environ.get("SARI_HTTP_API_HOST") or os.environ.get("SARI_HTTP_HOST")
     env_port = os.environ.get("SARI_HTTP_API_PORT") or os.environ.get("SARI_HTTP_PORT")
-
     workspace_root = WorkspaceManager.resolve_workspace_root()
+    cfg = _load_config(str(workspace_root))
 
-    host = None
-    port = None
+    host = cfg.http_api_host or DEFAULT_HTTP_HOST
+    port = int(cfg.http_api_port or DEFAULT_HTTP_PORT)
 
-    # 1. server.json (actual bound port) if present
-    server_info = _load_server_info(str(workspace_root))
-    if server_info:
-        try:
-            host = str(server_info.get("host") or "")
-            port = int(server_info.get("port")) if server_info.get("port") else None
-        except Exception:
-            host = None
-            port = None
-
-    # 2. Global registry (daemon-managed HTTP port)
     try:
         ws_info = ServerRegistry().get_workspace(str(workspace_root))
         if ws_info:
-            reg_host = ws_info.get("http_host")
-            reg_port = ws_info.get("http_port")
-            if reg_host:
-                host = str(reg_host)
-            if reg_port:
-                port = int(reg_port)
+            if ws_info.get("http_host"):
+                host = str(ws_info.get("http_host"))
+            if ws_info.get("http_port"):
+                port = int(ws_info.get("http_port"))
     except Exception:
         pass
 
-    # 3. Fallback to Config
-    cfg = _load_http_config(str(workspace_root)) or {}
-    if not host:
-        host = str(cfg.get("http_api_host", cfg.get("server_host", DEFAULT_HTTP_HOST)))
-    if port is None:
-        port = int(cfg.get("http_api_port", cfg.get("server_port", DEFAULT_HTTP_PORT)))
+    server_info = _load_server_info(str(workspace_root))
+    if server_info:
+        try:
+            if server_info.get("host"):
+                host = str(server_info.get("host"))
+            if server_info.get("port"):
+                port = int(server_info.get("port"))
+        except Exception:
+            pass
 
-    # 4. Environment overrides
     if env_host:
         host = env_host
     if env_port:
@@ -201,7 +183,6 @@ def _get_http_host_port(host_override: Optional[str] = None, port_override: Opti
         except (TypeError, ValueError):
             pass
 
-    # 5. Explicit overrides
     if host_override:
         host = host_override
     if port_override is not None:
@@ -218,6 +199,19 @@ def _request_http(path: str, params: dict, host: Optional[str] = None, port: Opt
     url = f"http://{host}:{port}{path}?{qs}"
     with urllib.request.urlopen(url, timeout=3.0) as r:
         return json.loads(r.read().decode("utf-8"))
+
+
+def _is_http_running(host: str, port: int, timeout: float = 0.4) -> bool:
+    _enforce_loopback(host)
+    try:
+        url = f"http://{host}:{port}/health"
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            if r.status != 200:
+                return False
+            payload = json.loads(r.read().decode("utf-8"))
+            return bool(payload.get("ok"))
+    except Exception:
+        return False
 
 
 def _identify_sari_daemon(host: str, port: int, timeout: float = 0.3) -> Optional[Dict[str, Any]]:
@@ -745,7 +739,7 @@ def cmd_status(args):
             daemon_host, daemon_port = get_daemon_address()
         daemon_running = is_daemon_running(daemon_host, daemon_port)
         host, port = _get_http_host_port(args.http_host, args.http_port)
-        http_running = is_daemon_running(host, port)
+        http_running = _is_http_running(host, port)
 
         if not http_running:
             if not daemon_running:
@@ -763,7 +757,7 @@ def cmd_status(args):
                 for _ in range(5):
                     _ensure_workspace_http(daemon_host, daemon_port)
                     host, port = _get_http_host_port(args.http_host, args.http_port)
-                    http_running = is_daemon_running(host, port)
+                    http_running = _is_http_running(host, port)
                     if http_running:
                         break
                     time.sleep(0.1)

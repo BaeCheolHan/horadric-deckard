@@ -189,7 +189,15 @@ class EmbeddedEngine:
         self._cache_dir = WorkspaceManager.get_engine_cache_dir()
         self._venv_dir = WorkspaceManager.get_engine_venv_dir()
         self._index_version_path = self._index_dir / "index_version.json"
-        self._auto_install = (os.environ.get("SARI_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
+        cfg_auto_install = None
+        if cfg is not None and hasattr(cfg, "engine_auto_install"):
+            try:
+                cfg_auto_install = bool(getattr(cfg, "engine_auto_install"))
+            except Exception:
+                cfg_auto_install = None
+        if cfg_auto_install is None:
+            cfg_auto_install = (os.environ.get("SARI_ENGINE_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"})
+        self._auto_install = cfg_auto_install
         self._tantivy = None
         self._index = None
         self._schema = None
