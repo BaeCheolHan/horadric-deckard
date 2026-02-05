@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
 
 jobs:
   release:
@@ -20,9 +21,13 @@ jobs:
       - name: Get Version
         id: check_version
         run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$TAG_VERSION" >> $GITHUB_OUTPUT
-          echo "Releasing version: $TAG_VERSION"
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          VERSION=$(echo $TAG_NAME | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Update version.py on main
         run: |
@@ -41,25 +46,11 @@ jobs:
             echo "Version already matches."
           fi
 
-      - name: Verify version.py matches tag
-        run: |
-          VERSION=${{ steps.check_version.outputs.version }}
-          FILE_VERSION=$(python - <<'PY'
-          from sari.version import __version__
-          print(__version__)
-          PY
-          )
-          if [ "$FILE_VERSION" != "$VERSION" ]; then
-            echo "version.py mismatch: expected=$VERSION got=$FILE_VERSION"
-            exit 1
-          fi
-
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
-          draft: false
-          prerelease: false
+          tag_name: ${{ github.ref_name }}
 
       - name: Trigger Forge Update
         uses: peter-evans/repository-dispatch@v2
@@ -81,33 +72,11 @@ jobs:
           ref: ${{ github.ref_name }} # Tag name (e.g., v1.2.3)
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build
-
-      - name: Set version.py for build (no commit)
-        run: |
-          VERSION=${{ github.ref_name }}
-          VERSION=${VERSION#v}
-          echo "__version__ = \"$VERSION\"" > sari/version.py
-          FILE_VERSION=$(python - <<'PY'
-          from sari.version import __version__
-          print(__version__)
-          PY
-          )
-          if [ "$FILE_VERSION" != "$VERSION" ]; then
-            echo "version.py mismatch: expected=$VERSION got=$FILE_VERSION"
-            exit 1
-          fi
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Build package
-        run: python -m build
+        run: uv build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
