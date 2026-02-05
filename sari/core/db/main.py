@@ -125,11 +125,12 @@ class LocalSearchDB:
 
     def apply_root_filter(self, sql: str, root_id: Optional[str]) -> Tuple[str, List[Any]]:
         params = []
-        if root_id:
-            sql += " WHERE root_id = ?"
-            params.append(root_id)
-        else:
-            sql += " WHERE 1=1"
+        if not root_id:
+            return sql, params
+            
+        keyword = "AND" if "WHERE" in sql.upper() else "WHERE"
+        sql += f" {keyword} root_id = ?"
+        params.append(root_id)
         return sql, params
 
     def search_files(self, query: str, root_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:

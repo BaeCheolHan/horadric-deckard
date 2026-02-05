@@ -62,6 +62,7 @@ class SearchEngine:
                        "WHERE files_fts MATCH ?")
                 params = [fts_q]
                 if root_id: sql += " AND f.root_id = ?"; params.append(root_id)
+                
                 cur.execute(sql + f" LIMIT {opts.limit}", params)
                 db_hits = self._process_sqlite_rows(cur.fetchall(), opts)
                 for h in db_hits:
@@ -119,7 +120,7 @@ class SearchEngine:
             return raw
         # Normalize common OR separators
         raw = raw.replace("||", " OR ").replace("|", " OR ")
-        tokens = re.findall(r'\\(|\\)|"[^"]+"|\\bAND\\b|\\bOR\\b|\\bNOT\\b|\\bNEAR/\\d+\\b|\\bNEAR\\b|[0-9A-Za-z_\\u00A1-\\uFFFF]+', raw, flags=re.IGNORECASE)
+        tokens = re.findall(r'\(|\)|"[^"]+"|\bAND\b|\bOR\b|\bNOT\b|\bNEAR/\d+\b|\bNEAR\b|[0-9A-Za-z_\u00A1-\uFFFF]+', raw, flags=re.IGNORECASE)
         if not tokens:
             return raw.replace('"', " ")
         out = []
