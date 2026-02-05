@@ -9,7 +9,9 @@ class Scanner:
         self.cfg = cfg
         # Use centralized setting from Settings class
         # cfg.settings is expected to be an instance of Settings
-        self.max_depth = self.cfg.settings.MAX_DEPTH
+        from sari.core.settings import settings as global_settings
+        self.settings = getattr(self.cfg, "settings", None) or global_settings
+        self.max_depth = self.settings.MAX_DEPTH
 
     def iter_file_entries(self, root: Path, apply_exclude: bool = True) -> Iterable[Tuple[Path, os.stat_result, bool]]:
         follow_symlinks = getattr(self.cfg.settings, "FOLLOW_SYMLINKS", False)

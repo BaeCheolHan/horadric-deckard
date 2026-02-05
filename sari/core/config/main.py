@@ -4,6 +4,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 from sari.core.workspace import WorkspaceManager
@@ -40,6 +41,7 @@ class Config:
     engine_mode: str = "embedded"
     engine_auto_install: bool = True
     workspace_roots: list[str] = field(default_factory=list) # Optional for compatibility
+    settings: Any = field(default=None, repr=False) # Access to centralized Settings object
 
     def __post_init__(self):
         # Ensure workspace_roots is always a list containing at least workspace_root
@@ -224,6 +226,7 @@ class Config:
             exclude_content_bytes=int(raw.get("exclude_content_bytes", defaults["exclude_content_bytes"])),
             engine_mode=engine_mode,
             engine_auto_install=engine_auto_install,
+            settings=settings_obj,
         )
 
         if settings_obj.PERSIST_PATHS and path:
