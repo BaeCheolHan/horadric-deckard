@@ -62,6 +62,39 @@ pip install "sari[full]"
 
 ---
 
+### 방법 4: HTTP 연결 모드 (가장 안정적)
+`stdio` 방식에서 연결 끊김(`Connection closed`) 문제가 발생할 경우 HTTP 모드를 사용하세요. 로그 잡음의 영향을 받지 않아 매우 안정적입니다.
+
+**1. 환경 변수와 함께 Sari HTTP 서버 실행:**
+```bash
+# 워크스페이스 경로와 로그 레벨을 한 번에 설정하여 실행
+SARI_WORKSPACE_ROOT=/absolute/path/to/project \
+SARI_LOG_LEVEL=INFO \
+sari --transport http --http-api-port 47777 --http-daemon
+```
+
+**2. 클라이언트 설정:**
+
+#### Gemini CLI (`~/.gemini/settings.json`)
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "url": "http://127.0.0.1:47777/mcp"
+    }
+  }
+}
+```
+
+#### Codex CLI (`.codex/config.toml`)
+```toml
+[mcp_servers.sari]
+url = "http://127.0.0.1:47777/mcp"
+enabled = true
+```
+
+---
+
 ## 🏎️ 선택적 기능 (Extras 설정)
 
 Sari는 **경량화(Low Footprint)**와 **고정밀(High Precision)** 중 하나를 선택할 수 있는 유연성을 제공합니다.
@@ -126,6 +159,20 @@ AI 어시스턴트 설정 파일에 아래 내용을 추가하세요.
 ## ⚙️ 설정 레퍼런스 (Configuration)
 
 설정값은 성격에 따라 **설치 시점(Installation)**과 **실행 시점(Runtime)**으로 나뉩니다.
+
+### 환경 변수 설정 방법
+
+- **MCP 클라이언트**: MCP 서버 설정의 `env` 블록에 추가합니다.
+- **CLI**: 명령 앞에 접두어로 붙입니다. 예: `SARI_ENGINE_MODE=sqlite sari status`.
+- **영구 적용**: 셸 설정 파일(예: `~/.zshrc`)에 `export` 문을 추가합니다.
+
+```json
+"env": {
+  "SARI_WORKSPACE_ROOT": "/path/to/project",
+  "SARI_LOG_LEVEL": "ERROR",
+  "SARI_ENGINE_TOKENIZER": "cjk"
+}
+```
 
 ### A. 설치 및 부트스트랩 (Installation & Bootstrapping)
 설치 스크립트(`install.py`, `bootstrap.sh`)가 실행될 때 적용되는 설정입니다.

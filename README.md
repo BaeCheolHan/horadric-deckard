@@ -62,6 +62,39 @@ pip install "sari[full]"
 
 ---
 
+### Method 4: HTTP Mode (Most Stable)
+If you experience `Connection closed` errors with stdio, use HTTP mode. This separates the server process from the CLI noise.
+
+**1. Start Sari HTTP Server with Environment Variables:**
+```bash
+# Set workspace and log level inline
+SARI_WORKSPACE_ROOT=/absolute/path/to/project \
+SARI_LOG_LEVEL=INFO \
+sari --transport http --http-api-port 47777 --http-daemon
+```
+
+**2. Client Configuration:**
+
+#### Gemini CLI (`~/.gemini/settings.json`)
+```json
+{
+  "mcpServers": {
+    "sari": {
+      "url": "http://127.0.0.1:47777/mcp"
+    }
+  }
+}
+```
+
+#### Codex CLI (`.codex/config.toml`)
+```toml
+[mcp_servers.sari]
+url = "http://127.0.0.1:47777/mcp"
+enabled = true
+```
+
+---
+
 ## 🏎️ Optional Features (Selectable Extras)
 
 Sari allows you to choose between **low footprint** and **high precision**.
@@ -137,10 +170,12 @@ Variables are categorized into **Installation-time** and **Runtime** settings.
 
 - **MCP Client**: Add to the `env` block of your MCP server configuration.
 - **CLI**: Prefix the command, e.g., `SARI_ENGINE_MODE=sqlite sari status`.
+- **Permanent**: Export in your shell profile (e.g., `~/.zshrc`).
 
 ```json
 "env": {
   "SARI_WORKSPACE_ROOT": "/path/to/project",
+  "SARI_LOG_LEVEL": "ERROR",
   "SARI_ENGINE_TOKENIZER": "cjk"
 }
 ```
