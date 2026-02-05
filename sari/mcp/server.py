@@ -140,11 +140,6 @@ class LocalSearchMCPServer:
             pass
 
     def _worker_loop(self) -> None:
-        # Capture original stdout for response writing
-        self._original_stdout = sys.stdout
-        # Redirect global stdout to stderr to prevent pollution
-        sys.stdout = sys.stderr
-        
         while not self._stop.is_set():
             try:
                 req = self._req_queue.get(timeout=0.2)
@@ -165,10 +160,9 @@ class LocalSearchMCPServer:
             resp = self.handle_request(req)
             if resp:
                 with self._stdout_lock:
-                    # Write directly to original stdout (bypassing the redirect)
-                    # Use write() + flush() for raw stream access if needed, 
-                    # but _original_stdout is a TextIOWrapper so print(file=) works.
-                    print(_json_dumps(resp), file=self._original_stdout, flush=True)
+                    # Use the explicit stdout handle provided during initialization
+                    target = getattr(self, "_original_stdout", sys.stdout)
+                    print(_json_dumps(resp), file=target, flush=True)
         except Exception:
             pass
 
@@ -176,6 +170,7 @@ def main(original_stdout: Any = None) -> None:
     # Use provided stdout or fallback to current sys.stdout
     clean_stdout = original_stdout or sys.stdout
     server = LocalSearchMCPServer(WorkspaceManager.resolve_workspace_root())
+    # Ensure the worker loop uses the correct output stream
     server._original_stdout = clean_stdout
     server.run()
 
