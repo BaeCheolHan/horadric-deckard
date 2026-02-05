@@ -94,8 +94,8 @@ File: `~/.gemini/settings.json` (or `.codex/config.toml`)
 {
   "mcpServers": {
     "sari": {
-      "command": "uv",
-      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "command": "/Users/YOUR_USERNAME/.local/bin/sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project"
       }
@@ -103,19 +103,15 @@ File: `~/.gemini/settings.json` (or `.codex/config.toml`)
   }
 }
 ```
+*Note: Use the absolute path to the `sari` executable (usually in `~/.local/bin/sari`) to ensure it runs even if not in your system PATH.*
 
 ### 2. Claude Desktop & Cursor
-File:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Cursor:** `.cursor/mcp.json` (or via Settings UI)
-
 ```json
 {
   "mcpServers": {
     "sari": {
-      "command": "uv",
-      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "command": "/Users/YOUR_USERNAME/.local/bin/sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project",
         "SARI_RESPONSE_COMPACT": "1"

@@ -94,8 +94,8 @@ AI 어시스턴트 설정 파일에 아래 내용을 추가하세요.
 {
   "mcpServers": {
     "sari": {
-      "command": "uv",
-      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "command": "/Users/사용자이름/.local/bin/sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project"
       }
@@ -103,19 +103,15 @@ AI 어시스턴트 설정 파일에 아래 내용을 추가하세요.
   }
 }
 ```
+*주의: 시스템 PATH에 등록되지 않은 경우를 대비해 `sari` 실행 파일의 절대 경로(보통 `~/.local/bin/sari`)를 사용하는 것이 가장 안전합니다.*
 
 ### 2. Claude Desktop & Cursor
-설정 파일:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-- **Cursor:** `.cursor/mcp.json`
-
 ```json
 {
   "mcpServers": {
     "sari": {
-      "command": "uv",
-      "args": ["tool", "run", "sari", "--transport", "stdio", "--format", "pack"],
+      "command": "/Users/사용자이름/.local/bin/sari",
+      "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/your/project",
         "SARI_RESPONSE_COMPACT": "1"
