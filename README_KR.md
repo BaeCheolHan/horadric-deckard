@@ -37,6 +37,9 @@ Codex는 HTTP 기반 MCP를 사용합니다. Sari를 HTTP 모드로 실행한 �
 **실행:**
 ```bash
 sari --transport http --http-api-port 47777
+
+# 백그라운드로 실행
+sari --transport http --http-api-port 47777 --http-daemon
 ```
 
 **설정 파일:** `.codex/config.toml` 또는 `~/.codex/config.toml`

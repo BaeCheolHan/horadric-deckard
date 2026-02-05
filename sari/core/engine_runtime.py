@@ -130,7 +130,12 @@ def _ensure_venv(venv_dir: Path) -> None:
 def _install_engine_package(venv_dir: Path) -> None:
     _ensure_venv(venv_dir)
     py = _venv_python(venv_dir)
-    subprocess.check_call([str(py), "-m", "pip", "install", ENGINE_PACKAGE])
+    # Keep MCP stdio clean: send installer output to stderr.
+    subprocess.check_call(
+        [str(py), "-m", "pip", "install", ENGINE_PACKAGE],
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )
 
 
 def _load_tantivy(venv_dir: Path, auto_install: bool) -> Any:

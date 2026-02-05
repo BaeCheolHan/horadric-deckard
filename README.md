@@ -102,6 +102,9 @@ Codex CLI currently expects MCP-over-HTTP. Run Sari in HTTP mode and configure t
 ```bash
 # Start HTTP MCP server
 sari --transport http --http-api-port 47777
+
+# Or start it in the background
+sari --transport http --http-api-port 47777 --http-daemon
 ```
 
 ```toml

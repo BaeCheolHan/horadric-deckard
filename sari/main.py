@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import sys
+import subprocess
 from pathlib import Path
 from typing import List
 
@@ -9,17 +10,6 @@ from sari.core.workspace import WorkspaceManager
 from sari.core.config import Config
 from sari.core.db import LocalSearchDB
 from sari.core.engine_registry import get_default_engine
-from sari.mcp.tools._util import pack_error, ErrorCode
-
-
-def _print_transport_error(fmt: str) -> int:
-    msg = "MCP-over-HTTP transport is not supported."
-    if fmt == "json":
-        payload = {"error": {"code": ErrorCode.ERR_MCP_HTTP_UNSUPPORTED.value, "message": msg}}
-        print(json.dumps(payload, ensure_ascii=False))
-    else:
-        print(pack_error("server", ErrorCode.ERR_MCP_HTTP_UNSUPPORTED, msg))
-    return 1
 
 
 def _write_toml_block(cfg_path: Path, command: str, args: List[str], env: dict) -> None:
@@ -256,6 +246,38 @@ def _cmd_doctor() -> int:
         return 1
 
 
+def _should_http_daemon(ns: argparse.Namespace) -> bool:
+    if ns.http_daemon:
+        return True
+    env = (os.environ.get("SARI_HTTP_DAEMON") or "").strip().lower()
+    return env in {"1", "true", "yes", "on"}
+
+
+def _run_http_server() -> int:
+    from sari.core.main import main as http_main
+    return http_main()
+
+
+def _spawn_http_daemon(ns: argparse.Namespace) -> int:
+    if os.environ.get("SARI_HTTP_DAEMON_CHILD"):
+        return _run_http_server()
+    env = os.environ.copy()
+    env["SARI_HTTP_DAEMON_CHILD"] = "1"
+    cmd = [sys.executable, "-m", "sari", "--transport", "http"]
+    if ns.http_api_port:
+        cmd += ["--http-api-port", str(ns.http_api_port)]
+    subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env=env,
+    )
+    port_note = ns.http_api_port or os.environ.get("SARI_HTTP_API_PORT") or "default"
+    print(f"[sari] HTTP daemon started in background (port: {port_note})")
+    return 0
+
+
 def run_cmd(argv: List[str]) -> int:
     if not argv:
         print("missing subcommand", file=sys.stderr)
@@ -320,12 +342,13 @@ def main(argv: List[str] = None) -> int:
     parser.add_argument("--format", default="pack", choices=["pack", "json"])
     parser.add_argument("--http-api", action="store_true")
     parser.add_argument("--http-api-port")
+    parser.add_argument("--http-daemon", action="store_true")
     parser.add_argument("--version", action="store_true")
     parser.add_argument("--help", action="store_true")
     ns, _ = parser.parse_known_args(argv)
 
     if ns.help:
-        print("sari [--transport stdio|http] [--format pack|json] [--http-api] [--cmd <subcommand>]")
+        print("sari [--transport stdio|http] [--format pack|json] [--http-api] [--http-api-port PORT] [--http-daemon] [--cmd <subcommand>]")
         return 0
     if ns.version:
         from sari.mcp.server import LocalSearchMCPServer
@@ -337,14 +360,14 @@ def main(argv: List[str] = None) -> int:
     if ns.http_api:
         if ns.http_api_port:
             os.environ["SARI_HTTP_API_PORT"] = str(ns.http_api_port)
-        from sari.core.main import main as http_main
-        return http_main()
+        return _run_http_server()
 
     if ns.transport == "http":
         if ns.http_api_port:
             os.environ["SARI_HTTP_API_PORT"] = str(ns.http_api_port)
-        from sari.core.main import main as http_main
-        return http_main()
+        if _should_http_daemon(ns):
+            return _spawn_http_daemon(ns)
+        return _run_http_server()
 
     from sari.mcp.server import main as mcp_main
     mcp_main()
