@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 from sari.mcp.telemetry import TelemetryLogger
 from sari.core.workspace import WorkspaceManager
 from sari.core.server_registry import ServerRegistry
+from sari.core.daemon_resolver import resolve_daemon_address as _resolve_daemon_target
 
 try:
     import fcntl  # type: ignore
@@ -97,22 +98,7 @@ def _identify_sari_daemon(host: str, port: int, timeout: float = 0.3) -> bool:
     return False
 
 
-def _resolve_daemon_target() -> tuple[str, int]:
-    host = os.environ.get("SARI_DAEMON_HOST", DEFAULT_HOST)
-    env_port = os.environ.get("SARI_DAEMON_PORT")
-    if env_port:
-        try:
-            return host, int(env_port)
-        except ValueError:
-            pass
-    try:
-        workspace_root = os.environ.get("SARI_WORKSPACE_ROOT") or WorkspaceManager.resolve_workspace_root()
-        inst = ServerRegistry().resolve_workspace_daemon(str(workspace_root))
-        if inst and inst.get("port"):
-            return inst.get("host") or host, int(inst.get("port"))
-    except Exception:
-        pass
-    return host, DEFAULT_PORT
+def _lock_file(lock_file) -> None:
 
 def _lock_file(lock_file) -> None:
     if fcntl is not None:

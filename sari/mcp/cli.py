@@ -37,7 +37,7 @@ from sari.core.workspace import WorkspaceManager
 from sari.core.server_registry import ServerRegistry, REGISTRY_FILE
 from sari.core.config import Config
 from sari.core.db import LocalSearchDB
-from sari.mcp.tools.call_graph import build_call_graph
+from sari.core.daemon_resolver import resolve_daemon_address as get_daemon_address
 from sari.mcp.tools.grep_and_read import execute_grep_and_read
 from sari.mcp.tools.save_snippet import build_save_snippet
 from sari.mcp.tools.get_snippet import build_get_snippet
@@ -51,43 +51,6 @@ DEFAULT_PORT = 47779
 PID_FILE = WorkspaceManager.get_global_data_dir() / "daemon.pid"
 DEFAULT_HTTP_HOST = "127.0.0.1"
 DEFAULT_HTTP_PORT = 47777
-
-
-def get_daemon_address():
-    """Get daemon host and port with workspace-aware resolution.
-
-    Priority:
-      1) Registry workspace mapping (multi-workspace safe)
-      2) Explicit env override (SARI_DAEMON_OVERRIDE=1)
-      3) Env fallback (host/port if set)
-      4) Defaults
-    """
-    env_host = os.environ.get("SARI_DAEMON_HOST")
-    env_port = os.environ.get("SARI_DAEMON_PORT")
-    env_override = (os.environ.get("SARI_DAEMON_OVERRIDE") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-    try:
-        workspace_root = os.environ.get("SARI_WORKSPACE_ROOT") or WorkspaceManager.resolve_workspace_root()
-        inst = ServerRegistry().resolve_workspace_daemon(str(workspace_root))
-        if inst and inst.get("port"):
-            inst_host = inst.get("host") or (env_host or DEFAULT_HOST)
-            return inst_host, int(inst.get("port"))
-    except Exception:
-        pass
-
-    if env_override and env_port:
-        try:
-            return (env_host or DEFAULT_HOST), int(env_port)
-        except ValueError:
-            pass
-
-    if env_port:
-        try:
-            return (env_host or DEFAULT_HOST), int(env_port)
-        except ValueError:
-            pass
-
-    return (env_host or DEFAULT_HOST), DEFAULT_PORT
 
 
 def _package_config_path() -> Path:
