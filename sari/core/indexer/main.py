@@ -38,6 +38,7 @@ class Indexer:
         # L1 Buffer: {root_id -> [(files_row, engine_doc)]}
         self._l1_buffer: Dict[str, List[tuple]] = {}
         self._l1_docs: Dict[str, List[dict]] = {}
+        self._l1_syms: Dict[str, List[tuple]] = {} # New: Buffer for symbols to ensure FK order
         self._l1_lock = threading.Lock()
         self._l1_max_size = self.settings.get_int("INDEX_L1_BATCH_SIZE", 10)
 
@@ -201,27 +202,34 @@ class Indexer:
                 res["parse_status"], res["parse_reason"], res["ast_status"], res["ast_reason"], 
                 res["is_binary"], res["is_minified"], 0, res.get("content_bytes", len(res["content"])), res.get("metadata_json", "{}")
             )
-            
+
             with self._l1_lock:
                 if root_id in self._l1_buffer:
                     self._l1_buffer[root_id] = [r for r in self._l1_buffer[root_id] if r[0] != files_row[0]]
                     self._l1_docs[root_id] = [d for d in self._l1_docs[root_id] if d.get("doc_id") != files_row[0]]
-                
+                    self._l1_syms[root_id] = [s for s in self._l1_syms.get(root_id, []) if s[1] != files_row[0]]
+
                 self._l1_buffer.setdefault(root_id, []).append(files_row)
                 doc = res.get("engine_doc")
                 if doc:
                     self._l1_docs.setdefault(root_id, []).append(doc)
-                
+
+                if res.get("symbols"):
+                    # s is (path, name, kind, line, end_line, content, parent_name, metadata, docstring, qualname, sid)
+                    # Schema: (symbol_id, path, root_id, name, kind, line, end_line, content, parent_name, metadata, docstring, qualname)
+                    sym_rows = [(s[10], s[0], root_id, s[1]) + s[2:10] for s in res["symbols"]]
+                    self._l1_syms.setdefault(root_id, []).extend(sym_rows)
+
                 if len(self._l1_buffer[root_id]) >= self._l1_max_size:
                     rows = self._l1_buffer.pop(root_id)
-                    # Avoid KeyError if docs list is missing (e.g. if all files skipped engine)
                     docs = self._l1_docs.pop(root_id, [])
+                    syms = self._l1_syms.pop(root_id, [])
                     self.storage.upsert_files(rows=rows, engine_docs=docs)
-            
-            if res.get("symbols"):
-                sym_rows = [(s[0], s[1], root_id) + s[2:] for s in res["symbols"]]
-                self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=sym_rows))
+                    if syms:
+                        self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=syms))
+
             self.status.indexed_files += 1
+
             try:
                 self.event_bus.publish("file_indexed", {"path": res["rel"], "root_id": root_id})
             except Exception as e:
@@ -245,6 +253,8 @@ class Indexer:
                 if root_id in self._l1_buffer:
                     self._l1_buffer[root_id] = [r for r in self._l1_buffer[root_id] if r[0] != db_path]
                     self._l1_docs[root_id] = [d for d in self._l1_docs[root_id] if d.get("doc_id") != db_path]
+                    # Symbols: check if path (index 1) matches db_path
+                    self._l1_syms[root_id] = [s for s in self._l1_syms.get(root_id, []) if s[1] != db_path]
             self.storage.delete_file(path=db_path, engine_deletes=[db_path])
 
     def stop(self):
@@ -253,8 +263,12 @@ class Indexer:
         with self._l1_lock:
             for root_id in list(self._l1_buffer.keys()):
                 rows = self._l1_buffer.pop(root_id)
-                docs = self._l1_docs.pop(root_id)
-                if rows: self.storage.upsert_files(rows=rows, engine_docs=docs)
+                docs = self._l1_docs.pop(root_id, [])
+                syms = self._l1_syms.pop(root_id, [])
+                if rows:
+                    self.storage.upsert_files(rows=rows, engine_docs=docs)
+                if syms:
+                    self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=syms))
         self._executor.shutdown(wait=False)
     
     def get_queue_depths(self) -> Dict[str, int]:

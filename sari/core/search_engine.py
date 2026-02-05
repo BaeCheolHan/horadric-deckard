@@ -57,7 +57,7 @@ class SearchEngine:
             cur = self.db._get_conn().cursor()
             if getattr(self.db, "settings", None) and self.db.settings.ENABLE_FTS:
                 fts_q = self._fts_query(q)
-                sql = ("SELECT f.path, f.root_id, f.repo, f.mtime, f.size, f.content "
+                sql = ("SELECT f.path, f.rel_path, f.root_id, f.repo, f.mtime, f.size, f.content "
                        "FROM files_fts JOIN files f ON files_fts.rowid = f.rowid "
                        "WHERE files_fts MATCH ?")
                 params = [fts_q]
@@ -76,6 +76,7 @@ class SearchEngine:
         return all_hits[:opts.limit], meta
 
     def _process_sqlite_rows(self, rows: list, opts: SearchOptions) -> List[SearchHit]:
+        # Expected row: (path, root_id, repo, mtime, size, content)
         return [
             SearchHit(
                 repo=r[2], 

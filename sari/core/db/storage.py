@@ -113,7 +113,12 @@ class GlobalStorageManager:
                     if fts_content and q in str(fts_content).lower():
                         content_match = True
                 if q in str(path).lower() or content_match:
-                    results.append(row)
+                    # Normalize to match SearchEngine's SQLite query structure:
+                    # (path, root_id, repo, mtime, size, content)
+                    # row structure from Indexer:
+                    # 0: path, 1: rel_path, 2: root_id, 3: repo, 4: mtime, 5: size, 6: content, ...
+                    normalized = (row[0], row[2], row[3], row[4], row[5], row[6])
+                    results.append(normalized)
         return results
 
     def shutdown(self):
