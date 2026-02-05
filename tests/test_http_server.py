@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from sari.core.http_server import serve_forever
 from sari.core.models import SearchHit, SearchOptions
 from sari.core.engine_runtime import EngineMeta
+from sari.mcp.server import LocalSearchMCPServer
 import socket
 
 
@@ -62,6 +63,16 @@ def _request(port, path):
     return res.status, body
 
 
+def _post_json(port, path, payload):
+    body = json.dumps(payload).encode("utf-8")
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+    conn.request("POST", path, body=body, headers={"Content-Type": "application/json"})
+    res = conn.getresponse()
+    resp_body = res.read().decode("utf-8")
+    conn.close()
+    return res.status, resp_body
+
+
 def test_http_server_health_and_search(tmp_path):
     db = DummyDB()
     indexer = DummyIndexer(str(tmp_path))
@@ -105,6 +116,47 @@ def test_http_server_root_ids_legacy(tmp_path):
         assert status == 200
         status, _body = _request(actual_port, "/repo-candidates")
         assert status == 400
+    finally:
+        httpd.shutdown()
+
+
+def test_http_server_mcp_jsonrpc(tmp_path):
+    db = DummyDB()
+    indexer = DummyIndexer(str(tmp_path))
+    mcp_server = LocalSearchMCPServer(str(tmp_path))
+    httpd, actual_port = serve_forever(
+        "127.0.0.1",
+        0,
+        db,
+        indexer,
+        version="1.0",
+        workspace_root=str(tmp_path),
+        mcp_server=mcp_server,
+    )
+    try:
+        status, body = _post_json(
+            actual_port,
+            "/mcp",
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
+            },
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["result"]["serverInfo"]["name"] == "sari"
+
+        status, body = _post_json(
+            actual_port,
+            "/mcp",
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert "tools" in payload["result"]
     finally:
         httpd.shutdown()
 

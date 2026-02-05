@@ -341,7 +341,10 @@ def main(argv: List[str] = None) -> int:
         return http_main()
 
     if ns.transport == "http":
-        return _print_transport_error(ns.format)
+        if ns.http_api_port:
+            os.environ["SARI_HTTP_API_PORT"] = str(ns.http_api_port)
+        from sari.core.main import main as http_main
+        return http_main()
 
     from sari.mcp.server import main as mcp_main
     mcp_main()

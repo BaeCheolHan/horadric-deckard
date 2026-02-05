@@ -88,7 +88,21 @@ def main() -> int:
         version = __version__
     except Exception:
         version = os.environ.get("SARI_VERSION", "dev")
-    httpd, actual_port = serve_forever(host, cfg.http_api_port, db, indexer, version=version, workspace_root=workspace_root)
+    try:
+        from sari.mcp.server import LocalSearchMCPServer
+        mcp_server = LocalSearchMCPServer(workspace_root, cfg=cfg, db=db, indexer=indexer)
+    except Exception:
+        mcp_server = None
+    httpd, actual_port = serve_forever(
+        host,
+        cfg.http_api_port,
+        db,
+        indexer,
+        version=version,
+        workspace_root=workspace_root,
+        cfg=cfg,
+        mcp_server=mcp_server,
+    )
 
     # Write server.json with actual binding info (single source of truth for port tracking)
     data_dir = Path(workspace_root) / ".codex" / "tools" / "sari" / "data"

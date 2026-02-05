@@ -75,14 +75,14 @@ class LocalSearchMCPServer:
 
     SERVER_VERSION = _resolve_version.__func__()
 
-    def __init__(self, workspace_root: str):
+    def __init__(self, workspace_root: str, cfg: Optional[Config] = None, db: Optional[LocalSearchDB] = None, indexer: Optional[Indexer] = None):
         self.workspace_root = workspace_root
         self._root_uri: Optional[str] = None
-        self.cfg: Optional[Config] = None
-        self.db: Optional[LocalSearchDB] = None
-        self.indexer: Optional[Indexer] = None
+        self.cfg: Optional[Config] = cfg
+        self.db: Optional[LocalSearchDB] = db
+        self.indexer: Optional[Indexer] = indexer
         self._indexer_thread: Optional[threading.Thread] = None
-        self._initialized = False
+        self._initialized = cfg is not None and db is not None and indexer is not None
         self._init_lock = threading.Lock()
         self._search_first_mode = self._resolve_search_first_policy()
         self._search_usage = {

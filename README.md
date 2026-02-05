@@ -92,6 +92,21 @@ Gemini CLI reads MCP servers from `settings.json`. Add a Sari entry to your Gemi
 }
 ```
 
+### Codex CLI (HTTP)
+
+Codex CLI currently expects MCP-over-HTTP. Run Sari in HTTP mode and configure the MCP server with a URL.
+
+```bash
+# Start HTTP MCP server
+sari --transport http --http-api-port 47777
+```
+
+```toml
+[mcp_servers.sari]
+url = "http://127.0.0.1:47777/mcp"
+enabled = true
+```
+
 
 ### Option 2: Manual Installation (Pip)
 

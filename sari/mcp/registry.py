@@ -53,7 +53,9 @@ class SharedState:
                 db=self.server.db,
                 indexer=self.server.indexer,
                 version=self.server.SERVER_VERSION,
-                workspace_root=self.workspace_root
+                workspace_root=self.workspace_root,
+                cfg=cfg,
+                mcp_server=self.server,
             )
             logger.info(f"Started HTTP Server for {workspace_root} on port {self.http_port}")
             try:

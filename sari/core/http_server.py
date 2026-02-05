@@ -23,8 +23,17 @@ class Handler(BaseHTTPRequestHandler):
     server_port: int = 47777
     server_version: str = "dev"
     root_ids: list[str] = []
+    mcp_server = None
 
     def _json(self, obj, status=200):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _jsonrpc(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -140,8 +149,91 @@ class Handler(BaseHTTPRequestHandler):
 
         return self._json({"ok": False, "error": "not found"}, status=404)
 
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
 
-def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, version: str = "dev", workspace_root: str = "") -> tuple:
+        if path != "/mcp":
+            return self._json({"ok": False, "error": "not found"}, status=404)
+
+        if self.mcp_server is None:
+            return self._jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32000, "message": "MCP-over-HTTP is not enabled"},
+                },
+                status=503,
+            )
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+
+        if length <= 0:
+            return self._jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Empty request body"},
+                },
+                status=400,
+            )
+
+        body = self.rfile.read(length)
+        if not body:
+            return self._jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Empty request body"},
+                },
+                status=400,
+            )
+
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            return self._jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"},
+                },
+                status=400,
+            )
+
+        def _handle_one(req):
+            if not isinstance(req, dict):
+                return {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                }
+            return self.mcp_server.handle_request(req)
+
+        if isinstance(payload, list):
+            responses = []
+            for item in payload:
+                resp = _handle_one(item)
+                if resp is not None:
+                    responses.append(resp)
+            if not responses:
+                self.send_response(204)
+                self.end_headers()
+                return
+            return self._jsonrpc(responses, status=200)
+
+        response = _handle_one(payload)
+        if response is None:
+            self.send_response(204)
+            self.end_headers()
+            return
+        return self._jsonrpc(response, status=200)
+
+
+def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, version: str = "dev", workspace_root: str = "", cfg=None, mcp_server=None) -> tuple:
     """Start HTTP server with Registry-based port allocation.
 
     Returns:
@@ -168,11 +260,22 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
     BoundHandler.indexer = indexer  # type: ignore
     BoundHandler.server_host = host  # type: ignore
     BoundHandler.server_version = version  # type: ignore
+    BoundHandler.mcp_server = mcp_server  # type: ignore
     try:
         from sari.core.workspace import WorkspaceManager
         BoundHandler.root_ids = [WorkspaceManager.root_id(r) for r in indexer.cfg.workspace_roots]  # type: ignore
     except Exception:
         BoundHandler.root_ids = []  # type: ignore
+
+    if BoundHandler.mcp_server is None:
+        try:
+            from sari.mcp.server import LocalSearchMCPServer
+            if cfg is not None:
+                BoundHandler.mcp_server = LocalSearchMCPServer(workspace_root, cfg=cfg, db=db, indexer=indexer)  # type: ignore
+            else:
+                BoundHandler.mcp_server = LocalSearchMCPServer(workspace_root)  # type: ignore
+        except Exception:
+            BoundHandler.mcp_server = None  # type: ignore
 
     strategy = (os.environ.get("SARI_HTTP_API_PORT_STRATEGY") or "auto").strip().lower()
     actual_port = port
