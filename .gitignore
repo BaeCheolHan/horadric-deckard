@@ -13,3 +13,4 @@ data/
 *.log
 __pycache__/
 _backup_mcp/
+.sari/
