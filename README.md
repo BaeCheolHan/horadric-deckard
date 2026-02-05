@@ -179,6 +179,15 @@ Settings to tune search quality and backend behavior.
 | `SARI_ENGINE_SUGGEST_FILES`| File count threshold to suggest upgrading to Tantivy engine in status checks. | `10000` |
 | `SARI_LINDERA_DICT_PATH` | Path to custom Lindera dictionary for CJK tokenization (Advanced). | - |
 
+**Config file equivalents (`config.json`):**
+```json
+{
+  "engine_mode": "embedded",
+  "engine_auto_install": true
+}
+```
+`SARI_ENGINE_MODE` and `SARI_ENGINE_AUTO_INSTALL` override these values at runtime.
+
 #### 3. Indexing & Performance
 Fine-tune resource usage and concurrency.
 

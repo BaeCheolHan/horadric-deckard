@@ -172,6 +172,15 @@ MCP 서버가 실행되는 동안 동작을 제어하는 설정입니다. `env` 
 | `SARI_ENGINE_SUGGEST_FILES`| 상태 체크 시 Tantivy 엔진 업그레이드를 제안하는 파일 수 임계값. | `10000` |
 | `SARI_LINDERA_DICT_PATH` | CJK 토큰화를 위한 커스텀 Lindera 사전 경로 (고급). | - |
 
+**설정 파일(`config.json`) 대응값:**
+```json
+{
+  "engine_mode": "embedded",
+  "engine_auto_install": true
+}
+```
+`SARI_ENGINE_MODE`, `SARI_ENGINE_AUTO_INSTALL`가 런타임에서 우선 적용됩니다.
+
 #### 3. 인덱싱 및 성능 (Indexing & Performance)
 리소스 사용량과 동시성을 제어합니다.
 

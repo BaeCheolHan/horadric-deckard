@@ -424,6 +424,72 @@ def _get_local_version() -> str:
         return os.environ.get("SARI_VERSION", "") or ""
 
 
+def _build_start_args(
+    daemonize: bool = True,
+    daemon_host: str = "",
+    daemon_port: Optional[int] = None,
+    http_host: str = "",
+    http_port: Optional[int] = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        daemonize=daemonize,
+        daemon_host=daemon_host,
+        daemon_port=daemon_port,
+        http_host=http_host,
+        http_port=http_port,
+    )
+
+
+def _start_daemon_background(
+    daemon_host: str = "",
+    daemon_port: Optional[int] = None,
+    http_host: str = "",
+    http_port: Optional[int] = None,
+) -> bool:
+    start_args = _build_start_args(
+        daemonize=True,
+        daemon_host=daemon_host,
+        daemon_port=daemon_port,
+        http_host=http_host,
+        http_port=http_port,
+    )
+    return cmd_daemon_start(start_args) == 0
+
+
+def _needs_upgrade_or_drain(identify: Optional[Dict[str, Any]]) -> bool:
+    if not identify:
+        return False
+    existing_version = identify.get("version") or ""
+    local_version = _get_local_version()
+    draining = bool(identify.get("draining"))
+    needs_upgrade = bool(existing_version and local_version and existing_version != local_version)
+    return bool(needs_upgrade or draining)
+
+
+def _ensure_daemon_running(
+    daemon_host: str,
+    daemon_port: int,
+    http_host: str = "",
+    http_port: Optional[int] = None,
+    allow_upgrade: bool = False,
+) -> Tuple[str, int, bool]:
+    identify = _identify_sari_daemon(daemon_host, daemon_port)
+    if identify and not (allow_upgrade and _needs_upgrade_or_drain(identify)):
+        return daemon_host, daemon_port, True
+
+    if allow_upgrade and identify and _needs_upgrade_or_drain(identify):
+        _start_daemon_background(daemon_host, daemon_port, http_host, http_port)
+        daemon_host, daemon_port = get_daemon_address()
+        return daemon_host, daemon_port, is_daemon_running(daemon_host, daemon_port)
+
+    if not is_daemon_running(daemon_host, daemon_port):
+        _start_daemon_background(daemon_host, daemon_port, http_host, http_port)
+        daemon_host, daemon_port = get_daemon_address()
+        return daemon_host, daemon_port, is_daemon_running(daemon_host, daemon_port)
+
+    return daemon_host, daemon_port, True
+
+
 def cmd_daemon_start(args):
     """Start the daemon."""
     explicit_port = bool(args.daemon_port)
@@ -445,11 +511,7 @@ def cmd_daemon_start(args):
 
     identify = _identify_sari_daemon(host, port)
     if identify:
-        existing_version = identify.get("version") or ""
-        local_version = _get_local_version()
-        draining = bool(identify.get("draining"))
-        needs_upgrade = bool(existing_version and local_version and existing_version != local_version)
-        if not force_start and not needs_upgrade and not draining:
+        if not force_start and not _needs_upgrade_or_drain(identify):
             pid = read_pid()
             print(f"✅ Daemon already running on {host}:{port}")
             if not pid:
@@ -673,41 +735,16 @@ def cmd_auto(args):
         # Connection refused etc. We'll try to start daemon below.
 
     identify = _identify_sari_daemon(host, port)
-    if identify:
-        existing_version = identify.get("version") or ""
-        local_version = _get_local_version()
-        draining = bool(identify.get("draining"))
-        needs_upgrade = bool(existing_version and local_version and existing_version != local_version)
-        if needs_upgrade or draining:
-            # Start a new daemon (upgrade/drain path), then re-resolve.
-            start_args = argparse.Namespace(
-                daemonize=True,
-                daemon_host="",
-                daemon_port=None,
-                http_host="",
-                http_port=None,
-            )
-            cmd_daemon_start(start_args)
-            host, port = get_daemon_address()
-            if is_daemon_running(host, port):
-                return cmd_proxy(args)
-        else:
+    if identify and not _needs_upgrade_or_drain(identify):
+        return cmd_proxy(args)
+    if identify and _needs_upgrade_or_drain(identify):
+        host, port, running = _ensure_daemon_running(host, port, allow_upgrade=True)
+        if running:
             return cmd_proxy(args)
 
     # Try to start daemon in background, then proxy.
     if not is_daemon_running(host, port):
-        workspace_root = WorkspaceManager.resolve_workspace_root()
-        env = os.environ.copy()
-        env["SARI_DAEMON_AUTOSTART"] = "1"
-        env["SARI_WORKSPACE_ROOT"] = workspace_root
-        subprocess.Popen(
-            [sys.executable, "-m", "sari.mcp.cli", "daemon", "start", "-d"],
-            cwd=Path(__file__).parent.parent.parent,
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=env,
-        )
+        _start_daemon_background()
         for _ in range(30):
             try:
                 host, port = get_daemon_address()
@@ -743,16 +780,13 @@ def cmd_status(args):
 
         if not http_running:
             if not daemon_running:
-                start_args = argparse.Namespace(
-                    daemonize=True,
-                    daemon_host="",
-                    daemon_port=None,
-                    http_host="",
-                    http_port=None,
+                daemon_host, daemon_port, daemon_running = _ensure_daemon_running(
+                    daemon_host,
+                    daemon_port,
+                    http_host=args.http_host,
+                    http_port=args.http_port,
+                    allow_upgrade=False,
                 )
-                cmd_daemon_start(start_args)
-                daemon_host, daemon_port = get_daemon_address()
-                daemon_running = is_daemon_running(daemon_host, daemon_port)
             if daemon_running:
                 for _ in range(5):
                     _ensure_workspace_http(daemon_host, daemon_port)
@@ -769,6 +803,15 @@ def cmd_status(args):
             print("❌ Error: Sari services are not fully running.")
             print(f"   Daemon: {'🟢' if daemon_running else '⚫'} {daemon_host}:{daemon_port}")
             print(f"   HTTP:   {'🟢' if http_running else '⚫'} {host}:{port}")
+            try:
+                ws_root = WorkspaceManager.resolve_workspace_root()
+                server_info = _load_server_info(str(ws_root))
+                if server_info and server_info.get("port") and int(server_info.get("port")) != int(port):
+                    note_host = server_info.get("host") or host
+                    note_port = server_info.get("port")
+                    print(f"   Note: server.json reports {note_host}:{note_port}")
+            except Exception:
+                pass
             print("   Hint: Run `sari daemon start -d` to start both, or `sari --http-api` to start HTTP only.")
             return 1
 

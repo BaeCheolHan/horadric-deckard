@@ -5,7 +5,6 @@ Returns structured diagnostics (no ANSI/prints).
 """
 import json
 import os
-import os
 import socket
 import shutil
 import sys
@@ -19,7 +18,7 @@ try:
     from sari.core.config import Config
     from sari.core.workspace import WorkspaceManager
     from sari.core.registry import ServerRegistry
-    from sari.mcp.cli import get_daemon_address, is_daemon_running, read_pid
+    from sari.mcp.cli import get_daemon_address, is_daemon_running, read_pid, _get_http_host_port, _is_http_running
 except ImportError:
     import sys
     from pathlib import Path
@@ -28,7 +27,7 @@ except ImportError:
     from sari.core.config import Config
     from sari.core.workspace import WorkspaceManager
     from sari.core.registry import ServerRegistry
-    from sari.mcp.cli import get_daemon_address, is_daemon_running, read_pid
+    from sari.mcp.cli import get_daemon_address, is_daemon_running, read_pid, _get_http_host_port, _is_http_running
 
 
 def _result(name: str, passed: bool, error: str = "") -> dict[str, Any]:
@@ -188,6 +187,13 @@ def _check_daemon() -> dict[str, Any]:
     return _result("Sari Daemon", False, "Not running")
 
 
+def _check_http_service(host: str, port: int) -> dict[str, Any]:
+    running = _is_http_running(host, port)
+    if running:
+        return _result("HTTP API", True, f"Running on {host}:{port}")
+    return _result("HTTP API", False, f"Not running on {host}:{port}")
+
+
 def _check_search_first_usage(usage: Dict[str, Any], mode: str) -> dict[str, Any]:
     violations = int(usage.get("read_without_search", 0))
     searches = int(usage.get("search", 0))
@@ -336,24 +342,15 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
 
     if include_port:
         daemon_host, daemon_port = get_daemon_address()
-        results.append(_check_port(daemon_port, "Daemon"))
-        http_port = 0
-        try:
-            inst = ServerRegistry().get_workspace(ws_root)
-            if inst and inst.get("http_port"):
-                http_port = int(inst.get("http_port"))
-        except Exception:
-            http_port = 0
-        if not http_port:
-            try:
-                cfg_path = WorkspaceManager.resolve_config_path(ws_root)
-                cfg = Config.load(cfg_path, workspace_root_override=ws_root)
-                http_port = int(cfg.http_api_port)
-            except Exception:
-                http_port = 0
-        if port:
-            http_port = port
-        if http_port:
+        daemon_running = is_daemon_running(daemon_host, daemon_port)
+        if daemon_running:
+            results.append(_result("Daemon Port", True, f"In use by running daemon {daemon_host}:{daemon_port}"))
+        else:
+            results.append(_check_port(daemon_port, "Daemon"))
+
+        http_host, http_port = _get_http_host_port(port_override=port if port else None)
+        results.append(_check_http_service(http_host, http_port))
+        if not _is_http_running(http_host, http_port):
             results.append(_check_port(http_port, "HTTP"))
 
     if include_network:
