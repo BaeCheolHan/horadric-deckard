@@ -34,93 +34,62 @@ class Session:
     async def handle_connection(self):
         try:
             while self.running:
-                # Read Headers
-                headers = {}
-                line_count = 0
-                while True:
-                    line = await self.reader.readline()
-                    if not line:
-                        self.running = False
-                        break
-
-                    line_str = line.decode("utf-8").strip()
-                    line_count += 1
-
-                    if not line_str:
-                        break
-
-                    # Protocol Check: First line must be Content-Length
-                    if line_count == 1:
-                        if line_str.startswith("{"):
-                            logger.error("Received JSONL instead of HTTP-style framed message")
-                            await self.send_error(None, -32700, "JSONL not supported. Use Content-Length framing.")
-                            self.running = False
-                            break
-
-                        if not line_str.lower().startswith("content-length:"):
-                            logger.error(f"First header must be Content-Length, got: {line_str!r}")
-                            await self.send_error(None, -32700, "Invalid protocol framing: Content-Length header required first")
-                            self.running = False
-                            break
-
-                    if ":" in line_str:
-                        k, v = line_str.split(":", 1)
-                        headers[k.strip().lower()] = v.strip()
-                    else:
-                        # Malformed header or missing Content-Length
-                        logger.error(f"Malformed header line: {line_str!r}")
-                        await self.send_error(None, -32700, "Invalid protocol framing")
-                        self.running = False
-                        break
-
-                if not self.running:
-                    break
-
-                try:
-                    content_length = int(headers.get("content-length", 0))
-                except (ValueError, TypeError):
-                    logger.error(f"Invalid Content-Length value: {headers.get('content-length')!r}")
-                    await self.send_error(None, -32700, "Invalid Content-Length value")
+                # 1. Read first line to detect framing mode
+                line = await self.reader.readline()
+                if not line:
                     self.running = False
                     break
 
-                if content_length <= 0:
-                    logger.error("Received message without Content-Length (JSONL is not supported)")
-                    await self.send_error(None, -32700, "Content-Length header required (JSONL is not supported)")
-                    # Since protocol framing is broken, we must terminate
-                    self.running = False
-                    break
+                line_str = line.decode("utf-8").strip()
+                if not line_str:
+                    continue
 
-                body = await self.reader.readexactly(content_length)
-                if not body:
-                    break
+                if line_str.startswith("{"):
+                    # JSONL mode: First line is the JSON body
+                    request_str = line_str
+                elif line_str.lower().startswith("content-length:"):
+                    # Content-Length mode: Parse headers
+                    headers = {}
+                    parts = line_str.split(":", 1)
+                    headers[parts[0].strip().lower()] = parts[1].strip()
+                    
+                    while True:
+                        h_line = await self.reader.readline()
+                        if not h_line:
+                            break
+                        h_str = h_line.decode("utf-8").strip()
+                        if not h_str:
+                            break
+                        if ":" in h_str:
+                            k, v = h_str.split(":", 1)
+                            headers[k.strip().lower()] = v.strip()
+                    
+                    try:
+                        content_length = int(headers.get("content-length", 0))
+                    except (ValueError, TypeError):
+                        continue
 
-                try:
+                    if content_length <= 0:
+                        continue
+
+                    body = await self.reader.readexactly(content_length)
+                    if not body:
+                        break
                     request_str = body.decode("utf-8")
+                else:
+                    # Unknown line, skip
+                    logger.warning(f"Unknown input line in session: {line_str!r}")
+                    continue
+
+                try:
                     request = json.loads(request_str)
                     await self.process_request(request)
                 except json.JSONDecodeError:
-                    logger.error(f"Invalid JSON received: {body[:100]!r}")
-                    # Try to extract ID manually for better correlation if possible
-                    msg_id = None
-                    try:
-                         # Simple regex for "id": 123 or "id": "abc"
-                         import re
-                         match = re.search(r'"id"\s*:\s*("(?:\\"|[^"])*"|\d+|null)', request_str)
-                         if match:
-                             msg_id = json.loads(match.group(1))
-                    except Exception:
-                        pass
-                    await self.send_error(msg_id, -32700, "Parse error")
+                    logger.error(f"Invalid JSON received: {request_str[:100]!r}")
+                    await self.send_error(None, -32700, "Parse error")
                 except Exception as e:
                     logger.error(f"Error processing request: {e}", exc_info=True)
-                    # We might have parsed the ID already if it's not a Parse error
-                    msg_id = None
-                    try:
-                        msg_id = json.loads(body.decode("utf-8")).get("id")
-                    except Exception:
-                        pass
-                    await self.send_error(msg_id, -32603, str(e))
+                    await self.send_error(None, -32603, str(e))
 
         except (asyncio.IncompleteReadError, ConnectionResetError):
             logger.info("Connection closed by client")

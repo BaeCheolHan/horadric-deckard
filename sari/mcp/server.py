@@ -109,42 +109,58 @@ class LocalSearchMCPServer:
             return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32000, "message": str(e)}}
 
     def run(self) -> None:
-        """Standard MCP JSON-RPC loop with Content-Length framing."""
+        """Standard MCP JSON-RPC loop with Hybrid framing (Content-Length or JSONL)."""
         self._log_debug("Sari MCP Server starting run loop...")
         input_stream = sys.stdin.buffer
         try:
             while not self._stop.is_set():
-                headers = {}
-                # 1. Read Headers
-                while True:
-                    line = input_stream.readline()
-                    if not line:
+                # 1. Read first line to detect framing mode
+                line = input_stream.readline()
+                if not line:
+                    break
+                
+                line_str = line.decode("utf-8").strip()
+                if not line_str:
+                    continue
+
+                if line_str.startswith("{"):
+                    # JSONL mode: First line is already the JSON body
+                    body_str = line_str
+                elif line_str.lower().startswith("content-length:"):
+                    # Content-Length mode: Parse headers
+                    headers = {}
+                    parts = line_str.split(":", 1)
+                    headers[parts[0].strip().lower()] = parts[1].strip()
+                    
+                    # Read remaining headers
+                    while True:
+                        h_line = input_stream.readline()
+                        if not h_line:
+                            break
+                        h_str = h_line.decode("utf-8").strip()
+                        if not h_str:
+                            break # Header-Body separator
+                        if ":" in h_str:
+                            k, v = h_str.split(":", 1)
+                            headers[k.strip().lower()] = v.strip()
+                    
+                    try:
+                        content_length = int(headers.get("content-length", 0))
+                    except (ValueError, TypeError):
+                        continue
+
+                    if content_length <= 0:
+                        continue
+
+                    body_bytes = input_stream.read(content_length)
+                    if not body_bytes:
                         break
-                    line_str = line.decode("utf-8").strip()
-                    if not line_str:
-                        break # End of headers
-                    if ":" in line_str:
-                        k, v = line_str.split(":", 1)
-                        headers[k.strip().lower()] = v.strip()
-                
-                if not headers and not line:
-                    break
-
-                # 2. Get Content-Length
-                try:
-                    content_length = int(headers.get("content-length", 0))
-                except (ValueError, TypeError):
+                    body_str = body_bytes.decode("utf-8")
+                else:
+                    # Unknown line, skip
+                    self._log_debug(f"Unknown input line: {line_str}")
                     continue
-
-                if content_length <= 0:
-                    continue
-
-                # 3. Read Body
-                body_bytes = input_stream.read(content_length)
-                if not body_bytes:
-                    break
                 
-                body_str = body_bytes.decode("utf-8")
                 self._log_debug(f"IN: {body_str}")
                 
                 try:

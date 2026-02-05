@@ -372,21 +372,23 @@ def run_cmd(argv: List[str]) -> int:
 
 def main(argv: List[str] = None) -> int:
     argv = list(argv or sys.argv[1:])
+    # Default to stdio server if no arguments provided, or if explicitly requested
     if not argv:
-        return run_cmd(["status"]) # Default behavior
-    
-    # Fast-path for subcommands
-    if argv[0] == "doctor":
-        return _cmd_doctor()
-    
-    if argv[0] in {"daemon", "proxy", "status", "search", "init", "auto"}:
-        from sari.mcp.cli import main as legacy_main
-        sys.argv = ["sari"] + argv
-        return legacy_main()
-    if "--cmd" in argv:
-        idx = argv.index("--cmd")
-        cmd_args = argv[idx + 1 :]
-        return run_cmd(cmd_args)
+        # Instead of run_cmd(["status"]), we fall through to the stdio server start
+        pass
+    else:
+        # Fast-path for subcommands
+        if argv[0] == "doctor":
+            return _cmd_doctor()
+        
+        if argv[0] in {"daemon", "proxy", "status", "search", "init", "auto"}:
+            from sari.mcp.cli import main as legacy_main
+            sys.argv = ["sari"] + argv
+            return legacy_main()
+        if "--cmd" in argv:
+            idx = argv.index("--cmd")
+            cmd_args = argv[idx + 1 :]
+            return run_cmd(cmd_args)
 
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--transport", default="stdio", choices=["stdio", "http"])
