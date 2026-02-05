@@ -2,6 +2,12 @@ import argparse
 import json
 import os
 import sys
+
+# CRITICAL: Hijack stdout to stderr at the absolute entry point to prevent 
+# ANY third-party library noise from breaking the MCP stdio protocol.
+_original_stdout = sys.stdout
+sys.stdout = sys.stderr
+
 import subprocess
 from pathlib import Path
 from typing import List
@@ -415,5 +421,6 @@ def main(argv: List[str] = None) -> int:
         return _run_http_server()
 
     from sari.mcp.server import main as mcp_main
-    mcp_main()
+    # Pass the clean stdout handle to the MCP server
+    mcp_main(_original_stdout)
     return 0

@@ -172,18 +172,11 @@ class LocalSearchMCPServer:
         except Exception:
             pass
 
-def main() -> None:
-    # Redirect stdout immediately to catch import-time noise
-    original_stdout = sys.stdout
-    sys.stdout = sys.stderr
-    
-    # Restore for server initialization, but _worker_loop will grab it again
-    # Actually, let's keep it redirected globally, and pass original_stdout to server.
-    # But server class is initialized before main() in some flows? No, here it is.
-    
+def main(original_stdout: Any = None) -> None:
+    # Use provided stdout or fallback to current sys.stdout
+    clean_stdout = original_stdout or sys.stdout
     server = LocalSearchMCPServer(WorkspaceManager.resolve_workspace_root())
-    # Inject the clean stdout handle for response writing
-    server._original_stdout = original_stdout
+    server._original_stdout = clean_stdout
     server.run()
 
 if __name__ == "__main__":
