@@ -1,11 +1,8 @@
 import os
 import sys
 import threading
-import zipfile
 from pathlib import Path
-from typing import Optional, Tuple
-
-from .workspace import WorkspaceManager
+from typing import Optional
 
 _LINDERA_LOCK = threading.Lock()
 _LINDERA_TOKENIZER = None
@@ -13,79 +10,6 @@ _LINDERA_ERROR = ""
 _LINDERA_DICT_PATH = ""
 _LINDERA_DICT_URI = ""
 _LINDERA_READY = False
-_LINDERA_SYS_PATHS: set[str] = set()
-
-
-def _platform_tokenizer_tag() -> str:
-    import platform
-    plat = sys.platform
-    arch = platform.machine().lower()
-    if plat.startswith("darwin"):
-        if arch in {"arm64", "aarch64"}:
-            return "macosx_11_0_arm64"
-        if arch in {"x86_64", "amd64"}:
-            return "macosx_10_9_x86_64"
-        return "macosx"
-    if plat.startswith("win"):
-        return "win_amd64"
-    if plat.startswith("linux"):
-        if arch in {"aarch64", "arm64"}:
-            return "manylinux_2_17_aarch64"
-        return "manylinux_2_17_x86_64"
-    return "unknown"
-
-
-def _find_tokenizer_bundle() -> Tuple[str, str]:
-    try:
-        base = Path(__file__).parent / "engine_tokenizer_data"
-        tag = _platform_tokenizer_tag()
-        if not base.exists():
-            return tag, ""
-        for p in base.glob("lindera_python_ipadic-*.whl"):
-            if tag in p.name:
-                return tag, str(p)
-        return tag, ""
-    except Exception:
-        return "unknown", ""
-
-
-def _ensure_wheel_extracted(bundle_path: str) -> Optional[str]:
-    if not bundle_path:
-        return None
-    try:
-        cache_dir = WorkspaceManager.get_engine_cache_dir() / "tokenizer" / _platform_tokenizer_tag() / "lindera_python_ipadic"
-        marker = cache_dir / ".extracted"
-        if marker.exists():
-            return str(cache_dir)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(bundle_path) as zf:
-            zf.extractall(cache_dir)
-        marker.write_text("ok", encoding="utf-8")
-        return str(cache_dir)
-    except Exception:
-        return None
-
-
-def _add_sys_path(path: Optional[str]) -> None:
-    if not path:
-        return
-    if path in _LINDERA_SYS_PATHS:
-        return
-    sys.path.insert(0, path)
-    _LINDERA_SYS_PATHS.add(path)
-
-
-def _find_dict_root(base: Path) -> Optional[str]:
-    targets = {"sys.dic", "unk.dic", "matrix.mtx", "char.def", "unk.def"}
-    try:
-        for p in base.rglob("*"):
-            if not p.is_file():
-                continue
-            if p.name in targets:
-                return str(p.parent)
-    except Exception:
-        return None
-    return None
 
 
 def _resolve_dict_path() -> str:
@@ -98,9 +22,8 @@ def _resolve_dict_path() -> str:
         import lindera_dictionary_ipadic as ldi  # type: ignore
         mod_path = Path(getattr(ldi, "__file__", ""))
         if mod_path.exists():
-            root = _find_dict_root(mod_path.parent)
-            if root:
-                return root
+            # Usually the dictionary files are in the package directory
+            return str(mod_path.parent)
     except Exception:
         pass
     return ""
@@ -114,17 +37,17 @@ def _init_lindera() -> None:
         if _LINDERA_READY:
             return
         try:
-            tag, bundle = _find_tokenizer_bundle()
-            extracted = _ensure_wheel_extracted(bundle)
-            _add_sys_path(extracted)
-            # Also allow using installed packages (engine venv)
+            # Try to import installed lindera package
             import lindera  # type: ignore
+
             # Prefer embedded dictionary when available in lindera-python-ipadic
             try:
+                # Some versions/forks support embedded://ipadic
                 dic = lindera.load_dictionary("embedded://ipadic")
                 _LINDERA_TOKENIZER = lindera.Tokenizer(dic)
                 _LINDERA_DICT_URI = "embedded://ipadic"
             except Exception:
+                # Fallback to loading from dictionary path
                 dict_path = _resolve_dict_path()
                 _LINDERA_DICT_PATH = dict_path
                 if dict_path:
@@ -133,6 +56,7 @@ def _init_lindera() -> None:
                             dic = lindera.load_dictionary(dict_path)
                             _LINDERA_TOKENIZER = lindera.Tokenizer(dic)
                         except Exception:
+                            # Try builder pattern if direct load fails
                             builder = lindera.TokenizerBuilder()
                             builder.set_dictionary(dict_path)
                             _LINDERA_TOKENIZER = builder.build()
@@ -141,7 +65,10 @@ def _init_lindera() -> None:
                         _LINDERA_ERROR = f"dictionary load failed: {e}"
                         _LINDERA_TOKENIZER = None
                 else:
-                    _LINDERA_ERROR = "dictionary not found"
+                    _LINDERA_ERROR = "dictionary not found (install lindera-dictionary-ipadic)"
+        except ImportError:
+             _LINDERA_ERROR = "lindera package not installed"
+             _LINDERA_TOKENIZER = None
         except Exception as e:
             _LINDERA_ERROR = str(e)
             _LINDERA_TOKENIZER = None

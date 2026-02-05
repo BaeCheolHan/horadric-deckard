@@ -112,26 +112,44 @@ def _platform_tokenizer_tag() -> str:
 
 
 def _check_engine_tokenizer_data() -> dict[str, Any]:
+    """Check if tokenizer data (lindera) is installed as a package."""
     try:
-        import sari.core as app
-        base = Path(app.__file__).parent / "engine_tokenizer_data"
-        if not base.exists():
-            return _result("Engine Tokenizer Data", False, "engine_tokenizer_data missing")
-        tag = _platform_tokenizer_tag()
-        files = [p for p in base.glob("lindera_python_ipadic-*.whl") if tag in p.name]
-        if not files:
-            return _result("Engine Tokenizer Data", False, f"tokenizer bundle not found for {tag}")
-        return _result("Engine Tokenizer Data", True, f"bundle={files[0].name}")
+        import lindera_dictionary_ipadic
+        return _result("CJK Tokenizer Data", True, f"installed ({getattr(lindera_dictionary_ipadic, '__version__', 'unknown')})")
+    except ImportError:
+        return _result("CJK Tokenizer Data", False, "package 'lindera-dictionary-ipadic' not installed (optional)")
     except Exception as e:
-        return _result("Engine Tokenizer Data", False, str(e))
+        return _result("CJK Tokenizer Data", False, str(e))
 
+def _check_tree_sitter() -> dict[str, Any]:
+    """Check if Tree-sitter and language parsers are installed."""
+    try:
+        from sari.core.parsers.ast_engine import ASTEngine
+        engine = ASTEngine()
+        if not engine.enabled:
+             return _result("Tree-sitter Support", False, "core 'tree-sitter' package not installed (optional)")
+        
+        # Check specific languages
+        langs = ["python", "javascript", "typescript", "java", "go", "rust", "cpp"]
+        installed = []
+        for lang in langs:
+             if engine._get_language(lang):
+                 installed.append(lang)
+        
+        if installed:
+            return _result("Tree-sitter Support", True, f"enabled for: {', '.join(installed)}")
+        return _result("Tree-sitter Support", True, "core enabled but no language parsers loaded yet")
+    except Exception as e:
+        return _result("Tree-sitter Support", False, str(e))
 
 def _check_lindera_dictionary() -> dict[str, Any]:
     if lindera_available():
         uri = lindera_dict_uri() or "embedded://ipadic"
-        return _result("Lindera Dictionary", True, f"dict={uri}")
+        return _result("Lindera Engine", True, f"active dict={uri}")
     err = lindera_error() or "not available"
-    return _result("Lindera Dictionary", False, err)
+    # If package is missing, it's not an error but an optional state
+    is_error = "not installed" not in err
+    return _result("Lindera Engine", not is_error, err)
 
 
 def _check_port(port: int, label: str) -> dict[str, Any]:
@@ -240,9 +258,13 @@ def _recommendations(results: list[dict[str, Any]]) -> list[dict[str, str]]:
         }:
             recs.append({"name": name, "action": "Upgrade to latest code, then run a full rescan (or remove old DB to rebuild)."})
         elif name == "Engine Tokenizer Data":
-            recs.append({"name": name, "action": "Re-run bootstrap to install tokenizer bundles for your platform."})
+            recs.append({"name": name, "action": "Install CJK support: pip install 'sari[cjk]'"})
         elif name == "Lindera Dictionary":
-            recs.append({"name": name, "action": "Install lindera dictionary assets (see README engine section)."})
+            recs.append({"name": name, "action": "Install CJK support: pip install 'sari[cjk]'"})
+        elif name == "CJK Tokenizer Data" or name == "Lindera Engine":
+            recs.append({"name": name, "action": "Install CJK support: pip install 'sari[cjk]'"})
+        elif name == "Tree-sitter Support":
+             recs.append({"name": name, "action": "Install high-precision parsers: pip install 'sari[treesitter]'"})
         elif name.startswith("Daemon Port") or name.startswith("HTTP Port"):
             recs.append({"name": name, "action": "Change port or stop the conflicting process."})
         elif name == "Sari Daemon":
@@ -349,6 +371,7 @@ def execute_doctor(args: Dict[str, Any]) -> Dict[str, Any]:
         results.extend(_check_db(ws_root))
         results.append(_check_engine_tokenizer_data())
         results.append(_check_lindera_dictionary())
+        results.append(_check_tree_sitter())
 
     if include_disk:
         results.append(_check_disk_space(ws_root, min_disk_gb))

@@ -239,6 +239,16 @@ def _create_bootstrap_script(install_dir: Path):
     print_step(f"Created bootstrap script: {script_path}")
     return script_path
 
+def _get_pip_command():
+    """Determine the best pip command to use (uv or standard pip)."""
+    try:
+        res = subprocess.run(["uv", "--version"], capture_output=True, check=False)
+        if res.returncode == 0:
+            return ["uv", "pip", "install"]
+    except Exception:
+        pass
+    return [sys.executable, "-m", "pip", "install"]
+
 def do_install(args):
     # Part 1: Handle global installation/update
     perform_global_install = False
@@ -271,18 +281,32 @@ def do_install(args):
                 pass
             INSTALL_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 1. Install via Pip
-        # Check if we are running inside the sari repository itself
+        # 1. Install via Pip (or uv)
         is_repo = (Path.cwd() / "pyproject.toml").exists() and (Path.cwd() / "sari").exists()
+        pip_base = _get_pip_command()
+        
+        # Determine Extras
+        extras = []
+        if not args.minimal:
+            if args.full:
+                extras = ["full"]
+            else:
+                if confirm("Enable High-Precision Search (CJK/Korean/Japanese support)? (Adds ~50MB)", default=True):
+                    extras.append("cjk")
+                if confirm("Enable High-Precision AST Analysis (Tree-sitter)? (Adds ~10MB+)", default=True):
+                    extras.append("treesitter")
+        
+        extras_str = f"[{','.join(extras)}]" if extras else ""
+        pkg_spec = f"sari{extras_str}"
 
         if install_source:
             pass
         elif is_repo:
-            print_step("Detected Sari repository. Installing in editable mode...")
-            pip_cmd = [sys.executable, "-m", "pip", "install", "-e", "."]
+            print_step(f"Detected Sari repository. Installing {pkg_spec} in editable mode...")
+            pip_cmd = pip_base + ["-e", f".{extras_str}"]
         else:
-            print_step("Installing 'sari' package via pip...")
-            pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "sari"]
+            print_step(f"Installing '{pkg_spec}' via {'uv' if 'uv' in pip_base else 'pip'}...")
+            pip_cmd = pip_base + ["--upgrade", pkg_spec]
 
         should_skip = os.environ.get("SARI_SKIP_INSTALL") == "1"
         if should_skip:
@@ -351,6 +375,18 @@ def do_install(args):
             pass
 
         print_success("Global installation/update complete!")
+        
+        # Check if 'sari' is in PATH
+        sari_bin = shutil.which("sari")
+        if sari_bin:
+            print_step(f"Sari is available at: {sari_bin}")
+        else:
+            print_warn("The 'sari' command is not in your PATH yet.")
+            if IS_WINDOWS:
+                print(f"  Try running: & \"$env:LOCALAPPDATA\\sari\\bootstrap.bat\" status")
+            else:
+                print(f"  Try running: ~/.local/share/sari/bootstrap.sh status")
+            print(f"  Or use: {sys.executable} -m sari status")
 
     # Part 2: print manual config instructions (no auto config writes)
     print_step("Manual MCP config required (no auto-write).")
@@ -536,6 +572,8 @@ def main():
     parser.add_argument("--workspace-root", help="Workspace root to remove local caches")
     parser.add_argument("--force-config", action="store_true", help="Remove custom config paths from env")
     parser.add_argument("--update", action="store_true", help="Force update of existing installation")
+    parser.add_argument("--minimal", action="store_true", help="Install minimal version (no optional features)")
+    parser.add_argument("--full", action="store_true", help="Install full version (all optional features)")
     parser.add_argument("-y", "--yes", "--no-interactive", action="store_true", help="Skip prompts")
     parser.add_argument("-q", "--quiet", action="store_true", help="Quiet mode")
     parser.add_argument("--json", action="store_true", help="JSON output")

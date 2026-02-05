@@ -12,13 +12,14 @@
 
 ---
 
+---
+
 ## 🚀 설치 및 설정 가이드
 
-Sari는 **설치와 실행을 분리**하는 방식이 안정적입니다.
-1) 먼저 설치를 완료하고,
-2) MCP 설정에는 실행 명령만 추가합니다.
+Sari는 **초경량(< 5MB)** 설계를 기본으로 합니다. 환경에 맞는 설치 방법을 선택하세요.
 
-### 0. 설치 (공통)
+### 방법 1: 자동 설치 스크립트 (권장)
+설치 과정에서 필요한 기능을 대화형으로 선택할 수 있습니다. 시스템에 **uv**가 설치되어 있다면 자동으로 사용하여 10배 더 빠르게 설치합니다.
 
 #### macOS / Linux
 ```bash
@@ -30,105 +31,54 @@ curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | 
 irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y --update
 ```
 
-### 1. Codex (CLI / App, HTTP MCP)
+---
 
-Codex는 HTTP 기반 MCP를 사용합니다. Sari를 HTTP 모드로 실행한 뒤 URL을 설정하세요.
-
-**실행:**
-```bash
-sari --transport http --http-api-port 47777
-
-# 백그라운드로 실행
-sari --transport http --http-api-port 47777 --http-daemon
-```
-
-**설정 파일:** `.codex/config.toml` 또는 `~/.codex/config.toml`
-
-```toml
-[mcp_servers.sari]
-url = "http://127.0.0.1:47777/mcp"
-enabled = true
-```
-
-### 2. Cursor / Claude Desktop (stdio)
-
-Cursor와 Claude Desktop은 JSON 형식의 설정을 사용합니다.
-
-**설정 파일 위치:**
-- **Cursor:** `Connect to MCP Server` 메뉴 또는 설정 파일
-- **Claude Desktop:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
-
-#### 🍎 macOS / Linux
-
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "/Users/username/projects/my-app",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
-```
-
-#### 🪟 Windows (PowerShell)
-
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "C:\\Projects\\MyApp",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
-```
-
-### 3. Gemini CLI (stdio)
-
-Gemini CLI는 `settings.json`의 MCP 서버 설정을 읽습니다. Gemini 설정에 Sari 항목을 추가한 뒤 CLI를 재시작하세요.
-
-**설정 파일 위치:**
-- **macOS/Linux:** `~/.gemini/settings.json`
-- **Windows:** `%USERPROFILE%\\.gemini\\settings.json`
-
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "/path/to/your/project",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
-```
-
-### 4. Claude Code (CLI)
-
-Anthropic의 새로운 CLI 도구인 Claude Code를 사용하는 경우, `config.toml` 설정 방식을 따르거나 별도의 MCP 플러그인 설정을 확인해야 합니다. 일반적으로 위 Codex 예시와 유사한 TOML 형식이나 JSON 형식을 지원할 것으로 예상됩니다. (Claude Code의 공식 MCP 지원 문서 참조 필요)
-
-### 5. 수동 설치 (Pip)
-
-Python 환경에서 직접 패키지를 관리하고 싶다면 `pip`로 설치할 수 있습니다.
+### 방법 2: 현대적인 CLI 설치 (uv 사용)
+가장 깔끔하고 격리된 설치 방식입니다. PATH 설정이 자동으로 관리됩니다.
 
 ```bash
-# PyPI에서 설치
+# 권장: 전역 도구로 설치
+uv tool install sari
+
+# 모든 고정밀 기능(한국어 검색 + Tree-sitter) 포함 설치
+uv tool install "sari[full]"
+
+# 설치 없이 즉시 실행
+uv x sari status
+```
+
+---
+
+### 방법 3: 레거시 설치 (pip 사용)
+`uv`가 없는 환경에서의 표준 설치 방법입니다.
+
+```bash
+# 기본 설치
 pip install sari
 
-# MCP 서버 실행 (Stdio 모드)
-sari --transport stdio --format pack
+# 모든 기능 포함 설치
+pip install "sari[full]"
+```
+
+---
+
+## 🏎️ 선택적 기능 (Extras 설정)
+
+Sari는 **경량화(Low Footprint)**와 **고정밀(High Precision)** 중 하나를 선택할 수 있는 유연성을 제공합니다.
+
+| 옵션 | 기능 | 예상 용량 | 설치 명령어 |
+|-------|---------|--------------|--------------|
+| **기본(Core)** | 정규표현식 파서, FTS5 검색 | < 5MB | `pip install sari` |
+| **`[cjk]`** | 한국어/일본어/중국어 형태소 분석 | +50MB | `pip install "sari[cjk]"` |
+| **`[treesitter]`**| 고정밀 AST 심볼 추출 | +10MB~ | `pip install "sari[treesitter]"` |
+| **`[full]`** | 위의 모든 기능 + Tantivy 엔진 | +100MB+ | `pip install "sari[full]"` |
+
+### 적용 확인 (Verification)
+설치 후 아래 명령어로 기능이 활성화되었는지 확인할 수 있습니다:
+```bash
+sari doctor
+# 'sari' 명령어를 찾을 수 없다면 아래 명령어를 사용하세요:
+# python3 -m sari doctor
 ```
 
 ---
@@ -199,6 +149,7 @@ MCP 서버가 실행되는 동안 동작을 제어하는 설정입니다. `env` 
 | `SARI_MAX_AST_BYTES` | AST 추출을 시도할 최대 파일 크기(바이트). | `8MB` |
 | `SARI_GIT_CHECKOUT_DEBOUNCE`| Git 체크아웃 후 대량 인덱싱 시작 전 대기 시간(초). | `3.0` |
 | `SARI_FOLLOW_SYMLINKS` | 파일 스캔 시 심볼릭 링크를 따라갑니다. **주의:** 순환 링크가 있으면 무한 루프 위험이 있습니다. | `0` (꺼짐) |
+| `SARI_MAX_DEPTH` | 스캔할 디렉토리의 최대 깊이. 무한 루프를 방지합니다. | `30` |
 | `SARI_READ_MAX_BYTES` | `read_file` 도구가 반환하는 최대 바이트 수. 컨텍스트 초과 방지. | `1MB` |
 | `SARI_INDEX_MEM_MB` | 전체 인덱싱 메모리 예산 (MB). | `512` |
 | `SARI_INDEX_WORKERS` | 인덱싱 워커 수를 덮어씁니다. | `2` |

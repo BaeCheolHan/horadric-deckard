@@ -99,6 +99,8 @@ class Settings:
     @property
     def FOLLOW_SYMLINKS(self) -> bool: return _get_bool("FOLLOW_SYMLINKS", False)
     @property
+    def MAX_DEPTH(self) -> int: return _get_int("MAX_DEPTH", 30)
+    @property
     def MAX_PARSE_BYTES(self) -> int: return _get_int("MAX_PARSE_BYTES", 16 * 1024 * 1024)
     @property
     def MAX_AST_BYTES(self) -> int: return _get_int("MAX_AST_BYTES", 8 * 1024 * 1024)

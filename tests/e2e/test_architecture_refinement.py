@@ -28,7 +28,7 @@ def test_architecture_refinement():
     print("START: test_architecture_refinement")
     # Setup
     workspace_dir = tempfile.mkdtemp()
-    workspace = Path(workspace_dir)
+    workspace = Path(workspace_dir).resolve()
     print(f"DEBUG: Workspace at {workspace}")
     
     try:
@@ -88,6 +88,16 @@ def test_architecture_refinement():
         # Mock logger
         mock_logger = MagicMock()
         
+        # Explicitly upsert root (Fix for FK errors)
+        try:
+            from sari.core.workspace import WorkspaceManager
+            root_id = WorkspaceManager.root_id(str(workspace))
+            print(f"DEBUG: Upserting root {root_id} -> {workspace}")
+            db.upsert_root(root_id, str(workspace), str(workspace.resolve()))
+        except Exception as e:
+            print(f"FAIL: Root upsert failed: {e}")
+            raise
+
         # Initialize Indexer
         print("DEBUG: Initializing Indexer")
         indexer = Indexer(cfg, db, logger=mock_logger, settings_obj=mock_settings)

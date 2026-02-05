@@ -87,6 +87,10 @@ def test_data_collection_e2e(data_workspace, tmp_path):
     # Initialize Indexer
     indexer = Indexer(cfg, db, logger=logger)
     
+    # DEBUG: Check roots in DB
+    existing_roots = db._get_conn().execute("SELECT root_id, root_path FROM roots").fetchall()
+    print(f"DEBUG: DB Roots: {existing_roots}")
+    
     # --- Step 1: Trigger Scan ---
     print(f"Scanning workspace...")
     indexer.scan_once()

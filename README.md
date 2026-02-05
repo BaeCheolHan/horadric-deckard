@@ -12,13 +12,14 @@
 
 ---
 
+---
+
 ## 🚀 Installation & Setup
 
-Sari uses a **two-step flow**:
-1) Install Sari explicitly.
-2) Add MCP configuration that only *runs* the server (no downloads on launch).
+Choose the method that best fits your workflow. Sari is **extremely lightweight (< 5MB)** by default.
 
-### Step 1: Install
+### Method 1: Automatic Script (Recommended)
+This script handles everything, including binary detection and interactive feature selection. It will automatically use **uv** if available for 10x faster installation.
 
 #### macOS / Linux
 ```bash
@@ -32,103 +33,57 @@ irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python 
 
 ---
 
-### Step 2: MCP Configuration (No Auto-Download)
+### Method 2: Modern CLI Setup (via uv)
+For power users who want a clean, isolated installation with automatic PATH management.
 
-#### 🍎 macOS / Linux
+```bash
+# Recommended: Install as a global tool
+uv tool install sari
 
-**Cursor / Claude Desktop Config:**
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "/path/to/your/project",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
-```
+# Install with all high-precision features (CJK + Tree-sitter)
+uv tool install "sari[full]"
 
-#### 🪟 Windows (PowerShell)
-
-**Cursor / Claude Desktop Config:**
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "C:\\path\\to\\your\\project",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
+# Or run instantly without installation
+uv x sari status
 ```
 
 ---
 
-### Gemini CLI
-
-Gemini CLI reads MCP servers from `settings.json`. Add a Sari entry to your Gemini settings and restart the CLI.
-
-**Settings file locations:**
-- **macOS/Linux:** `~/.gemini/settings.json`
-- **Windows:** `%USERPROFILE%\.gemini\settings.json`
-
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "/path/to/your/project",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
-```
-
-### Codex CLI (HTTP)
-
-Codex CLI currently expects MCP-over-HTTP. Run Sari in HTTP mode and configure the MCP server with a URL.
+### Method 3: Legacy Installation (via pip)
+Standard installation for environments without `uv`.
 
 ```bash
-# Start HTTP MCP server
-sari --transport http --http-api-port 47777
-
-# Or start it in the background
-sari --transport http --http-api-port 47777 --http-daemon
-```
-
-```toml
-[mcp_servers.sari]
-url = "http://127.0.0.1:47777/mcp"
-enabled = true
-```
-
-
-### Option 2: Manual Installation (Pip)
-
-If you prefer to manage the package manually:
-
-```bash
-# Install from PyPI
+# Core only
 pip install sari
 
-# Run MCP Server
-sari --transport stdio --format pack
+# Core + CJK + Tree-sitter
+pip install "sari[full]"
 ```
 
 ---
 
-## ⚙️ Configuration Reference
+## 🏎️ Optional Features (Selectable Extras)
+
+Sari allows you to choose between **low footprint** and **high precision**.
+
+| Extra | Feature | Approx. Size | Installation |
+|-------|---------|--------------|--------------|
+| **Core** | Standard Regex parsing, FTS5 Search | < 5MB | `pip install sari` |
+| **`[cjk]`** | Accurate KR/JP/CN Tokenization | +50MB | `pip install "sari[cjk]"` |
+| **`[treesitter]`**| High-precision AST Symbol extraction | +10MB~ | `pip install "sari[treesitter]"` |
+| **`[full]`** | All of the above + Tantivy Engine | +100MB+ | `pip install "sari[full]"` |
+
+### Verification
+After installation, verify your active features:
+```bash
+sari doctor
+# If 'sari' command is not found, use:
+# python3 -m sari doctor
+```
+
+---
+
+## ⚙️ MCP Configuration
 
 Variables are categorized into **Installation-time** and **Runtime** settings.
 
@@ -206,6 +161,7 @@ Fine-tune resource usage and concurrency.
 | `SARI_MAX_AST_BYTES` | Max file size to attempt AST extraction (bytes). | `8MB` |
 | `SARI_GIT_CHECKOUT_DEBOUNCE`| Seconds to wait after git checkout before starting bulk indexing. | `3.0` |
 | `SARI_FOLLOW_SYMLINKS` | Follow symbolic links during file scanning. **Caution:** May cause infinite loops if circular links exist. | `0` (Disabled) |
+| `SARI_MAX_DEPTH` | Maximum directory depth to scan. Prevents infinite loops. | `30` |
 | `SARI_READ_MAX_BYTES` | Max bytes returned by `read_file` tool. Prevents context overflow. | `1MB` |
 | `SARI_INDEX_MEM_MB` | Overall indexing memory budget (MB). | `512` |
 | `SARI_INDEX_WORKERS` | Override index worker count. | `2` |
