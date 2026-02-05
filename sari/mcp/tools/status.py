@@ -86,6 +86,9 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
     if indexer and hasattr(indexer, "get_queue_depths"):
         status_data["queue_depths"] = indexer.get_queue_depths()
 
+    if indexer and hasattr(indexer, "get_performance_metrics"):
+        status_data["performance"] = indexer.get_performance_metrics()
+
     if cfg:
         status_data["config"] = {
             "include_ext": cfg.include_ext,
@@ -171,6 +174,12 @@ def execute_status(args: Dict[str, Any], indexer: Optional[Indexer], db: Optiona
         if repo_stats:
             for r_name, r_count in repo_stats.items():
                 metrics.append((f"repo_{r_name}", str(r_count)))
+
+        # Performance metrics
+        if "performance" in status_data:
+            perf = status_data["performance"]
+            for k, v in perf.items():
+                metrics.append((f"perf_{k}", str(v)))
 
         # Build lines
         lines = [pack_header("status", {}, returned=len(metrics))]

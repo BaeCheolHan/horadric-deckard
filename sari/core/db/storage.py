@@ -78,7 +78,7 @@ class GlobalStorageManager:
         
         if cleaned_rows:
             # engine_docs도 필터링된 항목만 포함
-            filtered_docs = [d for d in (engine_docs or []) if d.get("doc_id") in valid_doc_ids]
+            filtered_docs = [d for d in (engine_docs or []) if d.get("id") in valid_doc_ids]
             self.writer.enqueue(DbTask(kind="upsert_files", rows=cleaned_rows, engine_docs=filtered_docs))
 
     def delete_file(self, path: str, engine_deletes: Optional[List[str]] = None):

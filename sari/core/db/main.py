@@ -7,6 +7,7 @@ import zlib
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Iterable
 from .schema import init_schema, CURRENT_SCHEMA_VERSION
+from sari.core.settings import settings
 
 class LocalSearchDB:
     def __init__(self, db_path: str, logger=None):
@@ -19,7 +20,7 @@ class LocalSearchDB:
         self._writer_thread_id = None
         self.coordinator = None 
         self.engine = None
-        self.settings = None
+        self.settings = settings
         
         self._check_and_migrate()
         with self._get_conn() as conn:
@@ -122,6 +123,15 @@ class LocalSearchDB:
         row = self._get_conn().execute("SELECT root_path FROM roots WHERE root_id = ?", (root_id,)).fetchone()
         return row[0] if row else None
 
+    def apply_root_filter(self, sql: str, root_id: Optional[str]) -> Tuple[str, List[Any]]:
+        params = []
+        if root_id:
+            sql += " WHERE root_id = ?"
+            params.append(root_id)
+        else:
+            sql += " WHERE 1=1"
+        return sql, params
+
     def search_files(self, query: str, root_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         sql = "SELECT path, root_id, repo, mtime, size, parse_status FROM files"
         sql, params = self.apply_root_filter(sql, root_id)
@@ -133,6 +143,21 @@ class LocalSearchDB:
         cur = self._get_conn().cursor()
         cur.execute(sql, params)
         return [{"path": r[0], "root_id": r[1], "repo": r[2], "mtime": r[3], "size": r[4], "status": r[5]} for r in cur.fetchall()]
+
+    def search_symbols(self, query: str, root_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        sql = "SELECT symbol_id, path, root_id, name, kind, line, end_line FROM symbols"
+        sql, params = self.apply_root_filter(sql, root_id)
+        if query:
+            sql += " AND name LIKE ?"
+            params.append(f"%{query}%")
+        sql += " LIMIT ?"
+        params.append(limit)
+        cur = self._get_conn().cursor()
+        cur.execute(sql, params)
+        return [
+            {"symbol_id": r[0], "path": r[1], "root_id": r[2], "name": r[3], "kind": r[4], "line": r[5], "end_line": r[6]}
+            for r in cur.fetchall()
+        ]
 
     def list_files(self, repo=None, path_pattern=None, file_types=None, include_hidden=False, limit=100, offset=0, root_ids=None):
         sql = "SELECT path, repo, mtime FROM files WHERE 1=1"
@@ -174,6 +199,8 @@ class LocalSearchDB:
             "WHERE excluded.mtime >= files.mtime", # 최신 데이터만 덮어쓰기 허용
             rows
         )
+        # Clear DLQ on success
+        cur.executemany("DELETE FROM failed_tasks WHERE path = ?", [(r[0],) for r in rows])
 
     def upsert_symbols_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple]):
         cur.executemany("INSERT INTO symbols (symbol_id, path, root_id, name, kind, line, end_line, content, parent_name, metadata, docstring, qualname) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(root_id, path, name, line) DO UPDATE SET line=excluded.line", rows)
@@ -226,6 +253,33 @@ class LocalSearchDB:
                 except: pass
                 
             return len(paths_to_delete)
+
+            return len(paths_to_delete)
+
+    def prune_data(self, table: str, days: int) -> int:
+        """Prune old data from auxiliary tables based on TTL."""
+        if table not in ("snippets", "failed_tasks", "contexts"):
+            return 0
+            
+        cutoff = int(time.time()) - (days * 86400)
+        col = "ts" if table == "failed_tasks" else "updated_ts"
+        
+        with self._lock:
+            cur = self._write.cursor()
+            cur.execute(f"DELETE FROM {table} WHERE {col} < ?", (cutoff,))
+            count = cur.rowcount
+            self._write.commit()
+            return count
+
+    def get_failed_tasks(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get tasks eligible for retry."""
+        now = int(time.time())
+        try:
+            cur = self._get_conn().cursor()
+            cur.execute("SELECT path, root_id, attempts FROM failed_tasks WHERE next_retry <= ? LIMIT ?", (now, limit))
+            return [{"path": r[0], "root_id": r[1], "attempts": r[2]} for r in cur.fetchall()]
+        except Exception:
+            return []
 
     def close(self):
         """Close the connection for the current thread."""

@@ -3,6 +3,7 @@ import logging
 import asyncio
 import inspect
 import os
+import urllib.parse
 from typing import Dict, Any, Optional
 from .workspace_registry import Registry, SharedState
 
@@ -219,9 +220,12 @@ class Session:
             # Fallback for clients that omit rootUri/rootPath
             root_uri = WorkspaceManager.resolve_workspace_root()
 
-        # Handle file:// prefix
         if root_uri.startswith("file://"):
-            workspace_root = root_uri[7:]
+            parsed = urllib.parse.urlparse(root_uri)
+            if parsed.netloc and parsed.netloc not in {"localhost", "127.0.0.1", "::1"}:
+                await self.send_error(msg_id, -32000, "Unsupported file URI host")
+                return
+            workspace_root = urllib.parse.unquote(parsed.path)
         else:
             workspace_root = root_uri
 

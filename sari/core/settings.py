@@ -180,6 +180,13 @@ class Settings:
     def REGISTRY_IDLE_SEC(self) -> int: return _get_int("REGISTRY_IDLE_SEC", 900)
 
     @property
+    def STORAGE_TTL_DAYS_SNIPPETS(self) -> int: return _get_int("STORAGE_TTL_DAYS_SNIPPETS", 30)
+    @property
+    def STORAGE_TTL_DAYS_FAILED_TASKS(self) -> int: return _get_int("STORAGE_TTL_DAYS_FAILED_TASKS", 7)
+    @property
+    def STORAGE_TTL_DAYS_CONTEXTS(self) -> int: return _get_int("STORAGE_TTL_DAYS_CONTEXTS", 30)
+
+    @property
     def GLOBAL_CONFIG_DIR(self) -> str:
         """Global configuration directory: ~/.config/sari"""
         import pathlib

@@ -209,6 +209,7 @@ Fine-tune resource usage and concurrency.
 | `SARI_READ_MAX_BYTES` | Max bytes returned by `read_file` tool. Prevents context overflow. | `1MB` |
 | `SARI_INDEX_MEM_MB` | Overall indexing memory budget (MB). | `512` |
 | `SARI_INDEX_WORKERS` | Override index worker count. | `2` |
+| `SARI_AST_CACHE_ENTRIES` | LRU cache size for Tree-sitter ASTs. | `128` |
 
 #### 4. Network & Security
 Connectivity settings for the daemon.
@@ -321,6 +322,25 @@ sari daemon start -d
 
 The bootstrap script now starts a new daemon on a free port automatically
 to allow zero-downtime updates.
+
+### Storage Maintenance
+
+To prevent unlimited growth of auxiliary data (snippets, error logs, etc.), Sari implements TTL (Time-To-Live) policies.
+Existing data is automatically cleaned up based on TTL settings, or you can manually trigger it.
+
+**Manual Prune:**
+```bash
+# Prune all tables using default/configured TTL
+sari prune
+
+# Prune specific table with custom days
+sari prune --table failed_tasks --days 3
+```
+
+**TTL Configuration (Environment Variables):**
+- `SARI_STORAGE_TTL_DAYS_SNIPPETS` (Default: 30)
+- `SARI_STORAGE_TTL_DAYS_FAILED_TASKS` (Default: 7)
+- `SARI_STORAGE_TTL_DAYS_CONTEXTS` (Default: 30)
 
 ### Uninstall
 To remove Sari, indexed data, and default configs:

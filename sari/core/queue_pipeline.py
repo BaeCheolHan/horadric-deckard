@@ -16,6 +16,7 @@ class FsEventKind(str, Enum):
 class FsEvent:
     kind: FsEventKind
     path: str
+    root: str = "" # Added field
     dest_path: Optional[str] = None
     ts: float = 0.0
 

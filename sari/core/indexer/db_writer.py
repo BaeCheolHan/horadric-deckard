@@ -28,11 +28,51 @@ class DBWriter:
         self.max_wait = max_wait
         self.latency_cb = latency_cb
         self.event_bus = event_bus
-        self.on_commit = on_commit # L2 캐시 삭제를 위한 콜백
+        self.on_commit = on_commit
         self.queue: "queue.Queue[DbTask]" = queue.Queue()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self.last_commit_ts = 0
+        
+        # Metrics state
+        from collections import deque
+        self._latency_window = deque(maxlen=100) # Keep last 100 samples
+        self._throughput_window = deque(maxlen=20) # Keep last 20 batches (docs/sec estimate)
+
+    # ... (rest of methods) ...
+
+    def _update_metrics(self, count: int, latency: float):
+        if count > 0:
+            self._latency_window.append(latency)
+            # Estimate throughput: docs / latency
+            # This is rough, as latency includes wait time etc. 
+            # Better: count / (time_now - time_prev), but simple approach first
+            if latency > 0.001:
+                self._throughput_window.append(count / latency)
+
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        latencies = list(self._latency_window)
+        throughputs = list(self._throughput_window)
+        
+        p50 = 0.0
+        p95 = 0.0
+        tps = 0.0
+        
+        if latencies:
+            latencies.sort()
+            n = len(latencies)
+            p50 = latencies[int(n * 0.5)]
+            p95 = latencies[int(n * 0.95)]
+            
+        if throughputs:
+            tps = sum(throughputs) / len(throughputs)
+            
+        return {
+            "throughput_docs_sec": round(tps, 1),
+            "latency_p50": round(p50, 4),
+            "latency_p95": round(p95, 4),
+            "queue_depth": self.queue.qsize()
+        }
 
     def start(self) -> None:
         if not self._thread.is_alive():
@@ -89,8 +129,9 @@ class DBWriter:
                         self.on_commit(stats["files_paths"])
                 except Exception as e:
                     try: conn.rollback()
-                    except: pass
-                    if self.logger: self.logger.log_error(f"Batch failed, retrying individually: {e}")
+                    except Exception as re:
+                        if self.logger: self.logger.warning(f"Rollback failed: {re}")
+                    if self.logger: self.logger.error(f"Batch failed, retrying individually: {e}")
                     
                     # --- 부분 실패 대응: 개별 재시도 ---
                     for single_task in tasks:
@@ -102,8 +143,9 @@ class DBWriter:
                                 self.on_commit(single_stats["files_paths"])
                         except Exception as se:
                             try: conn.rollback()
-                            except: pass
-                            if self.logger: self.logger.log_error(f"Single task failed: {se}")
+                            except Exception as re:
+                                if self.logger: self.logger.warning(f"Rollback failed: {re}")
+                            if self.logger: self.logger.error(f"Single task failed: {se}")
         finally:
             self.db.register_writer_thread(None)
 
@@ -162,7 +204,8 @@ class DBWriter:
         for p in delete_paths:
             try:
                 cur.execute("DELETE FROM files WHERE path = ?", (p,))
-            except: pass
+            except Exception as e:
+                if self.logger: self.logger.warning(f"DELETE failed for {p}: {e}")
 
         if upsert_files_rows:
             self.db.upsert_files_tx(cur, upsert_files_rows)
@@ -188,10 +231,35 @@ class DBWriter:
                 if engine_docs and hasattr(engine, "upsert_documents"): engine.upsert_documents(engine_docs)
                 if engine_deletes and hasattr(engine, "delete_documents"): engine.delete_documents(engine_deletes)
             except Exception as e:
-                if self.logger: self.logger.log_error(f"engine update failed: {e}")
+                err_msg = str(e)
+                if self.logger: self.logger.error(f"Engine update failed (DLQ): {err_msg}")
+                # DLQ: Insert failed engine tasks without rolling back SQLite
+                dlq_rows = []
+                now = int(time.time())
+                next_retry = now + 300 # 5 minutes backoff
+                
+                # Identify failed docs
+                for doc in engine_docs:
+                    # Try to find path/root_id from doc, fallback to empty if malformed
+                    d_path = doc.get("path") or doc.get("id") or ""
+                    d_root = doc.get("root_id") or ""
+                    if d_path and d_root:
+                        dlq_rows.append((d_path, d_root, 0, f"engine_sync_error: {err_msg}", now, next_retry, "{}"))
+                
+                if dlq_rows:
+                    try:
+                        self.db.upsert_failed_tasks_tx(cur, dlq_rows)
+                    except Exception as de:
+                        if self.logger: self.logger.error(f"Failed to write to DLQ: {de}")
+
+        # Metrics calc
+        if latency_samples:
+            avg_latency = sum(latency_samples) / len(latency_samples)
+            self._update_metrics(len(upsert_files_rows), avg_latency)
 
         if self.latency_cb and latency_samples:
             for s in latency_samples: self.latency_cb(s)
+            
         return {
             "ts": commit_ts,
             "files": len(upsert_files_rows),

@@ -1057,7 +1057,40 @@ def cmd_grep_and_read(args):
         db.close()
 
 
+
+def cmd_prune(args):
+    """Prune old data from auxiliary tables."""
+    db, roots, _ = _load_local_db(args.workspace)
+    try:
+        tables = [args.table] if args.table else ["snippets", "failed_tasks", "contexts"]
+        total_pruned = 0
+        print(f"🧹 Pruning data older than {args.days or '(default)'} days...")
+        
+        for table in tables:
+            ttl = args.days
+            if ttl is None:
+                # Fallback to settings
+                if table == "snippets": ttl = db.settings.STORAGE_TTL_DAYS_SNIPPETS
+                elif table == "failed_tasks": ttl = db.settings.STORAGE_TTL_DAYS_FAILED_TASKS
+                elif table == "contexts": ttl = db.settings.STORAGE_TTL_DAYS_CONTEXTS
+                else: ttl = 30 # Safe fallback
+            
+            count = db.prune_data(table, ttl)
+            if count > 0:
+                print(f"   - {table}: Removed {count} records (older than {ttl} days)")
+                total_pruned += count
+        
+        if total_pruned == 0:
+            print("✨ No data to prune.")
+        else:
+            print(f"✅ Total pruned: {total_pruned} records")
+        return 0
+    finally:
+        db.close()
+
+
 def main():
+
     epilog = "\n".join([
         "Examples:",
         "  sari daemon start -d",
@@ -1229,6 +1262,13 @@ def main():
     gar_parser.add_argument("--total-mode", default="exact", choices=["exact", "approx"], help="Total count mode")
     gar_parser.add_argument("--workspace", default="", help="Workspace root (default: auto-detect)")
     gar_parser.set_defaults(func=cmd_grep_and_read)
+
+    # prune
+    prune_parser = subparsers.add_parser("prune", help="Prune old data (maintenance)")
+    prune_parser.add_argument("--days", type=int, default=None, help="Override TTL days (default: use settings)")
+    prune_parser.add_argument("--table", choices=["snippets", "failed_tasks", "contexts"], help="Target specific table")
+    prune_parser.add_argument("--workspace", default="", help="Workspace root (default: auto-detect)")
+    prune_parser.set_defaults(func=cmd_prune)
 
     args = parser.parse_args()
 

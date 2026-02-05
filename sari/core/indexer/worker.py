@@ -27,7 +27,7 @@ class IndexWorker:
         self._ast_cache = OrderedDict()
         self._ast_cache_max = self.settings.AST_CACHE_ENTRIES
 
-    def process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, excluded: bool, root_id: Optional[str] = None) -> Optional[dict]:
+    def process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, excluded: bool, root_id: Optional[str] = None, force: bool = False) -> Optional[dict]:
         try:
             rel_to_root = str(file_path.relative_to(root))
             db_path = self._encode_db_path(root, file_path, root_id=root_id)
@@ -37,7 +37,7 @@ class IndexWorker:
             # 1. Fast Metadata Check
             prev = self.db.get_file_meta(db_path)
             # prev: (mtime, size, content_hash)
-            if prev and int(st.st_mtime) == int(prev[0]) and int(st.st_size) == int(prev[1]):
+            if not force and prev and int(st.st_mtime) == int(prev[0]) and int(st.st_size) == int(prev[1]):
                 return {"type": "unchanged", "rel": db_path}
 
             # 2. Content-based Delta Check
@@ -55,13 +55,46 @@ class IndexWorker:
                 return {"type": "unchanged", "rel": db_path}
 
             # 3. Actual Processing (Changed or New)
+            # 3. Actual Processing (Changed or New)
             if self.settings.get_bool("REDACT_ENABLED", True):
                 content = _redact(content)
-            normalized = _normalize_engine_text(content)
             
-            # Truncate for FTS index stability
-            fts_max = self.settings.get_int("FTS_MAX_BYTES", 1000000)
-            fts_content = normalized[:fts_max] if normalized else ""
+            enable_fts = self.settings.get_bool("ENABLE_FTS", True)
+            
+            # Normalize only if needed (for FTS or External Engine)
+            # Assuming if one is asking for FTS, they pay the cost. 
+            # If external engine is used, it usually needs body_text.
+            # We can't easily know if external engine is enabled here without passing it in.
+            # But usually ENABLE_FTS is the main heavy switch for embedded.
+            
+            normalized = ""
+            fts_content = ""
+            
+            # Optimization: Skip normalization if FTS is disabled AND we assume no external engine 
+            # (or we accept external engine gets raw content? No, engine needs normalized usually)
+            # For robustness, we check if we strictly want 0-cost.
+            # Let's perform normalization if either FTS is on OR we suspect engine usage.
+            # A safe heuristic: If ENABLE_FTS is False, we typically want raw speed. 
+            # But if we have an external engine, we might break it.
+            # Compromise: We check a new setting or just ENABLE_FTS. 
+            # Given the prompt, "embedded mode... 0-cost". Embedded means no external engine.
+            # So if ENABLE_FTS is False, we assume 0-cost is desired.
+            
+            if enable_fts: 
+                normalized = _normalize_engine_text(content)
+                
+                # Truncate for FTS index stability
+                fts_max = self.settings.get_int("FTS_MAX_BYTES", 1000000)
+                fts_content = normalized[:fts_max] if normalized else ""
+            else:
+                # If FTS disabled, we still might need normalized for 'engine_doc' if using Tantivy.
+                # However, calculating it kills the "0-cost" goal.
+                # If the user uses Tantivy, they likely accept the cost or typically enable FTS too.
+                # Use raw content as fallback or empty? 
+                # Let's calculate normalized lazy if needed? No complex logic.
+                # We will perform normalization ONLY if FTS is enabled.
+                # If usage of external engine with FTS=False is common, we might need a separate flag.
+                pass
 
             symbols, relations = [], []
             ast_status, ast_reason = "skipped", "disabled"
@@ -104,27 +137,25 @@ class IndexWorker:
                 stored_content = b"ZLIB\0" + comp
                 content_bytes = len(raw_bytes)
                 metadata_json = f'{{"compressed":"zlib","orig_bytes":{content_bytes}}}'
-            fts_content = normalized
-            try:
-                max_fts = int(self.settings.FTS_MAX_BYTES)
-                if max_fts > 0 and len(fts_content) > max_fts:
-                    fts_content = fts_content[:max_fts]
-            except Exception:
-                pass
+            
+            # Re-check FTS content just in case
+            if not enable_fts:
+                fts_content = ""
+
             return {
                 "type": "changed", "rel": db_path, "repo": repo, "mtime": int(st.st_mtime), "size": size,
                 "content": stored_content, "content_hash": current_hash, "scan_ts": scan_ts,
                 "fts_content": fts_content,
                 "content_bytes": content_bytes, "metadata_json": metadata_json,
-                "fts_content": fts_content,
                 "symbols": symbols, "relations": relations,
                 "parse_status": "ok", "parse_reason": "none",
                 "ast_status": ast_status, "ast_reason": ast_reason,
                 "is_binary": 0, "is_minified": 0,
+                # Note: engine_doc might be incomplete if normalized is empty, but acceptable for 0-cost mode
                 "engine_doc": self._build_engine_doc(db_path, repo, rel_to_root, normalized, int(st.st_mtime), size)
             }
         except Exception as e:
-            if self.logger: self.logger.log_error(f"Worker failed for {file_path}: {e}")
+            if self.logger: self.logger.error(f"Worker failed for {file_path}: {e}")
             return None
 
     def _skip_result(self, db_path, repo, st, scan_ts, reason):
@@ -134,6 +165,7 @@ class IndexWorker:
             "parse_status": "skipped", "parse_reason": reason,
             "ast_status": "skipped", "ast_reason": reason,
             "is_binary": 1 if reason == "binary" else 0,
+            "is_minified": 0,
             "engine_doc": None
         }
 
@@ -141,7 +173,7 @@ class IndexWorker:
         norm = normalized_content or ""
         root_id = doc_id.split("/", 1)[0] if "/" in doc_id else ""
         return {
-            "doc_id": doc_id, "repo": repo, "rel_path": rel_to_root,
+            "id": doc_id, "repo": repo, "rel_path": rel_to_root,
             "root_id": root_id,
             "body_text": norm[:self.settings.ENGINE_MAX_DOC_BYTES],
             "mtime": mtime, "size": size

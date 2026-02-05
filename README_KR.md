@@ -202,6 +202,7 @@ MCP 서버가 실행되는 동안 동작을 제어하는 설정입니다. `env` 
 | `SARI_READ_MAX_BYTES` | `read_file` 도구가 반환하는 최대 바이트 수. 컨텍스트 초과 방지. | `1MB` |
 | `SARI_INDEX_MEM_MB` | 전체 인덱싱 메모리 예산 (MB). | `512` |
 | `SARI_INDEX_WORKERS` | 인덱싱 워커 수를 덮어씁니다. | `2` |
+| `SARI_AST_CACHE_ENTRIES` | Tree-sitter AST용 LRU 캐시 크기. | `128` |
 
 #### 4. 네트워크 및 보안 (Network & Security)
 데몬 연결 설정입니다.
@@ -233,6 +234,25 @@ MCP 서버가 실행되는 동안 동작을 제어하는 설정입니다. `env` 
 ```bash
 sari doctor --auto-fix
 ```
+
+### 저장소 유지관리 (Storage Maintenance)
+
+보조 데이터(스니펫, 에러 로그 등)의 무제한 증가를 방지하기 위해 TTL(수명 주기) 정책을 지원합니다.
+설정된 TTL에 따라 데이터가 자동 정리되지만, 수동으로 정리할 수도 있습니다.
+
+**수동 정리 (Prune):**
+```bash
+# 기본 설정된 TTL에 따라 모든 테이블 정리
+sari prune
+
+# 특정 테이블을 3일 기준으로 정리
+sari prune --table failed_tasks --days 3
+```
+
+**TTL 설정 (환경 변수):**
+- `SARI_STORAGE_TTL_DAYS_SNIPPETS` (기본값: 30일)
+- `SARI_STORAGE_TTL_DAYS_FAILED_TASKS` (기본값: 7일)
+- `SARI_STORAGE_TTL_DAYS_CONTEXTS` (기본값: 30일)
 
 ### 제거 (Uninstall)
 Sari, 인덱스 데이터, 기본 설정을 제거합니다:

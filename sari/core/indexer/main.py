@@ -81,8 +81,42 @@ class Indexer:
         self.scan_once()
         self.status.index_ready = True
         
+        loop_count = 0
         while not self._stop.is_set():
             time.sleep(1)
+            loop_count += 1
+            if loop_count % 30 == 0: # Every 30 seconds
+                self._retry_failed_tasks()
+
+    def _retry_failed_tasks(self):
+        try:
+            tasks = self.db.get_failed_tasks(limit=20)
+            if not tasks: return
+            
+            roots_map = {r["root_id"]: r["real_path"] for r in self.db.get_roots()}
+            
+            for t in tasks:
+                 db_path = t.get("path", "")
+                 root_id = t.get("root_id", "")
+                 if db_path and root_id and root_id in roots_map:
+                     try:
+                         # db_path is "root_id/rel/path"
+                         rel_path = db_path.split("/", 1)[1] if "/" in db_path else ""
+                         if not rel_path: continue
+                         
+                         full_path = Path(roots_map[root_id]) / rel_path
+                         if full_path.exists():
+                             st = full_path.stat()
+                             self.coordinator.enqueue_priority(root_id, {
+                                "kind": "scan_file", "root": Path(roots_map[root_id]), "path": full_path, 
+                                "st": st, "scan_ts": int(time.time()), "excluded": False
+                            }, base_priority=100.0) # High priority for retries
+                             
+                             if self.logger: self.logger.info(f"Retrying failed task: {rel_path}")
+                     except Exception:
+                         pass
+        except Exception as e:
+            if self.logger: self.logger.warning(f"Retry loop failed: {e}")
 
     def scan_once(self):
         """Phase 2: Use Fair Queue for initial scanning."""
@@ -119,7 +153,7 @@ class Indexer:
                 # 3. Pruning: 스캔 완료 후 큐가 비었을 때 수행
                 if self.status.index_ready and self._active_roots:
                     roots_to_prune = []
-                    with self._stop: # 임시 락으로 활용
+                    with self._l1_lock: # Using existing lock for convenience
                         roots_to_prune = list(self._active_roots)
                         self._active_roots = []
                     
@@ -139,18 +173,22 @@ class Indexer:
 
     def _handle_task(self, root_id: str, task: Dict[str, Any]):
         if task["kind"] == "scan_file":
-            res = self.worker.process_file_task(task["root"], task["path"], task["st"], task["scan_ts"], time.time(), task["excluded"], root_id=root_id)
+            res = self.worker.process_file_task(task["root"], task["path"], task["st"], task["scan_ts"], time.time(), task["excluded"], root_id=root_id, force=task.get("force", False))
             if not res:
                 try:
                     self.event_bus.publish("file_error", {"path": str(task.get("path", "")), "root_id": root_id})
-                except Exception: pass
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Event publish failed (file_error): {e}")
                 return
             
-            if res["type"] == "unchanged":
-                self.storage.enqueue_task(DbTask(kind="update_last_seen", paths=[res["rel"]]))
-                try:
-                    self.event_bus.publish("file_unchanged", {"path": res["rel"], "root_id": root_id})
-                except Exception: pass
+                if res["type"] == "unchanged":
+                    self.storage.enqueue_task(DbTask(kind="update_last_seen", paths=[res["rel"]]))
+                    try:
+                        self.event_bus.publish("file_unchanged", {"path": res["rel"], "root_id": root_id})
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.warning(f"Event publish failed (file_unchanged): {e}")
             else:
                 rel_path = str(task["path"].relative_to(task["root"]))
                 files_row = (
@@ -166,11 +204,14 @@ class Indexer:
                         self._l1_docs[root_id] = [d for d in self._l1_docs[root_id] if d.get("doc_id") != files_row[0]]
                     
                     self._l1_buffer.setdefault(root_id, []).append(files_row)
-                    self._l1_docs.setdefault(root_id, []).append(res.get("engine_doc"))
+                    doc = res.get("engine_doc")
+                    if doc:
+                        self._l1_docs.setdefault(root_id, []).append(doc)
                     
                     if len(self._l1_buffer[root_id]) >= self._l1_max_size:
                         rows = self._l1_buffer.pop(root_id)
-                        docs = self._l1_docs.pop(root_id)
+                        # Avoid KeyError if docs list is missing (e.g. if all files skipped engine)
+                        docs = self._l1_docs.pop(root_id, [])
                         self.storage.upsert_files(rows=rows, engine_docs=docs)
                 
                 if res.get("symbols"):
@@ -179,7 +220,9 @@ class Indexer:
                 self.status.indexed_files += 1
                 try:
                     self.event_bus.publish("file_indexed", {"path": res["rel"], "root_id": root_id})
-                except Exception: pass
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Event publish failed (file_indexed): {e}")
 
     def _enqueue_fsevent(self, evt: FsEvent):
         root_id = WorkspaceManager.root_id(str(evt.root))
@@ -189,7 +232,9 @@ class Indexer:
                 self.coordinator.enqueue_priority(root_id, {
                     "kind": "scan_file", "root": evt.root, "path": Path(evt.path), "st": st, "scan_ts": int(time.time()), "excluded": False
                 }, base_priority=1.0)
-            except: pass
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Failed to enqueue file event: {e}")
         elif evt.kind == FsEventKind.DELETED:
             db_path = f"{root_id}/{Path(evt.path).relative_to(evt.root).as_posix()}"
             with self._l1_lock:
@@ -207,3 +252,13 @@ class Indexer:
                 docs = self._l1_docs.pop(root_id)
                 if rows: self.storage.upsert_files(rows=rows, engine_docs=docs)
         self._executor.shutdown(wait=False)
+    
+    def get_queue_depths(self) -> Dict[str, int]:
+        return {
+            "fair_queue": self.coordinator.fair_queue.qsize(),
+            "priority_queue": self.coordinator.priority_queue.qsize(),
+            "db_writer": self.storage.writer.qsize()
+        }
+
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        return self.storage.writer.get_performance_metrics()

@@ -100,14 +100,20 @@ class Registry:
     def release(self, workspace_root: str):
         with self._lock:
             if workspace_root in self._sessions:
-                self._sessions[workspace_root].ref_count = max(0, self._sessions[workspace_root].ref_count - 1)
-                self._sessions[workspace_root].touch()
+                state = self._sessions[workspace_root]
+                state.ref_count = max(0, state.ref_count - 1)
+                state.touch()
+                if state.ref_count == 0:
+                    state.stop()
+                    del self._sessions[workspace_root]
 
     def shutdown_all(self):
         with self._lock:
             for s in self._sessions.values(): s.stop()
             self._sessions.clear()
-    def active_count(self) -> int: return len(self._sessions)
+    def active_count(self) -> int:
+        with self._lock:
+            return sum(1 for s in self._sessions.values() if s.ref_count > 0)
     def get_last_activity_ts(self) -> float: 
         with self._lock:
-            return max((s.last_activity for s in self._sessions.values()), default=0.0)
+            return max((s.last_activity for s in self._sessions.values() if s.ref_count > 0), default=0.0)
