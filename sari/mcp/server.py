@@ -55,9 +55,14 @@ class LocalSearchMCPServer:
             # Update workspace if provided by client
             roots = WorkspaceManager.resolve_workspace_roots(root_uri=root_uri)
             if roots: self.workspace_root = roots[0]
+        
+        # Negotiate Protocol Version
+        client_version = params.get("protocolVersion")
+        # Echo client version if provided, otherwise fallback to server default
+        negotiated_version = client_version if client_version else self.PROTOCOL_VERSION
             
         return {
-            "protocolVersion": self.PROTOCOL_VERSION,
+            "protocolVersion": negotiated_version,
             "serverInfo": {"name": self.SERVER_NAME, "version": self.SERVER_VERSION},
             "capabilities": {"tools": {}}
         }
