@@ -64,7 +64,7 @@ sari = "sari.main:main"
 packages = { find = { include = ["sari", "sari.*"] } }
 
 [tool.setuptools.package-data]
-sari = ["*.sql", "*.md"]
+sari = ["*.sql", "*.md", "core/static/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "sari.version.__version__" }

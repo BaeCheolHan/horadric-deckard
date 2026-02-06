@@ -172,8 +172,65 @@ class ServerRegistry:
                 ws: info for ws, info in workspaces.items()
                 if info.get("boot_id") not in dead
             }
+        # Drop stale workspace entries pointing to paths that no longer exist.
+        # This commonly happens with temporary pytest roots.
+        existing = {}
+        for ws, info in workspaces.items():
+            try:
+                if Path(ws).exists():
+                    existing[ws] = info
+            except Exception:
+                existing[ws] = info
+        workspaces = existing
         data["daemons"] = daemons
         data["workspaces"] = workspaces
+        self._dedupe_nested_workspaces_locked(data)
+
+    def _keep_nested_roots(self) -> bool:
+        try:
+            from sari.core.settings import settings
+            return bool(settings.KEEP_NESTED_ROOTS)
+        except Exception:
+            return False
+
+    def _is_nested_pair(self, a: str, b: str) -> bool:
+        if not a or not b or a == b:
+            return False
+        return a.startswith(b + os.sep) or b.startswith(a + os.sep)
+
+    def _dedupe_nested_workspaces_locked(self, data: Dict[str, Any], preferred_ws: Optional[str] = None) -> None:
+        if self._keep_nested_roots():
+            return
+        workspaces = dict(data.get("workspaces", {}))
+        if not workspaces:
+            data["workspaces"] = workspaces
+            return
+
+        if preferred_ws and preferred_ws in workspaces:
+            # Prefer the newly active workspace and remove overlapping entries.
+            remove = []
+            for ws in workspaces.keys():
+                if ws == preferred_ws:
+                    continue
+                if self._is_nested_pair(ws, preferred_ws):
+                    remove.append(ws)
+            for ws in remove:
+                workspaces.pop(ws, None)
+            data["workspaces"] = workspaces
+            return
+
+        # Global dedupe fallback: keep most recently active workspace per overlap group.
+        ordered = sorted(
+            workspaces.items(),
+            key=lambda kv: float((kv[1] or {}).get("last_active_ts", 0.0)),
+            reverse=True,
+        )
+        kept: Dict[str, Dict[str, Any]] = {}
+        for ws, info in ordered:
+            if any(self._is_nested_pair(ws, k) for k in kept.keys()):
+                continue
+            kept[ws] = info
+        data["workspaces"] = kept
 
     def register_daemon(self, boot_id: str, host: str, port: int, pid: int, version: str = "") -> None:
         """Register a running daemon."""
@@ -247,6 +304,7 @@ class ServerRegistry:
                 payload["http_host"] = str(http_host)
             workspaces[ws] = payload
             data["workspaces"] = workspaces
+            self._dedupe_nested_workspaces_locked(data, preferred_ws=ws)
             data["version"] = self.VERSION
             # If ownership changed, mark previous daemon as draining.
             if prev_boot and prev_boot != boot_id:

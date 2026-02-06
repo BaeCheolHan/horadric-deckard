@@ -25,7 +25,18 @@ def execute_rescan(args: Dict[str, Any], indexer: Indexer) -> Dict[str, Any]:
             lambda: {"error": {"code": code.value, "message": "Indexer is not available in follower/off mode", "data": {"mode": mode}}, "isError": True},
         )
 
-    indexer.request_rescan()
+    # Prefer async queue trigger when available.
+    if hasattr(indexer, "request_rescan"):
+        indexer.request_rescan()
+    # Compatibility fallback for older/newer indexer variants.
+    elif hasattr(indexer, "scan_once"):
+        indexer.scan_once()
+    else:
+        return mcp_response(
+            "rescan",
+            lambda: pack_error("rescan", ErrorCode.INTERNAL, "indexer does not support rescan"),
+            lambda: {"error": {"code": ErrorCode.INTERNAL.value, "message": "indexer does not support rescan"}, "isError": True},
+        )
 
     def build_json() -> Dict[str, Any]:
         return {"requested": True}

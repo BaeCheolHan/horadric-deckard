@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any, Dict, List
 from sari.mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_id, pack_encode_text, resolve_root_ids, pack_error, ErrorCode
 
@@ -6,6 +7,9 @@ def execute_get_implementations(args: Dict[str, Any], db: Any, roots: List[str])
     """Find symbols that implement or extend a specific symbol."""
     target_symbol = args.get("name", "").strip()
     target_sid = args.get("symbol_id", "").strip() or args.get("sid", "").strip()
+    target_path = str(args.get("path", "")).strip()
+    repo = str(args.get("repo", "")).strip()
+    limit = max(1, min(int(args.get("limit", 100) or 100), 500))
     if not target_symbol and not target_sid:
         return mcp_response(
             "get_implementations",
@@ -35,6 +39,14 @@ def execute_get_implementations(args: Dict[str, Any], db: Any, roots: List[str])
         root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
         sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
         params.extend([f"{rid}/%" for rid in root_ids])
+    if repo:
+        sql = sql.replace("ORDER BY", "AND from_path LIKE ? ORDER BY")
+        params.append(f"%/{repo}/%")
+    if target_path:
+        sql = sql.replace("ORDER BY", "AND (to_path = ? OR to_path = '' OR to_path IS NULL) ORDER BY")
+        params.append(target_path)
+    sql += " LIMIT ?"
+    params.append(limit)
 
     conn = db.get_read_connection() if hasattr(db, "get_read_connection") else db._read
     try:
@@ -51,6 +63,14 @@ def execute_get_implementations(args: Dict[str, Any], db: Any, roots: List[str])
             root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
             sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
             params.extend([f"{rid}/%" for rid in root_ids])
+        if repo:
+            sql = sql.replace("ORDER BY", "AND from_path LIKE ? ORDER BY")
+            params.append(f"%/{repo}/%")
+        if target_path:
+            sql = sql.replace("ORDER BY", "AND (to_path = ? OR to_path = '' OR to_path IS NULL) ORDER BY")
+            params.append(target_path)
+        sql += " LIMIT ?"
+        params.append(limit)
         rows = conn.execute(sql, params).fetchall()
 
     results = []
@@ -69,8 +89,47 @@ def execute_get_implementations(args: Dict[str, Any], db: Any, roots: List[str])
             "line": r["line"]
         })
 
+    if not results and target_symbol:
+        # Heuristic fallback using file contents (schema-independent).
+        like_patterns = [f"%implements {target_symbol}%", f"%extends {target_symbol}%"]
+        h_sql = "SELECT path, content FROM files WHERE (content LIKE ? OR content LIKE ?)"
+        h_params: List[Any] = [like_patterns[0], like_patterns[1]]
+        if root_ids:
+            h_sql += " AND (" + " OR ".join(["path LIKE ?"] * len(root_ids)) + ")"
+            h_params.extend([f"{rid}/%" for rid in root_ids])
+        if repo:
+            h_sql += " AND path LIKE ?"
+            h_params.append(f"%/{repo}/%")
+        h_sql += " ORDER BY path LIMIT ?"
+        h_params.append(limit)
+        try:
+            h_rows = conn.execute(h_sql, h_params).fetchall()
+            for r in h_rows:
+                file_path = r["path"]
+                text = r["content"] or ""
+                if isinstance(text, bytes):
+                    text = text.decode("utf-8", errors="ignore")
+                rel_type = "implements" if re.search(rf"\\bimplements\\s+{re.escape(target_symbol)}\\b", text) else "extends"
+                m = re.search(rf"\\b(implements|extends)\\s+{re.escape(target_symbol)}\\b", text)
+                line = text.count("\\n", 0, m.start()) + 1 if m else 0
+                sym = conn.execute(
+                    "SELECT symbol_id, name, line FROM symbols WHERE path = ? ORDER BY line LIMIT 1",
+                    (file_path,),
+                ).fetchone()
+                results.append(
+                    {
+                        "implementer_path": file_path,
+                        "implementer_symbol": (sym["name"] if sym else "__file__"),
+                        "implementer_symbol_id": (sym["symbol_id"] if sym else ""),
+                        "rel_type": rel_type,
+                        "line": int(line or (sym["line"] if sym else 0) or 0),
+                    }
+                )
+        except Exception:
+            pass
+
     def build_pack() -> str:
-        lines = [pack_header("get_implementations", {"name": pack_encode_text(target_symbol), "sid": pack_encode_id(target_sid)}, returned=len(results))]
+        lines = [pack_header("get_implementations", {"name": pack_encode_text(target_symbol), "sid": pack_encode_id(target_sid), "path": pack_encode_id(target_path), "repo": pack_encode_id(repo)}, returned=len(results))]
         for r in results:
             kv = {
                 "implementer_path": pack_encode_id(r["implementer_path"]),

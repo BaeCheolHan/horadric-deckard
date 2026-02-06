@@ -18,6 +18,7 @@ from sari.mcp.tools.repo_candidates import execute_repo_candidates
 from sari.mcp.tools.scan_once import execute_scan_once
 from sari.mcp.tools.rescan import execute_rescan
 from sari.mcp.tools.get_snippet import execute_get_snippet
+from sari.mcp.tools.registry import build_default_registry, ToolContext
 
 @pytest.fixture
 def tool_context(tmp_path):
@@ -74,6 +75,49 @@ def test_search_symbols_logic_integrity(tool_context):
     assert "PACK1 tool=search_symbols ok=true" in text
     assert "name=hello" in text
 
+
+def test_search_symbols_empty_query_returns_invalid_args(tool_context):
+    db, roots = tool_context["db"], tool_context["roots"]
+    resp = execute_search_symbols({"query": "   "}, db, tool_context["logger"], roots)
+    text = resp["content"][0]["text"]
+    assert resp.get("isError") is True
+    assert "ok=false" in text
+    assert "code=INVALID_ARGS" in text
+
+
+def test_search_symbols_filters_and_match_mode(tool_context):
+    db, roots = tool_context["db"], tool_context["roots"]
+    root_id = tool_context["root_id"]
+
+    # repo mismatch should return no symbols
+    resp_repo = execute_search_symbols(
+        {"query": "hello", "repo": "repo-does-not-exist"},
+        db,
+        tool_context["logger"],
+        roots,
+    )
+    text_repo = resp_repo["content"][0]["text"]
+    assert "PACK1 tool=search_symbols ok=true" in text_repo
+    assert "returned=0" in text_repo
+
+    # prefix match + path filter should hit main.py only
+    resp_prefix = execute_search_symbols(
+        {
+            "query": "he",
+            "match_mode": "prefix",
+            "path_prefix": f"{root_id}/main.py",
+            "kinds": ["function"],
+        },
+        db,
+        tool_context["logger"],
+        roots,
+    )
+    text_prefix = resp_prefix["content"][0]["text"]
+    assert "PACK1 tool=search_symbols ok=true" in text_prefix
+    assert "mode=prefix" in text_prefix
+    assert "/main.py" in urllib.parse.unquote(text_prefix)
+    assert "name=hello" in urllib.parse.unquote(text_prefix)
+
 def test_list_files_logic_integrity(tool_context):
     db, roots = tool_context["db"], tool_context["roots"]
     resp_sum = execute_list_files({}, db, tool_context["logger"], roots)
@@ -127,3 +171,20 @@ def test_get_snippet_logic_integrity(tool_context):
     args = {"query": "hello"}
     resp = execute_get_snippet(args, db, tool_context["logger"], roots)
     assert "PACK1 tool=get_snippet ok=true" in resp["content"][0]["text"]
+
+
+def test_registry_search_symbols_handler_wiring(tool_context):
+    reg = build_default_registry()
+    ctx = ToolContext(
+        db=tool_context["db"],
+        engine=None,
+        indexer=None,
+        roots=tool_context["roots"],
+        cfg=None,
+        logger=tool_context["logger"],
+        workspace_root=tool_context["roots"][0],
+        server_version="test",
+    )
+    resp = reg.execute("search_symbols", ctx, {"query": "hello", "limit": 5})
+    text = resp["content"][0]["text"]
+    assert "PACK1 tool=search_symbols ok=true" in text

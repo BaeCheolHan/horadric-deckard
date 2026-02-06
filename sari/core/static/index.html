@@ -60,7 +60,12 @@
         
         /* Dashboard Specifics */
         .stat-value { font-size: 1.4rem; font-weight: bold; font-family: monospace; }
-        .progress-bar { height: 100%; background: var(--primary); transition: width 0.5s; }
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.7; color: var(--warning); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .progress-bar { height: 100%; background: var(--primary); transition: width 0.5s ease-out; }
         table { width: 100%; border-collapse: collapse; }
         th { text-align: left; font-size: 0.75rem; padding: 8px; color: var(--text-dim); }
         td { padding: 8px; font-size: 0.85rem; border-bottom: 1px solid var(--border); }
@@ -80,15 +85,30 @@
     <div class="content">
         <!-- PAGE 1: Dashboard -->
         <div id="dashboard" class="page active">
+            <!-- Indexing Progress Banner -->
+            <div class="card span-3" style="margin-bottom:20px; background: linear-gradient(90deg, var(--card-bg) 0%, rgba(59,130,246,0.05) 100%);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h2 style="border:none; margin:0;">🚀 Indexing Live Stream</h2>
+                    <div id="indexing-stats" style="font-size:0.85rem; font-weight:bold;">
+                        Scanned: <span id="stat-scanned">0</span> | 
+                        Indexed: <span id="stat-indexed">0</span> | 
+                        Queue: <span id="stat-queue" style="color:var(--warning);">0</span>
+                    </div>
+                </div>
+                <div style="height:12px; background:var(--border); border-radius:6px; overflow:hidden; position:relative;">
+                    <div id="indexing-progress-bar" class="progress-bar" style="width:0%; background: linear-gradient(90deg, var(--primary) 0%, #60a5fa 100%);"></div>
+                </div>
+                <div id="indexing-percentage" style="text-align:right; font-size:0.75rem; color:var(--text-dim); margin-top:5px;">0% Complete</div>
+            </div>
+
             <div class="dashboard-grid">
                 <!-- Summary -->
                 <div class="card">
-                    <h2>Summary <span class="badge" id="status-badge" style="float:right; font-size:0.7rem; padding:2px 6px; background:rgba(16,185,129,0.2); color:green; border-radius:4px;">Checking</span></h2>
+                    <h2>System Status <span class="badge" id="status-badge" style="float:right; font-size:0.7rem; padding:2px 6px; background:rgba(16,185,129,0.2); color:green; border-radius:4px;">Checking</span></h2>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                        <div><div style="font-size:0.75rem; color:var(--text-dim);">Files</div><div class="stat-value" id="total-files">0</div></div>
+                        <div><div style="font-size:0.75rem; color:var(--text-dim);">Total Files</div><div class="stat-value" id="total-files">0</div></div>
                         <div><div style="font-size:0.75rem; color:var(--text-dim);">Workers</div><div class="stat-value" id="worker-count">0</div></div>
                     </div>
-                    <div style="height:6px; background:var(--border); border-radius:3px; margin-top:15px; overflow:hidden;"><div id="sync-progress" class="progress-bar" style="width:0%"></div></div>
                 </div>
 
                 <!-- Resources -->
@@ -154,6 +174,11 @@
     </div>
 
     <script>
+        // Register Cytoscape plugins
+        if (typeof cytoscape !== 'undefined' && typeof dagre !== 'undefined') {
+            cytoscape.use(dagre);
+        }
+
         // --- Tab Logic ---
         function switchTab(tabId) {
             document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
@@ -173,6 +198,26 @@
                 const d = await res.json();
                 if(!d.ok) return;
 
+                // --- Update Indexing Progress ---
+                const scanned = d.scanned_files || 0;
+                const indexed = d.indexed_files || 0;
+                const queue = d.performance?.queue_depth || 0;
+                const pct = scanned > 0 ? Math.min((indexed / scanned) * 100, 100) : 0;
+
+                document.getElementById('stat-scanned').innerText = scanned.toLocaleString();
+                document.getElementById('stat-indexed').innerText = indexed.toLocaleString();
+                document.getElementById('stat-queue').innerText = queue.toLocaleString();
+                document.getElementById('indexing-progress-bar').style.width = pct + '%';
+                document.getElementById('indexing-percentage').innerText = pct.toFixed(1) + '% Complete';
+
+                // Pulse effect if indexing
+                const queueEl = document.getElementById('stat-queue');
+                if (queue > 0) {
+                    queueEl.style.animation = 'pulse 1s infinite';
+                } else {
+                    queueEl.style.animation = 'none';
+                }
+
                 document.getElementById('conn-status').innerText = 'Connected';
                 document.getElementById('total-files').innerText = (d.total_files_db || 0).toLocaleString();
                 document.getElementById('worker-count').innerText = d.worker_count;
@@ -188,28 +233,60 @@
                     if (currentVal) select.value = currentVal;
                 }
 
-                // ... (Minified dashboard update logic for brevity) ...
+                // --- Update Performance ---
                 const perf = d.performance || {};
                 document.getElementById('tps').innerText = (perf.throughput_docs_sec || 0).toFixed(1);
                 
+                // --- Update Repositories ---
                 const rTable = document.querySelector('#repo-table tbody');
                 rTable.innerHTML = '';
-                Object.entries(d.repo_stats || {}).sort((a,b)=>b[1]-a[1]).forEach(([k,v]) => {
-                    rTable.innerHTML += `<tr><td>${k}</td><td style="text-align:right; font-family:monospace;">${v}</td></tr>`;
-                });
+                const repoStats = d.repo_stats || {};
+                if (Object.keys(repoStats).length === 0) {
+                    rTable.innerHTML = '<tr><td colspan="2" style="text-align:center; color:var(--text-dim); padding:20px;">No repositories indexed</td></tr>';
+                } else {
+                    Object.entries(repoStats).sort((a,b)=>b[1]-a[1]).forEach(([k,v]) => {
+                        rTable.innerHTML += `<tr><td>${k}</td><td style="text-align:right; font-family:monospace;">${v.toLocaleString()}</td></tr>`;
+                    });
+                }
                 
+                // --- Update Roots ---
                 const rList = document.getElementById('root-list');
                 rList.innerHTML = '';
-                (d.roots||[]).forEach(r => {
-                    rList.innerHTML += `<div style="padding:8px; border-bottom:1px solid var(--border); font-size:0.85rem;"><b>${r.label}</b><br><span style="color:var(--text-dim); font-size:0.75rem;">${r.real_path}</span></div>`;
-                });
+                const roots = d.roots || [];
+                if (roots.length === 0) {
+                    rList.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim);">No workspace roots</div>';
+                } else {
+                    roots.forEach(r => {
+                        rList.innerHTML += `<div style="padding:10px; border-bottom:1px solid var(--border);">
+                            <div style="font-weight:bold; font-size:0.9rem;">${r.label || 'Root'}</div>
+                            <div style="color:var(--text-dim); font-size:0.75rem; word-break:break-all;">${r.real_path}</div>
+                        </div>`;
+                    });
+                }
 
-                // Resources
+                // --- Update System Resources ---
                 const sys = d.system_metrics || {};
-                document.getElementById('cpu-val').innerText = (sys.cpu_percent||0).toFixed(1) + '%';
-                document.getElementById('cpu-bar').style.width = (sys.cpu_percent||0) + '%';
-                document.getElementById('mem-val').innerText = (sys.memory_used_gb||0).toFixed(1) + 'GB';
-                document.getElementById('mem-bar').style.width = (sys.memory_percent||0) + '%';
+                const cpu = sys.cpu_percent || 0;
+                const memGb = sys.memory_used_gb || 0;
+                const memPct = sys.memory_percent || 0;
+                
+                document.getElementById('cpu-val').innerText = cpu.toFixed(1) + '%';
+                document.getElementById('cpu-bar').style.width = Math.min(cpu, 100) + '%';
+                
+                document.getElementById('mem-val').innerText = memGb.toFixed(1) + 'GB';
+                document.getElementById('mem-bar').style.width = Math.min(memPct, 100) + '%';
+                
+                // Status Badge
+                const badge = document.getElementById('status-badge');
+                if (d.index_ready) {
+                    badge.innerText = 'Ready';
+                    badge.style.color = '#10b981';
+                    badge.style.background = 'rgba(16,185,129,0.1)';
+                } else {
+                    badge.innerText = 'Indexing';
+                    badge.style.color = '#f59e0b';
+                    badge.style.background = 'rgba(245,158,11,0.1)';
+                }
 
             } catch(e) { document.getElementById('conn-status').innerText = 'Offline'; }
         }

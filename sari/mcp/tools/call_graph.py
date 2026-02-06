@@ -1,6 +1,7 @@
 import json
 import os
 import importlib
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set, Callable
 
@@ -76,6 +77,10 @@ def _callers_for(db: Any, name: str, path: Optional[str], symbol_id: Optional[st
     except Exception:
         rows = []
     neighbors = [dict(r) for r in rows]
+    if not neighbors and name:
+        neighbors = _heuristic_callers(db, name, path, symbol_id)
+        if neighbors:
+            _HEUR_CACHE["up"] = True
     neighbors, enriched = _enrich_neighbors(db, neighbors, "up")
     _REL_DENSITY["up"] += len(neighbors)
     if enriched:
@@ -118,6 +123,10 @@ def _callees_for(db: Any, name: str, path: Optional[str], symbol_id: Optional[st
     except Exception:
         rows = []
     neighbors = [dict(r) for r in rows]
+    if not neighbors and name:
+        neighbors = _heuristic_callees(db, name, path, symbol_id)
+        if neighbors:
+            _HEUR_CACHE["down"] = True
     neighbors, enriched = _enrich_neighbors(db, neighbors, "down")
     _REL_DENSITY["down"] += len(neighbors)
     if enriched:
@@ -194,6 +203,14 @@ def build_call_graph(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[st
         raise ValueError("symbol is required")
 
     root_ids = resolve_root_ids(roots)
+    _ACTIVE_ROOT_IDS.clear()
+    _ACTIVE_ROOT_IDS.extend(root_ids)
+    _ENRICH_CACHE["up"] = False
+    _ENRICH_CACHE["down"] = False
+    _HEUR_CACHE["up"] = False
+    _HEUR_CACHE["down"] = False
+    _REL_DENSITY["up"] = 0
+    _REL_DENSITY["down"] = 0
     # Disambiguate if multiple symbols
     matches = _resolve_symbol(db, name, path, symbol_id)
     if not matches:
@@ -234,6 +251,10 @@ def build_call_graph(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[st
     errs = _get_plugin_errors()
     if errs:
         payload["plugin_warnings"] = errs
+    if _HEUR_CACHE.get("up") or _HEUR_CACHE.get("down"):
+        payload["heuristic_warnings"] = [
+            "symbol_relations sparse; fallback graph edges were inferred from source text"
+        ]
     sort_by = str(args.get("sort") or args.get("sort_by") or "line").strip().lower()
     payload["precision_hint"] = _precision_hint(t_path)
     payload["quality_score"] = _quality_score(
@@ -424,6 +445,8 @@ def execute_call_graph(args: Dict[str, Any], db: Any, logger: Any = None, roots:
             lines.append(pack_line("m", {"quality_score": str(payload.get("quality_score", 0))}))
         if payload.get("plugin_warnings"):
             lines.append(pack_line("m", {"plugin_warnings": pack_encode_text(json.dumps(payload.get("plugin_warnings", [])))}))
+        if payload.get("heuristic_warnings"):
+            lines.append(pack_line("m", {"heuristic_warnings": pack_encode_text(json.dumps(payload.get("heuristic_warnings", [])))}))
         return "\n".join(lines)
 
     try:
@@ -549,7 +572,161 @@ def _apply_plugin(direction: str, neighbors: List[Dict[str, Any]], context: Dict
 
 _SYMBOL_CACHE: Dict[str, Optional[Dict[str, Any]]] = {}
 _ENRICH_CACHE: Dict[str, bool] = {"up": False, "down": False}
+_HEUR_CACHE: Dict[str, bool] = {"up": False, "down": False}
 _REL_DENSITY: Dict[str, int] = {"up": 0, "down": 0}
+_ACTIVE_ROOT_IDS: List[str] = []
+
+
+def _coerce_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, bytes):
+        try:
+            return content.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+    return str(content)
+
+
+def _find_first_call_line(content: str, symbol_name: str) -> int:
+    if not content or not symbol_name:
+        return 0
+    pat = re.compile(rf"\b{re.escape(symbol_name)}\s*\(")
+    m = pat.search(content)
+    if not m:
+        return 0
+    return content.count("\n", 0, m.start()) + 1
+
+
+def _in_scope_path(path: str) -> bool:
+    if not _ACTIVE_ROOT_IDS:
+        return True
+    return any(path.startswith(f"{rid}/") for rid in _ACTIVE_ROOT_IDS)
+
+
+def _heuristic_callers(db: Any, name: str, path: Optional[str], symbol_id: Optional[str]) -> List[Dict[str, Any]]:
+    conn = db.get_read_connection() if hasattr(db, "get_read_connection") else db._read
+    params: List[Any] = [f"%{name}(%"]
+    sql = "SELECT path, content FROM files WHERE content LIKE ?"
+    if _ACTIVE_ROOT_IDS:
+        sql += " AND (" + " OR ".join(["path LIKE ?"] * len(_ACTIVE_ROOT_IDS)) + ")"
+        params.extend([f"{rid}/%" for rid in _ACTIVE_ROOT_IDS])
+    sql += " LIMIT 200"
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except Exception:
+        rows = []
+    target_path = path or ""
+    out: List[Dict[str, Any]] = []
+    seen: Set[Tuple[str, str, int]] = set()
+    for r in rows:
+        from_path = r["path"] if hasattr(r, "__getitem__") else ""
+        if not from_path or not _in_scope_path(from_path):
+            continue
+        text = _coerce_text(r["content"] if hasattr(r, "__getitem__") else "")
+        line = _find_first_call_line(text, name)
+        if line <= 0:
+            continue
+        try:
+            sym = conn.execute(
+                "SELECT name, symbol_id FROM symbols WHERE path = ? AND line <= ? AND end_line >= ? "
+                "ORDER BY (end_line - line) ASC LIMIT 1",
+                (from_path, line, line),
+            ).fetchone()
+        except Exception:
+            sym = None
+        if not sym:
+            try:
+                sym = conn.execute(
+                    "SELECT name, symbol_id FROM symbols WHERE path = ? ORDER BY line LIMIT 1",
+                    (from_path,),
+                ).fetchone()
+            except Exception:
+                sym = None
+        from_symbol = (sym["name"] if sym else "__file__") if hasattr(sym, "__getitem__") or sym is None else "__file__"
+        from_sid = (sym["symbol_id"] if sym else "") if hasattr(sym, "__getitem__") or sym is None else ""
+        if target_path and from_path == target_path and from_symbol == name:
+            continue
+        key = (from_path, from_symbol, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "from_path": from_path,
+                "from_symbol": from_symbol,
+                "from_symbol_id": from_sid,
+                "line": line,
+                "rel_type": "calls_heuristic",
+            }
+        )
+    return out
+
+
+def _heuristic_callees(db: Any, name: str, path: Optional[str], symbol_id: Optional[str]) -> List[Dict[str, Any]]:
+    conn = db.get_read_connection() if hasattr(db, "get_read_connection") else db._read
+    target = None
+    if symbol_id:
+        try:
+            target = conn.execute(
+                "SELECT path, name, line, end_line, symbol_id FROM symbols WHERE symbol_id = ? LIMIT 1",
+                (symbol_id,),
+            ).fetchone()
+        except Exception:
+            target = None
+    if not target and path:
+        try:
+            target = conn.execute(
+                "SELECT path, name, line, end_line, symbol_id FROM symbols WHERE name = ? AND path = ? ORDER BY line LIMIT 1",
+                (name, path),
+            ).fetchone()
+        except Exception:
+            target = None
+    if not target:
+        return []
+    from_path = target["path"]
+    if not from_path or not _in_scope_path(from_path):
+        return []
+    content = _coerce_text(db.read_file(from_path) if hasattr(db, "read_file") else "")
+    if not content:
+        return []
+    start_line = int(target["line"] or 1)
+    end_line = int(target["end_line"] or start_line)
+    lines = content.splitlines()
+    if start_line > len(lines):
+        return []
+    block = "\n".join(lines[start_line - 1 : min(end_line, len(lines))])
+    call_pat = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    keywords = {
+        "if", "for", "while", "switch", "catch", "return", "new", "class", "interface",
+        "enum", "case", "do", "else", "try", "throw", "throws", "super", "this",
+    }
+    seen: Set[Tuple[str, int]] = set()
+    out: List[Dict[str, Any]] = []
+    for m in call_pat.finditer(block):
+        callee = m.group(1)
+        if callee in keywords or callee == name:
+            continue
+        rel_line = start_line + block.count("\n", 0, m.start())
+        key = (callee, rel_line)
+        if key in seen:
+            continue
+        seen.add(key)
+        scope = from_path.rsplit("/", 1)[0] + "/" if "/" in from_path else None
+        repo = from_path.split("/", 1)[0] + "/" if "/" in from_path else None
+        hit = _lookup_unique_symbol(db, callee, scope, repo) or _lookup_unique_symbol(db, callee, None, repo) or _lookup_unique_symbol(db, callee)
+        out.append(
+            {
+                "to_path": (hit or {}).get("path", ""),
+                "to_symbol": callee,
+                "to_symbol_id": (hit or {}).get("symbol_id", ""),
+                "line": rel_line,
+                "rel_type": "calls_heuristic",
+            }
+        )
+    return out
 
 
 def _lookup_unique_symbol(db: Any, name: str, scope_prefix: Optional[str] = None, repo_prefix: Optional[str] = None) -> Optional[Dict[str, Any]]:

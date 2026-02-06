@@ -1,11 +1,15 @@
 import json
 from typing import Any, Dict, List
 from sari.mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_id, pack_encode_text, resolve_root_ids, pack_error, ErrorCode
+from sari.mcp.tools.call_graph import build_call_graph
 
 def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[str, Any]:
     """Find symbols that call a specific symbol."""
     target_symbol = args.get("name", "").strip()
     target_sid = args.get("symbol_id", "").strip() or args.get("sid", "").strip()
+    target_path = str(args.get("path", "")).strip()
+    repo = str(args.get("repo", "")).strip()
+    limit = max(1, min(int(args.get("limit", 100) or 100), 500))
     if not target_symbol and not target_sid:
         return mcp_response(
             "get_callers",
@@ -36,6 +40,14 @@ def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict
         root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
         sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
         params.extend([f"{rid}/%" for rid in root_ids])
+    if repo:
+        sql = sql.replace("ORDER BY", "AND from_path LIKE ? ORDER BY")
+        params.append(f"%/{repo}/%")
+    if target_path:
+        sql = sql.replace("ORDER BY", "AND (to_path = ? OR to_path = '' OR to_path IS NULL) ORDER BY")
+        params.append(target_path)
+    sql += " LIMIT ?"
+    params.append(limit)
 
     conn = db.get_read_connection() if hasattr(db, "get_read_connection") else db._read
     try:
@@ -53,6 +65,14 @@ def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict
             root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
             sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
             params.extend([f"{rid}/%" for rid in root_ids])
+        if repo:
+            sql = sql.replace("ORDER BY", "AND from_path LIKE ? ORDER BY")
+            params.append(f"%/{repo}/%")
+        if target_path:
+            sql = sql.replace("ORDER BY", "AND (to_path = ? OR to_path = '' OR to_path IS NULL) ORDER BY")
+            params.append(target_path)
+        sql += " LIMIT ?"
+        params.append(limit)
         rows = conn.execute(sql, params).fetchall()
 
     results = []
@@ -71,8 +91,29 @@ def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict
             "rel_type": r["rel_type"]
         })
 
+    if not results:
+        try:
+            graph = build_call_graph(
+                {"symbol": target_symbol, "symbol_id": target_sid, "path": target_path, "depth": 1, "include_paths": [f"/{repo}/"] if repo else []},
+                db,
+                roots,
+            )
+            children = ((graph.get("upstream") or {}).get("children") or [])[:limit]
+            for c in children:
+                results.append(
+                    {
+                        "caller_path": c.get("path", ""),
+                        "caller_symbol": c.get("name", ""),
+                        "caller_symbol_id": c.get("symbol_id", ""),
+                        "line": int(c.get("line", 0) or 0),
+                        "rel_type": c.get("rel_type", "calls_heuristic"),
+                    }
+                )
+        except Exception:
+            pass
+
     def build_pack() -> str:
-        lines = [pack_header("get_callers", {"name": pack_encode_text(target_symbol), "sid": pack_encode_id(target_sid)}, returned=len(results))]
+        lines = [pack_header("get_callers", {"name": pack_encode_text(target_symbol), "sid": pack_encode_id(target_sid), "path": pack_encode_id(target_path), "repo": pack_encode_id(repo)}, returned=len(results))]
         for r in results:
             kv = {
                 "caller_path": pack_encode_id(r["caller_path"]),

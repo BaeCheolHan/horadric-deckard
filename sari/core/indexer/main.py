@@ -34,7 +34,16 @@ class IndexStatus:
     errors: int = 0
     walk_time: float = 0.0
     read_time: float = 0.0
+    parse_time: float = 0.0
     db_time: float = 0.0
+    ast_ok: int = 0
+    ast_failed: int = 0
+    ast_skipped: int = 0
+    symbols_emitted: int = 0
+    relations_emitted: int = 0
+    scan_started_ts: int = 0
+    scan_finished_ts: int = 0
+    scan_duration_ms: int = 0
 
 class Indexer:
     def __init__(self, cfg: Config, db: LocalSearchDB, logger=None, settings_obj=None):
@@ -44,7 +53,7 @@ class Indexer:
         self._stop = threading.Event()
         self.event_bus = EventBus()
         
-        # L1 Buffer: {root_id -> OrderedDict(path -> (files_row, engine_doc, syms))}
+        # L1 Buffer: {root_id -> OrderedDict(path -> (files_row, engine_doc, syms, rels))}
         self._l1_buffer: Dict[str, OrderedDict] = {}
         self._l1_lock = threading.Lock()
         self._l1_max_size = self.settings.get_int("INDEX_L1_BATCH_SIZE", 500)
@@ -145,9 +154,19 @@ class Indexer:
         start_walk = time.time()
         now, scan_ts = time.time(), int(time.time())
         self.status.last_scan_ts = scan_ts
+        self.status.scan_started_ts = scan_ts
+        self.status.scan_finished_ts = 0
+        self.status.scan_duration_ms = 0
         self.status.candidates = 0
         self.status.scanned_files = 0
         self.status.indexed_files = 0
+        self.status.read_time = 0.0
+        self.status.parse_time = 0.0
+        self.status.ast_ok = 0
+        self.status.ast_failed = 0
+        self.status.ast_skipped = 0
+        self.status.symbols_emitted = 0
+        self.status.relations_emitted = 0
         self._active_roots = []
         
         # Prepare staging for bulk ingestion
@@ -185,9 +204,15 @@ class Indexer:
                 all_syms = []
                 for item in items:
                     all_syms.extend(item[2])
+                all_rels = []
+                for item in items:
+                    if len(item) > 3:
+                        all_rels.extend(item[3])
                 self.storage.enqueue_task(DbTask(kind="upsert_files_staging", rows=rows, engine_docs=docs))
                 if all_syms:
                     self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=all_syms))
+                if all_rels:
+                    self.storage.enqueue_task(DbTask(kind="upsert_relations", rows=all_rels))
         self.storage.enqueue_task(DbTask(kind="staging_merge"))
 
     def _worker_loop(self):
@@ -218,6 +243,8 @@ class Indexer:
                     
                     # Final Step: Atomic merge of staging data
                     self._trigger_staging_merge()
+                    self.status.scan_finished_ts = int(time.time())
+                    self.status.scan_duration_ms = max(0, (self.status.scan_finished_ts - self.status.scan_started_ts) * 1000)
                 
                 time.sleep(0.2)
                 continue
@@ -274,19 +301,53 @@ class Indexer:
             sym_rows = []
             if res.get("symbols"):
                 sym_rows = [(s[10], s[0], root_id, s[1]) + s[2:10] for s in res["symbols"]]
+            rel_rows = []
+            if res.get("relations"):
+                for rel in res["relations"]:
+                    if len(rel) < 8:
+                        continue
+                    from_path, from_symbol, from_sid, to_path, to_symbol, to_sid, rel_type, line = rel[:8]
+                    from_root_id = from_path.split("/", 1)[0] if "/" in from_path else root_id
+                    to_root_id = to_path.split("/", 1)[0] if (to_path and "/" in to_path) else from_root_id
+                    rel_rows.append((
+                        from_path,
+                        from_root_id,
+                        from_symbol,
+                        from_sid or "",
+                        to_path or "",
+                        to_root_id,
+                        to_symbol,
+                        to_sid or "",
+                        rel_type,
+                        int(line or 0),
+                        "{}",
+                    ))
+
+            self.status.parse_time += float(res.get("parse_elapsed", 0.0) or 0.0)
+            ast_state = str(res.get("ast_status", "skipped"))
+            if ast_state == "ok":
+                self.status.ast_ok += 1
+            elif ast_state == "failed":
+                self.status.ast_failed += 1
+            else:
+                self.status.ast_skipped += 1
+            self.status.symbols_emitted += len(sym_rows)
+            self.status.relations_emitted += len(rel_rows)
 
             # LLM Freshness: High-priority events bypass L1 buffer
             if task.get("fast_track"):
                 self.storage.upsert_files(rows=[files_row], engine_docs=[doc] if doc else [])
                 if sym_rows:
                     self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=sym_rows))
+                if rel_rows:
+                    self.storage.enqueue_task(DbTask(kind="upsert_relations", rows=rel_rows))
                 self.status.indexed_files += 1
                 return
 
             with self._l1_lock:
                 buffer = self._l1_buffer.setdefault(root_id, OrderedDict())
                 # Efficient O(1) replacement of stale data in buffer
-                buffer[files_row[0]] = (files_row, doc, sym_rows)
+                buffer[files_row[0]] = (files_row, doc, sym_rows, rel_rows)
 
                 if len(buffer) >= self._l1_max_size:
                     items = list(buffer.values())
@@ -296,12 +357,18 @@ class Indexer:
                     docs = [item[1] for item in items if item[1]]
                     all_syms = []
                     for item in items: all_syms.extend(item[2])
+                    all_rels = []
+                    for item in items:
+                        if len(item) > 3:
+                            all_rels.extend(item[3])
                     
                     # Use staging kind if flagged
                     kind = "upsert_files_staging" if task.get("use_staging") else "upsert_files"
                     self.storage.enqueue_task(DbTask(kind=kind, rows=rows, engine_docs=docs))
                     if all_syms:
                         self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=all_syms))
+                    if all_rels:
+                        self.storage.enqueue_task(DbTask(kind="upsert_relations", rows=all_rels))
 
             self.status.indexed_files += 1
 
@@ -414,10 +481,16 @@ class Indexer:
                     docs = [item[1] for item in items if item[1]]
                     all_syms = []
                     for item in items: all_syms.extend(item[2])
+                    all_rels = []
+                    for item in items:
+                        if len(item) > 3:
+                            all_rels.extend(item[3])
                     
                     self.storage.upsert_files(rows=rows, engine_docs=docs)
                     if all_syms:
                         self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=all_syms))
+                    if all_rels:
+                        self.storage.enqueue_task(DbTask(kind="upsert_relations", rows=all_rels))
         for t in list(self._worker_threads):
             try:
                 t.join(timeout=2.0)
@@ -440,8 +513,17 @@ class Indexer:
             "indexed_new": self.status.indexed_new,
             "skipped_unchanged": self.status.skipped_unchanged,
             "errors": self.status.errors,
+            "scan_started_ts": self.status.scan_started_ts,
+            "scan_finished_ts": self.status.scan_finished_ts,
+            "scan_duration_ms": self.status.scan_duration_ms,
             "walk_time": round(self.status.walk_time, 2),
             "read_time": round(self.status.read_time, 2),
+            "parse_time": round(self.status.parse_time, 2),
+            "ast_ok": self.status.ast_ok,
+            "ast_failed": self.status.ast_failed,
+            "ast_skipped": self.status.ast_skipped,
+            "symbols_emitted": self.status.symbols_emitted,
+            "relations_emitted": self.status.relations_emitted,
             "db_time": metrics.get("db_time_total", 0.0),
             "slow_files": self._slow_files
         })

@@ -38,6 +38,14 @@ class ASTEngine:
             mod = importlib.import_module(pkg_name)
             if hasattr(mod, "language"):
                 lang = mod.language()
+                # tree-sitter>=0.25 language() may return PyCapsule.
+                # Normalize to tree_sitter.Language for parser compatibility.
+                if HAS_TREE_SITTER:
+                    try:
+                        from tree_sitter import Language
+                        lang = Language(lang)
+                    except Exception:
+                        pass
                 self._languages[language] = lang
                 return lang
         except ImportError:
@@ -65,7 +73,13 @@ class ASTEngine:
                     if lang_obj:
                         from tree_sitter import Parser
                         parser = Parser()
-                        parser.set_language(lang_obj)
+                        # tree-sitter API compatibility:
+                        # - old: parser.set_language(Language)
+                        # - new: parser.language = Language
+                        try:
+                            parser.set_language(lang_obj)  # type: ignore[attr-defined]
+                        except Exception:
+                            parser.language = lang_obj
                         self._parsers[language] = parser
             
             parser = self._parsers.get(language)

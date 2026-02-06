@@ -120,6 +120,7 @@ class IndexWorker:
 
             symbols, relations = [], []
             ast_status, ast_reason = "skipped", "disabled"
+            parse_start = time.time()
             if size <= self.settings.MAX_AST_BYTES:
                 try:
                     symbols, relations = self.extractor_cb(db_path, content)
@@ -145,6 +146,7 @@ class IndexWorker:
                         ast_status, ast_reason = "skipped", "unsupported"
             else:
                 ast_status, ast_reason = "skipped", "too_large"
+            parse_elapsed = time.time() - parse_start
 
             store_content = getattr(self.cfg, "store_content", True)
             stored_content = content if store_content else ""
@@ -170,6 +172,7 @@ class IndexWorker:
                 "fts_content": fts_content,
                 "content_bytes": content_bytes, "metadata_json": metadata_json,
                 "symbols": symbols, "relations": relations,
+                "parse_elapsed": parse_elapsed,
                 "parse_status": "ok", "parse_reason": "none",
                 "ast_status": ast_status, "ast_reason": ast_reason,
                 "is_binary": 0, "is_minified": 0,

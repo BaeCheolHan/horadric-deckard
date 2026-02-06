@@ -59,6 +59,27 @@ def test_comment_stripping():
     assert "FakeInComment" not in names
     assert "fake_in_block" not in names
 
+
+def test_vue_script_symbols():
+    vue_code = """
+    <template><div>Hello</div></template>
+    <script>
+    export default {
+      methods: {
+        onClick() { return true; }
+      }
+    }
+    const helper = () => 1;
+    function boot() { return helper(); }
+    </script>
+    """
+    parser = ParserFactory.get_parser(".vue")
+    symbols, _ = parser.extract("Comp.vue", vue_code)
+    names = [s[1] for s in symbols]
+    assert "onClick" in names
+    assert "helper" in names
+    assert "boot" in names
+
 if __name__ == "__main__":
     test_js_arrow_functions()
     test_rust_traits()

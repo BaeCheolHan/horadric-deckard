@@ -1,0 +1,3 @@
+recursive-include sari/core/static *
+include sari/*.sql
+include sari/*.md

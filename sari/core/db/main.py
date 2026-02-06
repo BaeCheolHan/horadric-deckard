@@ -201,6 +201,12 @@ class LocalSearchDB:
         root_id: Optional[str] = None,
         limit: int = 50,
         root_ids: Optional[List[str]] = None,
+        repo: Optional[str] = None,
+        kinds: Optional[List[str]] = None,
+        path_prefix: Optional[str] = None,
+        match_mode: str = "contains",
+        include_qualname: bool = True,
+        case_sensitive: bool = False,
     ) -> List[Dict[str, Any]]:
         sql = (
             "SELECT s.symbol_id, s.path, s.root_id, s.name, s.kind, s.line, s.end_line, "
@@ -214,9 +220,62 @@ class LocalSearchDB:
         elif root_id:
             sql += " AND s.root_id = ?"
             params.append(root_id)
+        if repo:
+            sql += " AND COALESCE(f.repo, '') = ?"
+            params.append(repo)
+        if kinds:
+            sql += " AND s.kind IN (" + ",".join("?" * len(kinds)) + ")"
+            params.extend(kinds)
+        if path_prefix:
+            sql += " AND s.path LIKE ?"
+            params.append(f"{path_prefix}%")
         if query:
-            sql += " AND s.name LIKE ?"
-            params.append(f"%{query}%")
+            mode = (match_mode or "contains").strip().lower()
+            include_q = bool(include_qualname)
+            cs = bool(case_sensitive)
+
+            if cs:
+                if mode == "exact":
+                    conds = ["s.name = ?"]
+                    params.append(query)
+                    if include_q:
+                        conds.append("COALESCE(s.qualname, '') = ?")
+                        params.append(query)
+                elif mode == "prefix":
+                    qlen = len(query)
+                    conds = ["SUBSTR(s.name, 1, ?) = ?"]
+                    params.extend([qlen, query])
+                    if include_q:
+                        conds.append("SUBSTR(COALESCE(s.qualname, ''), 1, ?) = ?")
+                        params.extend([qlen, query])
+                else:
+                    conds = ["INSTR(s.name, ?) > 0"]
+                    params.append(query)
+                    if include_q:
+                        conds.append("INSTR(COALESCE(s.qualname, ''), ?) > 0")
+                        params.append(query)
+            else:
+                if mode == "exact":
+                    conds = ["s.name = ?"]
+                    params.append(query)
+                    if include_q:
+                        conds.append("COALESCE(s.qualname, '') = ?")
+                        params.append(query)
+                elif mode == "prefix":
+                    like_q = f"{query}%"
+                    conds = ["s.name LIKE ?"]
+                    params.append(like_q)
+                    if include_q:
+                        conds.append("COALESCE(s.qualname, '') LIKE ?")
+                        params.append(like_q)
+                else:
+                    like_q = f"%{query}%"
+                    conds = ["s.name LIKE ?"]
+                    params.append(like_q)
+                    if include_q:
+                        conds.append("COALESCE(s.qualname, '') LIKE ?")
+                        params.append(like_q)
+            sql += " AND (" + " OR ".join(conds) + ")"
         sql += " ORDER BY s.name ASC LIMIT ?"
         params.append(limit)
         cur = self._get_conn().cursor()

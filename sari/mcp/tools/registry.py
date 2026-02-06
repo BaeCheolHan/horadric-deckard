@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -32,6 +33,7 @@ class Tool:
     description: str
     input_schema: Dict[str, Any]
     handler: Callable[["ToolContext", Dict[str, Any]], Dict[str, Any]]
+    hidden: bool = False
 
 
 @dataclass
@@ -55,6 +57,7 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def list_tools(self) -> List[Dict[str, Any]]:
+        expose_internal = os.environ.get("SARI_EXPOSE_INTERNAL_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
         return [
             {
                 "name": t.name,
@@ -62,6 +65,7 @@ class ToolRegistry:
                 "inputSchema": t.input_schema,
             }
             for t in self._tools.values()
+            if (not t.hidden) or expose_internal
         ]
 
     def execute(self, name: str, ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -151,16 +155,18 @@ def build_default_registry() -> ToolRegistry:
 
     reg.register(Tool(
         name="rescan",
-        description="Trigger an async rescan of the workspace index.",
+        description="(Internal) Trigger an async rescan of the workspace index.",
         input_schema={"type": "object", "properties": {}},
         handler=lambda ctx, args: rescan_tool.execute_rescan(args, ctx.indexer),
+        hidden=True,
     ))
 
     reg.register(Tool(
         name="scan_once",
-        description="Run a synchronous scan once (blocking).",
+        description="(Internal) Run a synchronous scan once (blocking).",
         input_schema={"type": "object", "properties": {}},
-        handler=lambda ctx, args: scan_once_tool.execute_scan_once(args, ctx.indexer),
+        handler=lambda ctx, args: scan_once_tool.execute_scan_once(args, ctx.indexer, ctx.logger),
+        hidden=True,
     ))
 
     reg.register(Tool(
@@ -198,8 +204,22 @@ def build_default_registry() -> ToolRegistry:
     reg.register(Tool(
         name="search_symbols",
         description="Search for symbols by name. Prefer this to scanning files.",
-        input_schema={"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 20}}, "required": ["query"]},
-        handler=lambda ctx, args: search_symbols_tool.execute_search_symbols(args, ctx.db, ctx.roots),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 20},
+                "repo": {"type": "string"},
+                "kinds": {"type": "array", "items": {"type": "string"}},
+                "path_prefix": {"type": "string"},
+                "match_mode": {"type": "string", "enum": ["contains", "prefix", "exact"], "default": "contains"},
+                "include_qualname": {"type": "boolean", "default": True},
+                "case_sensitive": {"type": "boolean", "default": False},
+                "root_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["query"],
+        },
+        handler=lambda ctx, args: search_symbols_tool.execute_search_symbols(args, ctx.db, ctx.logger, ctx.roots),
     ))
 
     reg.register(Tool(

@@ -203,12 +203,13 @@ def test_root_id_explicit_workspace_is_stable_for_nested_repos(tmp_path):
     child = parent / "child"
     parent.mkdir(parents=True)
     child.mkdir(parents=True)
-    (parent / ".sari").mkdir()
+    (parent / ".sariroot").write_text("", encoding="utf-8")
 
     legacy = WorkspaceManager.root_id(str(child))
     explicit = WorkspaceManager.root_id_for_workspace(str(child))
 
-    # Legacy may lift to parent marker; explicit must bind to selected workspace.
+    # Legacy may lift to explicit boundary marker (.sariroot);
+    # explicit must bind to selected workspace.
     assert explicit == WorkspaceManager.root_id_for_workspace(str(child))
     assert explicit.startswith("root-")
     assert legacy.startswith("root-")

@@ -37,6 +37,7 @@ class TestNestedWorkspaces:
 
     def test_overlapping_roots_detection(self, nested_env):
         parent_path, child_path, env = nested_env
+        env["SARI_KEEP_NESTED_ROOTS"] = "1"
         
         # 1. Initialize both workspaces in registry
         import sari.core.server_registry as sr
@@ -67,3 +68,19 @@ class TestNestedWorkspaces:
                         
                         rec = next(r for r in data["recommendations"] if r["name"] == "Workspace Overlap")
                         assert "Remove nested workspaces" in rec["action"]
+
+    def test_nested_roots_auto_dedup_default(self, nested_env):
+        parent_path, child_path, env = nested_env
+        env.pop("SARI_KEEP_NESTED_ROOTS", None)
+
+        import sari.core.server_registry as sr
+        reg_file = Path(env["SARI_REGISTRY_FILE"])
+
+        with patch.object(sr, "get_registry_path", return_value=reg_file):
+            registry = sr.ServerRegistry()
+            registry.set_workspace(parent_path, "boot-1")
+            registry.set_workspace(child_path, "boot-1")
+            parent = registry.get_workspace(parent_path)
+            child = registry.get_workspace(child_path)
+            # Default policy keeps only one overlapping workspace to avoid duplicate indexing.
+            assert (parent is None) ^ (child is None)

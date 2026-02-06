@@ -61,11 +61,10 @@ class Scanner:
         if depth > self.max_depth:
             return
 
-        # 1. Systematic Fix: Skip sub-directories managed by another workspace.
+        # 1. Skip sub-directories managed by another ACTIVE workspace.
+        # Boundary is registry/trie-driven, not marker-file driven.
         if current_dir != root:
             if self.workspace_trie.is_path_owned_by_sub_workspace(str(current_dir), str(root)):
-                return
-            if (current_dir / ".sari").exists():
                 return
 
         # Cycle detection for symlinks

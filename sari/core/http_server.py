@@ -95,6 +95,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self.send_response(200)
                 ctype, _ = mimetypes.guess_type(file_path)
+                if ctype == "text/html":
+                    ctype = "text/html; charset=utf-8"
                 self.send_header("Content-Type", ctype or "application/octet-stream")
                 
                 with open(file_path, "rb") as f:
@@ -503,26 +505,28 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
             import time
             
             url = f"http://{host}:{actual_port}/"
-            # Throttling: Don't open if we opened one in the last 10 seconds (prevents rapid restart spam)
+            # Throttling: Don't open if we opened one in the last 4 hours (prevents rapid restart spam)
             tmp_marker = os.path.join(os.path.expanduser("~"), ".sari_last_open")
             now = time.time()
             if os.path.exists(tmp_marker):
                 try:
-                    if now - os.path.getmtime(tmp_marker) < 10: return
+                    if now - os.path.getmtime(tmp_marker) < 14400: return
                 except Exception: pass
             Path(tmp_marker).touch()
 
             if sys.platform == "darwin":
-                # Refined AppleScript to find, reload and focus Sari tab
+                # Refined AppleScript to find, reload and focus Sari tab (supports both localhost and 127.0.0.1)
                 script = f'''
                 set found to false
-                set targetUrl to "localhost:{actual_port}"
+                set target1 to "localhost:{actual_port}"
+                set target2 to "127.0.0.1:{actual_port}"
                 try
                     tell application "Google Chrome"
                         repeat with w in windows
                             set tabIndex to 1
                             repeat with t in tabs of w
-                                if URL of t contains targetUrl then
+                                set theUrl to URL of t
+                                if theUrl contains target1 or theUrl contains target2 then
                                     set active tab index of w to tabIndex
                                     set index of w to 1
                                     reload t
@@ -540,7 +544,8 @@ def serve_forever(host: str, port: int, db: LocalSearchDB, indexer: Indexer, ver
                         tell application "Safari"
                             repeat with w in windows
                                 repeat with t in tabs of w
-                                    if URL of t contains targetUrl then
+                                    set theUrl to URL of t
+                                    if theUrl contains target1 or theUrl contains target2 then
                                         set current tab of w to t
                                         set index of w to 1
                                         tell t to set its URL to "{url}"

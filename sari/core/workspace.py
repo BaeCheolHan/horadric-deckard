@@ -8,7 +8,7 @@ from typing import Optional, List
 from sari.core.settings import settings
 
 class WorkspaceManager:
-    """Manages workspace detection, boundary markers (.sariroot), and global paths."""
+    """Manages workspace detection, explicit boundaries (.sariroot), and global paths."""
     settings = settings
 
     @staticmethod
@@ -17,10 +17,10 @@ class WorkspaceManager:
 
     @staticmethod
     def find_project_root(path: str) -> str:
-        """Find the nearest directory containing .sariroot or .sari."""
+        """Find the nearest directory containing .sariroot."""
         curr = Path(path).resolve()
         for parent in [curr] + list(curr.parents):
-            if (parent / ".sariroot").exists() or (parent / ".sari").exists():
+            if (parent / ".sariroot").exists():
                 return str(parent)
         return str(curr)
 

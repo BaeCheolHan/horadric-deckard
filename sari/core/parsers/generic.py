@@ -173,8 +173,8 @@ class GenericRegexParser(BaseParser):
                 bool(re.search(r"\b[a-zA-Z_][a-zA-Z0-9_<>,.\[\]]+\s+[A-Za-z_][A-Za-z0-9_]*\s*\(", method_line)) or
                 # Support direct method definitions: name() { ... }
                 bool(re.search(r"\b[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{", method_line)) or
-                # Support arrow functions: () => { ... }
-                bool(re.search(r"=>\s*\{", method_line))
+                # Support arrow functions with block or expression body.
+                bool(re.search(r"=>", method_line))
             )
             if looks_like_def:
                 for m in self.re_method.finditer(method_line):

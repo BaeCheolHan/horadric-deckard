@@ -104,7 +104,7 @@ class Settings:
     @property
     def SEARCH_FIRST_MODE(self) -> str: return _get_env_any("SEARCH_FIRST_MODE", "warn").strip().lower()
     @property
-    def MANUAL_ONLY(self) -> bool: return _get_bool("MANUAL_ONLY", True)
+    def MANUAL_ONLY(self) -> bool: return _get_bool("MANUAL_ONLY", False)
     @property
     def ENGINE_MAX_DOC_BYTES(self) -> int: return _get_int("ENGINE_MAX_DOC_BYTES", 4 * 1024 * 1024)
     @property
@@ -126,9 +126,9 @@ class Settings:
     @property
     def AST_CACHE_ENTRIES(self) -> int: return _get_int("AST_CACHE_ENTRIES", 128)
     @property
-    def INDEX_MEM_MB(self) -> int: return _get_int("INDEX_MEM_MB", 0)
+    def INDEX_MEM_MB(self) -> int: return _get_int("INDEX_MEM_MB", 4096)
     @property
-    def INDEX_WORKERS(self) -> int: return _get_int("INDEX_WORKERS", 2)
+    def INDEX_WORKERS(self) -> int: return _get_int("INDEX_WORKERS", 6)
     @property
     def SIZE_PROFILE(self) -> str: return _get_env_any("SIZE_PROFILE", "default").strip().lower()
     @property
