@@ -63,6 +63,9 @@ jobs:
   publish-pypi:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -82,7 +85,13 @@ jobs:
       - name: Build package
         run: python -m build
 
-      - name: Publish to PyPI
+      - name: Publish to PyPI (API token)
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          attestations: false
+
+      - name: Publish to PyPI (Trusted Publishing)
+        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
