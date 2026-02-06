@@ -3,191 +3,569 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sari | Code Intelligence</title>
+    <title>Sari | Intelligent Codebase Agent</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape-dagre/2.5.0/cytoscape-dagre.min.js"></script>
     <style>
         :root {
-            --bg-color: #f8fafc; --card-bg: #ffffff; --primary: #3b82f6; --secondary: #64748b;
-            --success: #10b981; --warning: #f59e0b; --error: #ef4444; --border: #e2e8f0;
-            --text-main: #1e293b; --text-dim: #64748b; --row-alt: #f1f5f9;
+            /* Palette: Slate & Blue (Tailwind-ish) */
+            --bg-body: #0f172a;
+            --bg-sidebar: #1e293b;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --border-color: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
         }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg-color: #0f172a; --card-bg: #1e293b; --border: #334155;
-                --text-main: #f1f5f9; --text-dim: #94a3b8; --row-alt: #161e2e;
-            }
-        }
-        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-color); color: var(--text-main); margin: 0; padding: 0; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
-        
-        /* Navbar */
-        .navbar { height: 50px; background: var(--card-bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; justify-content: space-between; flex-shrink: 0; }
-        .logo { font-size: 1.2rem; font-weight: bold; display: flex; align-items: center; gap: 8px; }
-        .tabs { display: flex; gap: 5px; height: 100%; }
-        .tab-btn { background: none; border: none; padding: 0 15px; height: 100%; cursor: pointer; font-size: 0.9rem; color: var(--text-dim); border-bottom: 2px solid transparent; transition: all 0.2s; }
-        .tab-btn:hover { color: var(--primary); background: rgba(59,130,246,0.05); }
-        .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: bold; }
 
-        /* Content Area */
-        .content { flex: 1; overflow-y: auto; padding: 20px; position: relative; }
-        .page { display: none; height: 100%; }
-        .page.active { display: block; }
-
-        /* Dashboard Styles (Inherited & Scoped) */
-        .dashboard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; max-width: 1200px; margin: 0 auto; }
-        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-direction: column; }
-        .span-2 { grid-column: span 2; }
-        .span-3 { grid-column: span 3; }
-        h2 { margin-top: 0; font-size: 0.9rem; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+        * { box-sizing: border-box; }
         
-        /* Code MRI Styles */
-        .mri-container { display: flex; height: 100%; gap: 0; background: #111; } /* Always dark for MRI effect */
-        .mri-sidebar { width: 280px; background: #1a1a1a; color: #eee; border-right: 1px solid #333; display: flex; flex-direction: column; }
-        .mri-main { flex: 1; position: relative; overflow: hidden; }
-        #cy { width: 100%; height: 100%; background: radial-gradient(circle at center, #222 0%, #000 100%); }
-        
-        .repo-select { padding: 15px; border-bottom: 1px solid #333; }
-        .repo-select select { width: 100%; padding: 8px; background: #333; border: 1px solid #444; color: white; border-radius: 4px; }
-        
-        .legend { padding: 15px; flex: 1; }
-        .legend-item { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 0.85rem; }
-        .dot { width: 10px; height: 10px; border-radius: 50%; }
-        
-        /* Utils */
-        .btn { cursor: pointer; padding: 6px 12px; border-radius: 4px; border: 1px solid var(--primary); background: transparent; color: var(--primary); font-size: 0.8rem; }
-        .btn:hover { background: var(--primary); color: white; }
-        
-        /* Dashboard Specifics */
-        .stat-value { font-size: 1.4rem; font-weight: bold; font-family: monospace; }
-        @keyframes pulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.1); opacity: 0.7; color: var(--warning); }
-            100% { transform: scale(1); opacity: 1; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
         }
-        .progress-bar { height: 100%; background: var(--primary); transition: width 0.5s ease-out; }
+
+        /* Sidebar */
+        .sidebar {
+            width: 260px;
+            background-color: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        
+        .brand {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 30px;
+            padding-left: 10px;
+        }
+        
+        .brand span { color: var(--primary); }
+
+        .nav-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex: 1;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+
+        .nav-item:hover {
+            background-color: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            background-color: rgba(59, 130, 246, 0.1);
+            color: var(--primary);
+        }
+
+        .status-footer {
+            margin-top: auto;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--text-secondary);
+            transition: background-color 0.3s;
+        }
+        .status-dot.online { background-color: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.offline { background-color: var(--error); }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: var(--bg-body);
+        }
+
+        .view-section {
+            display: none;
+            height: 100%;
+            overflow-y: auto;
+            padding: 30px;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        .view-section.active { display: block; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Dashboard Grid */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .full-width { grid-column: 1 / -1; }
+
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            margin: 10px 0;
+        }
+        
+        .stat-label { font-size: 0.85rem; color: var(--text-secondary); }
+
+        /* Progress Bars */
+        .progress-track {
+            height: 8px;
+            background-color: var(--bg-hover);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: var(--primary);
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        /* Tables */
         table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; font-size: 0.75rem; padding: 8px; color: var(--text-dim); }
-        td { padding: 8px; font-size: 0.85rem; border-bottom: 1px solid var(--border); }
+        th { text-align: left; font-size: 0.8rem; color: var(--text-secondary); padding: 10px; border-bottom: 1px solid var(--border-color); font-weight: 500; }
+        td { padding: 12px 10px; font-size: 0.9rem; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+        tr:last-child td { border-bottom: none; }
+
+        /* Code MRI Specifics */
+        .mri-wrapper {
+            display: flex;
+            height: 100%;
+            width: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            overflow: hidden;
+        }
+
+        .mri-sidebar-controls {
+            width: 280px;
+            background: var(--bg-card);
+            border-right: 1px solid var(--border-color);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            z-index: 5;
+        }
+
+        .mri-canvas {
+            flex: 1;
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+            position: relative;
+        }
+
+        .control-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        select, input {
+            width: 100%;
+            padding: 10px;
+            background: var(--bg-body);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            outline: none;
+        }
+
+        select:focus, input:focus { border-color: var(--primary); }
+
+        .btn {
+            padding: 10px 16px;
+            background: var(--bg-hover);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn:hover { background: var(--border-color); }
+        .btn-primary { background: var(--primary); border-color: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+
+        .mri-inspector {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            background: rgba(30, 41, 59, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            transform: translateX(320px); /* Hidden by default */
+            transition: transform 0.3s ease;
+            z-index: 10;
+        }
+
+        .mri-inspector.open { transform: translateX(0); }
+
+        .inspector-header { font-weight: 600; font-size: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 10px; color: var(--primary); }
+        .inspector-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.9rem; }
+        .inspector-label { color: var(--text-secondary); }
+        .inspector-value { color: var(--text-primary); font-family: monospace; }
+
+        /* Floating Graph Controls */
+        .graph-controls {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+            background: rgba(30, 41, 59, 0.8);
+            padding: 8px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Utilities */
+        .badge { padding: 4px 8px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; }
+        .badge-green { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge-yellow { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        
+        .hidden { display: none !important; }
+
     </style>
 </head>
 <body>
-    <!-- Top Navigation -->
-    <div class="navbar">
-        <div class="logo">🤖 Sari <span style="font-weight:normal; color:var(--text-dim); font-size:0.9rem;">Intelligence</span></div>
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
-            <button class="tab-btn" onclick="switchTab('mri')">Code MRI</button>
+
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="brand">
+            <span>⚡</span> Sari UI
         </div>
-        <div style="font-size:0.8rem; color:var(--text-dim);" id="conn-status">Connecting...</div>
-    </div>
-
-    <div class="content">
-        <!-- PAGE 1: Dashboard -->
-        <div id="dashboard" class="page active">
-            <!-- Indexing Progress Banner -->
-            <div class="card span-3" style="margin-bottom:20px; background: linear-gradient(90deg, var(--card-bg) 0%, rgba(59,130,246,0.05) 100%);">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <h2 style="border:none; margin:0;">🚀 Indexing Live Stream</h2>
-                    <div id="indexing-stats" style="font-size:0.85rem; font-weight:bold;">
-                        Scanned: <span id="stat-scanned">0</span> | 
-                        Indexed: <span id="stat-indexed">0</span> | 
-                        Queue: <span id="stat-queue" style="color:var(--warning);">0</span>
-                    </div>
-                </div>
-                <div style="height:12px; background:var(--border); border-radius:6px; overflow:hidden; position:relative;">
-                    <div id="indexing-progress-bar" class="progress-bar" style="width:0%; background: linear-gradient(90deg, var(--primary) 0%, #60a5fa 100%);"></div>
-                </div>
-                <div id="indexing-percentage" style="text-align:right; font-size:0.75rem; color:var(--text-dim); margin-top:5px;">0% Complete</div>
+        <div class="nav-menu">
+            <a class="nav-item active" onclick="setView('dashboard', this)">
+                📊 Dashboard
+            </a>
+            <a class="nav-item" onclick="setView('mri', this)">
+                🧬 Code MRI
+            </a>
+            <a class="nav-item" onclick="setView('settings', this)">
+                ⚙️ Settings
+            </a>
+        </div>
+        <div class="status-footer">
+            <div class="connection-status">
+                <div class="status-dot offline" id="conn-dot"></div>
+                <span id="conn-text">Disconnected</span>
             </div>
-
-            <div class="dashboard-grid">
-                <!-- Summary -->
-                <div class="card">
-                    <h2>System Status <span class="badge" id="status-badge" style="float:right; font-size:0.7rem; padding:2px 6px; background:rgba(16,185,129,0.2); color:green; border-radius:4px;">Checking</span></h2>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-                        <div><div style="font-size:0.75rem; color:var(--text-dim);">Total Files</div><div class="stat-value" id="total-files">0</div></div>
-                        <div><div style="font-size:0.75rem; color:var(--text-dim);">Workers</div><div class="stat-value" id="worker-count">0</div></div>
-                    </div>
-                </div>
-
-                <!-- Resources -->
-                <div class="card">
-                    <h2>Resources</h2>
-                    <div style="margin-bottom:8px;"><div style="display:flex; justify-content:space-between; font-size:0.75rem;"><span>CPU</span><span id="cpu-val">0%</span></div><div style="height:6px; background:var(--border); border-radius:3px;"><div id="cpu-bar" class="progress-bar" style="width:0%"></div></div></div>
-                    <div><div style="display:flex; justify-content:space-between; font-size:0.75rem;"><span>RAM</span><span id="mem-val">0GB</span></div><div style="height:6px; background:var(--border); border-radius:3px;"><div id="mem-bar" class="progress-bar" style="width:0%"></div></div></div>
-                </div>
-
-                <!-- Throughput -->
-                <div class="card">
-                    <h2>Throughput</h2>
-                    <div style="text-align:center; padding:10px 0;">
-                        <div class="stat-value" style="font-size:2.2rem; color:var(--primary);" id="tps">0.0</div>
-                        <div style="font-size:0.7rem; color:var(--text-dim);">DOCS / SEC</div>
-                    </div>
-                </div>
-
-                <!-- Repos -->
-                <div class="card span-2" style="height:300px;">
-                    <h2>Repositories</h2>
-                    <div style="flex:1; overflow-y:auto;">
-                        <table id="repo-table"><thead><tr><th>Name</th><th style="text-align:right;">Files</th></tr></thead><tbody></tbody></table>
-                    </div>
-                </div>
-
-                <!-- Roots -->
-                <div class="card" style="height:300px;">
-                    <h2>Roots</h2>
-                    <div id="root-list" style="flex:1; overflow-y:auto;"></div>
-                </div>
+            <div style="font-size:0.7rem; color:var(--text-secondary); margin-top:5px;">
+                v<span id="app-version">-</span>
             </div>
         </div>
+    </nav>
 
-        <!-- PAGE 2: Code MRI -->
-        <div id="mri" class="page" style="padding:0; height:100%;">
-            <div class="mri-container">
-                <div class="mri-sidebar">
-                    <div class="repo-select">
-                        <label style="font-size:0.8rem; color:#aaa; display:block; margin-bottom:5px;">Select Repository</label>
-                        <select id="mri-repo-select" onchange="loadGraph(this.value)"><option>Loading...</option></select>
+    <!-- Main Content -->
+    <main class="main-content">
+        
+        <!-- View: Dashboard -->
+        <div id="dashboard" class="view-section active">
+            <div class="grid-container">
+                <!-- Indexing Status Banner -->
+                <div class="card full-width" style="border-left: 4px solid var(--primary);">
+                    <div class="card-header" style="border:none; margin:0; padding:0;">
+                        <div>
+                            <h2 class="card-title" style="font-size:1.1rem; margin-bottom:5px;">Indexing Engine Status</h2>
+                            <div style="font-size:0.9rem; color:var(--text-secondary);">Real-time file scanning and symbol indexing</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <span class="badge badge-yellow" id="index-badge">Checking...</span>
+                        </div>
                     </div>
-                    <div class="legend">
-                        <h3 style="font-size:0.9rem; color:#888; border-bottom:1px solid #333; padding-bottom:5px;">Code Layers</h3>
-                        <div class="legend-item"><div class="dot" style="background:#ef4444;"></div>Controller / API</div>
-                        <div class="legend-item"><div class="dot" style="background:#3b82f6;"></div>Service / Logic</div>
-                        <div class="legend-item"><div class="dot" style="background:#10b981;"></div>Repository / DB</div>
-                        <div class="legend-item"><div class="dot" style="background:#a855f7;"></div>Model / Entity</div>
-                        <div class="legend-item"><div class="dot" style="background:#64748b;"></div>Other</div>
-                    </div>
-                    <div style="padding:15px; font-size:0.75rem; color:#666;">
-                        • Drag to move nodes<br>
-                        • Scroll to zoom<br>
-                        • Tap node to highlight
+                    <div style="margin-top:20px; display:flex; gap:30px; align-items:flex-end;">
+                        <div>
+                            <div class="stat-value" id="stat-scanned">0</div>
+                            <div class="stat-label">Scanned Files</div>
+                        </div>
+                        <div>
+                            <div class="stat-value" id="stat-indexed">0</div>
+                            <div class="stat-label">Indexed Symbols</div>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:5px;">
+                                <span>Progress</span>
+                                <span id="progress-text">0%</span>
+                            </div>
+                            <div class="progress-track">
+                                <div class="progress-fill" id="main-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="mri-main">
-                    <div id="cy"></div>
-                    <div style="position:absolute; top:20px; right:20px; z-index:100; background:rgba(0,0,0,0.7); color:white; padding:5px 10px; border-radius:4px; font-size:0.8rem; pointer-events:none;" id="mri-status">Ready</div>
+
+                <!-- Stats Cards -->
+                <div class="card">
+                    <div class="card-header"><h3 class="card-title">Throughput</h3></div>
+                    <div style="display:flex; align-items:baseline; gap:10px;">
+                        <span class="stat-value" id="tps-val">0.0</span>
+                        <span class="stat-label">Docs / Sec</span>
+                    </div>
+                    <div class="progress-track">
+                         <!-- Visualizer bar just for effect -->
+                        <div class="progress-fill" id="tps-bar" style="width: 0%; background: var(--success); transition: width 0.2s;"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3 class="card-title">System Load</h3></div>
+                    <div style="margin-bottom:15px;">
+                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:5px;">
+                            <span>CPU</span> <span id="cpu-val">0%</span>
+                        </div>
+                        <div class="progress-track"><div class="progress-fill" id="cpu-bar" style="width: 0%"></div></div>
+                    </div>
+                    <div>
+                        <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:5px;">
+                            <span>Memory</span> <span id="mem-val">0GB</span>
+                        </div>
+                        <div class="progress-track"><div class="progress-fill" id="mem-bar" style="width: 0%"></div></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3 class="card-title">Queue Depth</h3></div>
+                    <div id="queue-list" style="display:flex; flex-direction:column; gap:10px;">
+                        <!-- Queues injected here -->
+                        <div style="text-align:center; color:var(--text-secondary);">No active queues</div>
+                    </div>
+                </div>
+
+                <!-- Repositories Table -->
+                <div class="card full-width">
+                    <div class="card-header">
+                        <h3 class="card-title">Indexed Repositories</h3>
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Repository Name</th>
+                                    <th>Root Path</th>
+                                    <th style="text-align:right;">File Count</th>
+                                    <th style="text-align:right;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="repo-table-body">
+                                <tr><td colspan="4" style="text-align:center; padding:20px;">Loading repositories...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+
+        <!-- View: Code MRI -->
+        <div id="mri" class="view-section" style="padding:0; height:100%;">
+            <div class="mri-wrapper">
+                <!-- Controls Sidebar -->
+                <div class="mri-sidebar-controls">
+                    <h3 style="margin-top:0; color:var(--text-primary);">Graph Controls</h3>
+                    
+                    <div class="control-group">
+                        <label>Repository</label>
+                        <select id="mri-repo-select" onchange="loadGraph(this.value)">
+                            <option value="">Select Repository...</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Layout</label>
+                        <select id="mri-layout-select" onchange="changeLayout(this.value)">
+                            <option value="dagre">Hierarchy (Dagre)</option>
+                            <option value="grid">Grid</option>
+                            <option value="circle">Circle</option>
+                            <option value="concentric">Concentric</option>
+                            <option value="breadthfirst">Tree (BFS)</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label>Search Nodes</label>
+                        <input type="text" id="node-search" placeholder="Type symbol name..." onkeyup="searchNodes(this.value)">
+                    </div>
+
+                    <div style="margin-top:auto;">
+                        <button class="btn full-width" onclick="fitGraph()">Fit to Screen</button>
+                    </div>
+                    
+                    <div style="margin-top:10px; font-size:0.75rem; color:var(--text-secondary);">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="width:10px; height:10px; background:#ef4444; border-radius:50%;"></span> Controller / API</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="width:10px; height:10px; background:#3b82f6; border-radius:50%;"></span> Service / Logic</div>
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:5px;"><span style="width:10px; height:10px; background:#10b981; border-radius:50%;"></span> Repository / DB</div>
+                        <div style="display:flex; align-items:center; gap:8px;"><span style="width:10px; height:10px; background:#a855f7; border-radius:50%;"></span> Model / Entity</div>
+                    </div>
+                </div>
+
+                <!-- Canvas -->
+                <div class="mri-canvas">
+                    <div id="cy" style="width:100%; height:100%;"></div>
+                    
+                    <!-- Floating Controls -->
+                    <div class="graph-controls">
+                        <button class="btn btn-sm" onclick="zoomGraph(0.1)">+</button>
+                        <button class="btn btn-sm" onclick="zoomGraph(-0.1)">-</button>
+                    </div>
+
+                    <!-- Inspector Panel -->
+                    <div id="inspector" class="mri-inspector">
+                        <div class="inspector-header">Node Details</div>
+                        <div class="inspector-row"><span class="inspector-label">Name</span><span class="inspector-value" id="ins-name">-</span></div>
+                        <div class="inspector-row"><span class="inspector-label">Kind</span><span class="inspector-value" id="ins-kind">-</span></div>
+                        <div class="inspector-row"><span class="inspector-label">Role</span><span class="inspector-value" id="ins-role">-</span></div>
+                        <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border-color);">
+                            <div class="inspector-label" style="margin-bottom:5px;">File Path</div>
+                            <div class="inspector-value" id="ins-path" style="word-break:break-all; font-size:0.8rem;">-</div>
+                        </div>
+                        <button class="btn full-width" style="margin-top:15px;" onclick="closeInspector()">Close</button>
+                    </div>
+                    
+                    <!-- Loading Overlay -->
+                    <div id="graph-loading" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:white; background:rgba(0,0,0,0.7); padding:20px; border-radius:8px; pointer-events:none; display:none;">
+                        Loading Graph Data...
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- View: Settings (Placeholder) -->
+        <div id="settings" class="view-section">
+             <div class="card">
+                <div class="card-header"><h3 class="card-title">Settings</h3></div>
+                <p style="color:var(--text-secondary);">Settings are configured via `sari.json` or environment variables.</p>
+            </div>
+        </div>
+
+    </main>
 
     <script>
-        // Register Cytoscape plugins
-        if (typeof cytoscape !== 'undefined' && typeof dagre !== 'undefined') {
-            cytoscape.use(dagre);
-        }
+        // --- Global State ---
+        let cy = null;
+        let currentRepo = null;
+        let isGraphLoaded = false;
 
-        // --- Tab Logic ---
-        function switchTab(tabId) {
-            document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            event.target.classList.add('active');
+        // --- Navigation ---
+        function setView(viewId, el) {
+            document.querySelectorAll('.view-section').forEach(div => div.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
             
-            if (tabId === 'mri') {
-                setTimeout(() => { if(cy) cy.resize(); }, 100); // Fix graph size on tab switch
+            if (el) {
+                document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+                el.classList.add('active');
+            }
+
+            if (viewId === 'mri') {
+                setTimeout(() => {
+                    if (cy) {
+                        cy.resize();
+                        cy.fit();
+                    } else if (!isGraphLoaded) {
+                        // Auto-load first repo if not loaded
+                        const select = document.getElementById('mri-repo-select');
+                        if (select.options.length > 1 && select.value === "") {
+                            select.selectedIndex = 1;
+                            loadGraph(select.value);
+                        }
+                    }
+                }, 100);
             }
         }
 
@@ -196,178 +574,301 @@
             try {
                 const res = await fetch('/status');
                 const d = await res.json();
-                if(!d.ok) return;
+                
+                // Update Connection Status
+                document.getElementById('conn-dot').classList.remove('offline');
+                document.getElementById('conn-dot').classList.add('online');
+                document.getElementById('conn-text').innerText = 'Connected';
+                document.getElementById('app-version').innerText = d.version || 'dev';
 
-                // --- Update Indexing Progress ---
+                if (!d.ok) return;
+
+                // Indexing Stats
                 const scanned = d.scanned_files || 0;
                 const indexed = d.indexed_files || 0;
-                const queue = d.performance?.queue_depth || 0;
                 const pct = scanned > 0 ? Math.min((indexed / scanned) * 100, 100) : 0;
-
+                
                 document.getElementById('stat-scanned').innerText = scanned.toLocaleString();
                 document.getElementById('stat-indexed').innerText = indexed.toLocaleString();
-                document.getElementById('stat-queue').innerText = queue.toLocaleString();
-                document.getElementById('indexing-progress-bar').style.width = pct + '%';
-                document.getElementById('indexing-percentage').innerText = pct.toFixed(1) + '% Complete';
-
-                // Pulse effect if indexing
-                const queueEl = document.getElementById('stat-queue');
-                if (queue > 0) {
-                    queueEl.style.animation = 'pulse 1s infinite';
-                } else {
-                    queueEl.style.animation = 'none';
-                }
-
-                document.getElementById('conn-status').innerText = 'Connected';
-                document.getElementById('total-files').innerText = (d.total_files_db || 0).toLocaleString();
-                document.getElementById('worker-count').innerText = d.worker_count;
+                document.getElementById('progress-text').innerText = pct.toFixed(1) + '%';
+                document.getElementById('main-progress').style.width = pct + '%';
                 
-                // Update Repo List for MRI Select
-                const select = document.getElementById('mri-repo-select');
-                const currentVal = select.value;
-                if (d.repo_stats && (!select.options.length || select.options[0].text === 'Loading...')) {
-                    select.innerHTML = '<option value="">Select a Repo...</option>';
-                    Object.keys(d.repo_stats).sort().forEach(repo => {
-                        select.innerHTML += `<option value="${repo}">${repo} (${d.repo_stats[repo]})</option>`;
-                    });
-                    if (currentVal) select.value = currentVal;
+                const badge = document.getElementById('index-badge');
+                if (d.index_ready) {
+                    badge.innerText = "READY";
+                    badge.className = "badge badge-green";
+                } else {
+                    badge.innerText = "INDEXING";
+                    badge.className = "badge badge-yellow";
                 }
 
-                // --- Update Performance ---
-                const perf = d.performance || {};
-                document.getElementById('tps').innerText = (perf.throughput_docs_sec || 0).toFixed(1);
-                
-                // --- Update Repositories ---
-                const rTable = document.querySelector('#repo-table tbody');
-                rTable.innerHTML = '';
-                const repoStats = d.repo_stats || {};
-                if (Object.keys(repoStats).length === 0) {
-                    rTable.innerHTML = '<tr><td colspan="2" style="text-align:center; color:var(--text-dim); padding:20px;">No repositories indexed</td></tr>';
-                } else {
-                    Object.entries(repoStats).sort((a,b)=>b[1]-a[1]).forEach(([k,v]) => {
-                        rTable.innerHTML += `<tr><td>${k}</td><td style="text-align:right; font-family:monospace;">${v.toLocaleString()}</td></tr>`;
-                    });
-                }
-                
-                // --- Update Roots ---
-                const rList = document.getElementById('root-list');
-                rList.innerHTML = '';
-                const roots = d.roots || [];
-                if (roots.length === 0) {
-                    rList.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim);">No workspace roots</div>';
-                } else {
-                    roots.forEach(r => {
-                        rList.innerHTML += `<div style="padding:10px; border-bottom:1px solid var(--border);">
-                            <div style="font-weight:bold; font-size:0.9rem;">${r.label || 'Root'}</div>
-                            <div style="color:var(--text-dim); font-size:0.75rem; word-break:break-all;">${r.real_path}</div>
-                        </div>`;
-                    });
-                }
-
-                // --- Update System Resources ---
+                // Resources
                 const sys = d.system_metrics || {};
                 const cpu = sys.cpu_percent || 0;
                 const memGb = sys.memory_used_gb || 0;
-                const memPct = sys.memory_percent || 0;
-                
+                const memMax = sys.memory_total_gb || 16;
+                const memPct = (memGb / memMax) * 100;
+
                 document.getElementById('cpu-val').innerText = cpu.toFixed(1) + '%';
                 document.getElementById('cpu-bar').style.width = Math.min(cpu, 100) + '%';
-                
                 document.getElementById('mem-val').innerText = memGb.toFixed(1) + 'GB';
                 document.getElementById('mem-bar').style.width = Math.min(memPct, 100) + '%';
+
+                // Throughput
+                const tps = d.performance?.throughput_docs_sec || 0;
+                document.getElementById('tps-val').innerText = tps.toFixed(1);
+                // Visual effect for TPS bar
+                const tpsPct = Math.min((tps / 500) * 100, 100); // Assume 500 is high
+                document.getElementById('tps-bar').style.width = tpsPct + '%';
+
+                // Repositories
+                const repoStats = d.repo_stats || {};
+                const roots = d.roots || [];
+                const tbody = document.getElementById('repo-table-body');
+                const repoSelect = document.getElementById('mri-repo-select');
                 
-                // Status Badge
-                const badge = document.getElementById('status-badge');
-                if (d.index_ready) {
-                    badge.innerText = 'Ready';
-                    badge.style.color = '#10b981';
-                    badge.style.background = 'rgba(16,185,129,0.1)';
+                if (Object.keys(repoStats).length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--text-secondary);">No repositories indexed yet.</td></tr>';
                 } else {
-                    badge.innerText = 'Indexing';
-                    badge.style.color = '#f59e0b';
-                    badge.style.background = 'rgba(245,158,11,0.1)';
+                    let html = '';
+                    const currentSelect = repoSelect.value;
+                    let optionsHtml = '<option value="">Select Repository...</option>';
+                    let hasNewData = false;
+
+                    Object.entries(repoStats).sort((a,b)=>b[1]-a[1]).forEach(([name, count]) => {
+                        const root = roots.find(r => r.real_path.includes(name) || name.includes(r.label)) || {real_path: 'Unknown'};
+                        html += `
+                            <tr>
+                                <td style="font-weight:600; color:var(--primary);">${name}</td>
+                                <td style="color:var(--text-secondary); font-size:0.85rem;">${root.real_path}</td>
+                                <td style="text-align:right; font-family:monospace;">${count.toLocaleString()}</td>
+                                <td style="text-align:right;"><span class="badge badge-green">Active</span></td>
+                            </tr>
+                        `;
+                        
+                        optionsHtml += `<option value="${name}">${name} (${count})</option>`;
+                        hasNewData = true;
+                    });
+                    tbody.innerHTML = html;
+
+                    // Update MRI Select if it has changed
+                    const repoNames = Object.keys(repoStats).sort();
+                    const currentOptions = Array.from(repoSelect.options).map(o => o.value).filter(v => v !== "");
+                    const isDifferent = repoNames.length !== currentOptions.length || !repoNames.every((v, i) => v === currentOptions[i]);
+
+                    if (hasNewData && isDifferent) {
+                         const previousValue = repoSelect.value;
+                         repoSelect.innerHTML = optionsHtml;
+                         
+                         // Auto-select if nothing was selected before
+                         if (!previousValue && repoNames.length > 0) {
+                             repoSelect.value = repoNames[0];
+                             loadGraph(repoNames[0]);
+                         } else if (previousValue && repoNames.includes(previousValue)) {
+                             repoSelect.value = previousValue;
+                         }
+                    }
                 }
 
-            } catch(e) { document.getElementById('conn-status').innerText = 'Offline'; }
+                // Queues
+                const queues = d.queue_depths || {};
+                const qList = document.getElementById('queue-list');
+                if (Object.keys(queues).length > 0) {
+                    let qHtml = '';
+                    for (const [k, v] of Object.entries(queues)) {
+                        const qPct = Math.min((v / 1000) * 100, 100);
+                        const color = v > 100 ? 'var(--warning)' : 'var(--primary)';
+                        qHtml += `
+                            <div>
+                                <div style="display:flex; justify-content:space-between; font-size:0.8rem;">
+                                    <span>${k}</span> <span>${v}</span>
+                                </div>
+                                <div class="progress-track"><div class="progress-fill" style="width:${qPct}%; background:${color};"></div></div>
+                            </div>
+                        `;
+                    }
+                    qList.innerHTML = qHtml;
+                }
+
+            } catch (e) {
+                console.error("Dashboard Update Failed", e);
+                document.getElementById('conn-dot').classList.remove('online');
+                document.getElementById('conn-dot').classList.add('offline');
+                document.getElementById('conn-text').innerText = 'Reconnecting...';
+            }
         }
 
         setInterval(updateDashboard, 3000);
         updateDashboard();
 
-        // --- Code MRI Logic ---
-        let cy = null;
+
+        // Initialize Cytoscape Extensions
+        function initExtensions() {
+            try {
+                if (typeof cytoscape !== 'undefined' && typeof dagre !== 'undefined') {
+                    cytoscape.use(dagre);
+                }
+            } catch(e) { console.error("Cytoscape extension init failed", e); }
+        }
+        initExtensions();
 
         async function loadGraph(repo) {
             if (!repo) return;
-            const status = document.getElementById('mri-status');
-            status.innerText = 'Loading Nodes...';
+            currentRepo = repo;
+            
+            const loading = document.getElementById('graph-loading');
+            loading.innerText = `Loading symbols for ${repo}...`;
+            loading.style.display = 'block';
             
             try {
                 const res = await fetch(`/graph?repo=${encodeURIComponent(repo)}`);
                 const d = await res.json();
                 
-                if (!d.ok) throw new Error(d.error);
+                if (!d.ok) throw new Error(d.error || "Failed to fetch graph");
                 
-                status.innerText = `Rendering ${d.elements.nodes.length} nodes...`;
+                const nodes = d.elements.nodes;
+                const edges = d.elements.edges;
+                
+                if (nodes.length === 0) {
+                    alert("No symbols found for this repository.");
+                    loading.style.display = 'none';
+                    return;
+                }
 
-                if (cy) cy.destroy();
-
-                cy = cytoscape({
+                // Config
+                const config = {
                     container: document.getElementById('cy'),
-                    elements: d.elements,
+                    elements: { nodes, edges },
                     style: [
                         {
                             selector: 'node',
                             style: {
                                 'label': 'data(label)',
-                                'color': '#fff',
-                                'font-size': '10px',
+                                'color': '#f1f5f9',
+                                'font-size': '12px',
                                 'text-valign': 'center',
                                 'text-halign': 'center',
-                                'width': 'label',
-                                'height': '20px',
-                                'padding': '10px',
-                                'shape': 'round-rectangle',
                                 'background-color': '#64748b',
+                                'width': 'label',
+                                'height': '30px',
+                                'padding': '12px',
+                                'shape': 'round-rectangle',
                                 'border-width': 1,
-                                'border-color': '#fff'
+                                'border-color': '#94a3b8',
+                                'text-wrap': 'wrap',
+                                'text-max-width': '100px'
                             }
                         },
-                        { selector: 'node[role="controller"]', style: { 'background-color': '#ef4444' } },
-                        { selector: 'node[role="service"]', style: { 'background-color': '#3b82f6' } },
-                        { selector: 'node[role="repository"]', style: { 'background-color': '#10b981' } },
-                        { selector: 'node[role="model"]', style: { 'background-color': '#a855f7', 'shape': 'ellipse' } },
+                        { selector: 'node[role="controller"]', style: { 'background-color': '#ef4444', 'border-color': '#fca5a5' } },
+                        { selector: 'node[role="service"]', style: { 'background-color': '#3b82f6', 'border-color': '#93c5fd' } },
+                        { selector: 'node[role="repository"]', style: { 'background-color': '#10b981', 'border-color': '#6ee7b7' } },
+                        { selector: 'node[role="model"]', style: { 'background-color': '#a855f7', 'shape': 'ellipse', 'border-color': '#d8b4fe' } },
+                        { selector: ':selected', style: { 'border-width': 3, 'border-color': '#fff', 'background-color': '#f59e0b' } },
                         {
                             selector: 'edge',
                             style: {
-                                'width': 1,
-                                'line-color': '#555',
-                                'target-arrow-color': '#555',
+                                'width': 2,
+                                'line-color': '#475569',
+                                'target-arrow-color': '#475569',
                                 'target-arrow-shape': 'triangle',
-                                'curve-style': 'bezier'
+                                'curve-style': 'bezier',
+                                'opacity': 0.7
                             }
-                        }
+                        },
+                         { selector: 'edge:selected', style: { 'line-color': '#f59e0b', 'target-arrow-color': '#f59e0b', 'opacity': 1 } }
                     ],
                     layout: {
                         name: 'dagre',
-                        rankDir: 'TB', // Top to Bottom
+                        rankDir: 'TB',
                         padding: 50,
-                        nodeSep: 20,
-                        rankSep: 80
-                    }
-                });
-                
-                cy.on('tap', 'node', function(evt){
-                    var node = evt.target;
-                    console.log(node.id());
+                        nodeSep: 30,
+                        rankSep: 80,
+                        animate: true
+                    },
+                    wheelSensitivity: 0.2
+                };
+
+                if (cy) cy.destroy();
+                cy = cytoscape(config);
+
+                // Event Listeners
+                cy.on('tap', 'node', (evt) => {
+                    const node = evt.target;
+                    showInspector(node.data());
                 });
 
-                status.innerText = `${repo}: ${d.elements.nodes.length} nodes`;
+                cy.on('tap', (evt) => {
+                    if (evt.target === cy) closeInspector();
+                });
+
+                isGraphLoaded = true;
 
             } catch(e) {
-                status.innerText = 'Error: ' + e.message;
+                console.error(e);
+                alert("Graph Load Error: " + e.message);
+            } finally {
+                loading.style.display = 'none';
             }
         }
+
+        function changeLayout(name) {
+            if (!cy) return;
+            const layoutConfig = {
+                name: name,
+                animate: true,
+                animationDuration: 500,
+                padding: 50
+            };
+            if (name === 'dagre') {
+                layoutConfig.rankDir = 'TB';
+                layoutConfig.nodeSep = 30;
+                layoutConfig.rankSep = 80;
+            }
+            cy.layout(layoutConfig).run();
+        }
+
+        function fitGraph() {
+            if (cy) cy.fit(50);
+        }
+
+        function zoomGraph(factor) {
+            if (!cy) return;
+            const zoom = cy.zoom();
+            cy.zoom({ level: zoom + factor, position: { x: cy.width()/2, y: cy.height()/2 } });
+        }
+
+        function searchNodes(query) {
+            if (!cy || !query) return;
+            query = query.toLowerCase();
+            cy.batch(() => {
+                cy.nodes().removeClass('hidden'); // Reset
+                if (query.length > 0) {
+                    const match = cy.nodes().filter(n => n.data('label').toLowerCase().includes(query));
+                    const nonMatch = cy.nodes().difference(match);
+                    // nonMatch.addClass('hidden'); // Or dim them
+                    nonMatch.style('opacity', 0.1);
+                    match.style('opacity', 1);
+                    if(match.length > 0) cy.fit(match, 50);
+                } else {
+                    cy.nodes().style('opacity', 1);
+                }
+            });
+        }
+
+        // --- Inspector Panel ---
+        function showInspector(data) {
+            document.getElementById('ins-name').innerText = data.label;
+            document.getElementById('ins-kind').innerText = data.kind || 'Unknown';
+            document.getElementById('ins-role').innerText = (data.role || 'other').toUpperCase();
+            document.getElementById('ins-path').innerText = data.path || '-';
+            
+            document.getElementById('inspector').classList.add('open');
+        }
+
+        function closeInspector() {
+            document.getElementById('inspector').classList.remove('open');
+        }
+
     </script>
 </body>
 </html>

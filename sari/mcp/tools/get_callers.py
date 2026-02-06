@@ -1,6 +1,16 @@
 import json
 from typing import Any, Dict, List
-from sari.mcp.tools._util import mcp_response, pack_header, pack_line, pack_encode_id, pack_encode_text, resolve_root_ids, pack_error, ErrorCode
+from sari.mcp.tools._util import (
+    mcp_response,
+    pack_header,
+    pack_line,
+    pack_encode_id,
+    pack_encode_text,
+    resolve_root_ids,
+    resolve_repo_scope,
+    pack_error,
+    ErrorCode,
+)
 from sari.mcp.tools.call_graph import build_call_graph
 
 def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[str, Any]:
@@ -35,14 +45,23 @@ def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict
             ORDER BY from_path, line
         """
         params.append(target_symbol)
-    root_ids = resolve_root_ids(roots)
-    if root_ids:
-        root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
+    allowed_root_ids = resolve_root_ids(roots)
+    req_root_ids = args.get("root_ids")
+    if isinstance(req_root_ids, list) and req_root_ids:
+        req_set = {str(x) for x in req_root_ids if x}
+        effective_root_ids = [rid for rid in allowed_root_ids if rid in req_set]
+    else:
+        effective_root_ids = allowed_root_ids
+
+    _, repo_root_ids = resolve_repo_scope(repo, roots, db=db)
+    if repo_root_ids:
+        repo_set = set(repo_root_ids)
+        effective_root_ids = [rid for rid in effective_root_ids if rid in repo_set] if effective_root_ids else list(repo_root_ids)
+
+    if effective_root_ids:
+        root_clause = " OR ".join(["from_path LIKE ?"] * len(effective_root_ids))
         sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
-        params.extend([f"{rid}/%" for rid in root_ids])
-    if repo:
-        sql = sql.replace("ORDER BY", "AND from_path LIKE ? ORDER BY")
-        params.append(f"%/{repo}/%")
+        params.extend([f"{rid}/%" for rid in effective_root_ids])
     if target_path:
         sql = sql.replace("ORDER BY", "AND (to_path = ? OR to_path = '' OR to_path IS NULL) ORDER BY")
         params.append(target_path)
@@ -61,13 +80,10 @@ def execute_get_callers(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict
             ORDER BY from_path, line
         """
         params = [target_symbol]
-        if root_ids:
-            root_clause = " OR ".join(["from_path LIKE ?"] * len(root_ids))
+        if effective_root_ids:
+            root_clause = " OR ".join(["from_path LIKE ?"] * len(effective_root_ids))
             sql = sql.replace("ORDER BY", f"AND ({root_clause}) ORDER BY")
-            params.extend([f"{rid}/%" for rid in root_ids])
-        if repo:
-            sql = sql.replace("ORDER BY", "AND from_path LIKE ? ORDER BY")
-            params.append(f"%/{repo}/%")
+            params.extend([f"{rid}/%" for rid in effective_root_ids])
         if target_path:
             sql = sql.replace("ORDER BY", "AND (to_path = ? OR to_path = '' OR to_path IS NULL) ORDER BY")
             params.append(target_path)

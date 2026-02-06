@@ -2,7 +2,7 @@ import json
 import os
 import urllib.parse
 from enum import Enum
-from typing import Any, Dict, Optional, List, Callable
+from typing import Any, Dict, Optional, List, Callable, Tuple
 from pathlib import Path
 from sari.core.workspace import WorkspaceManager
 
@@ -215,6 +215,84 @@ def resolve_root_ids(roots: List[str]) -> List[str]:
         except Exception:
             continue
     return list(dict.fromkeys(out))
+
+
+def _intersect_preserve_order(base: List[str], rhs: List[str]) -> List[str]:
+    rhs_set = set(rhs)
+    return [x for x in base if x in rhs_set]
+
+
+def resolve_repo_scope(
+    repo: Optional[str],
+    roots: List[str],
+    db: Optional[Any] = None,
+) -> Tuple[Optional[str], List[str]]:
+    """
+    Resolve repo argument into:
+    - effective_repo: value for files.repo exact filter (when repo token is truly repo bucket like 'src')
+    - effective_root_ids: root scope inferred from root labels/names/paths and DB metadata
+    """
+    allowed_root_ids = resolve_root_ids(roots)
+    repo_raw = str(repo or "").strip()
+    if not repo_raw:
+        return None, allowed_root_ids
+
+    q = repo_raw.lower()
+    allow_legacy = str(os.environ.get("SARI_ALLOW_LEGACY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    matched_root_ids: List[str] = []
+    for r in roots or []:
+        try:
+            rp = Path(r).expanduser().resolve()
+            name = rp.name.lower()
+            full = str(rp).lower()
+            if q == name or q == full or (q and q in name):
+                matched_root_ids.append(WorkspaceManager.root_id_for_workspace(str(rp)))
+                if allow_legacy:
+                    matched_root_ids.append(WorkspaceManager.root_id(str(rp)))
+        except Exception:
+            continue
+
+    db_repo_root_ids: List[str] = []
+    db_root_match_ids: List[str] = []
+    if db is not None:
+        conn = getattr(db, "_read", None)
+        if conn is None and hasattr(db, "get_read_connection"):
+            try:
+                conn = db.get_read_connection()
+            except Exception:
+                conn = None
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "SELECT DISTINCT root_id FROM files WHERE LOWER(COALESCE(repo, '')) = LOWER(?)",
+                    (repo_raw,),
+                ).fetchall()
+                db_repo_root_ids = [str(r[0]) for r in rows if r and r[0]]
+            except Exception:
+                db_repo_root_ids = []
+            try:
+                rows = conn.execute(
+                    "SELECT root_id FROM roots WHERE LOWER(COALESCE(label, '')) = LOWER(?) OR LOWER(COALESCE(root_path, '')) LIKE ?",
+                    (repo_raw, f"%/{q}%"),
+                ).fetchall()
+                db_root_match_ids = [str(r[0]) for r in rows if r and r[0]]
+            except Exception:
+                db_root_match_ids = []
+
+    if db_root_match_ids:
+        matched_root_ids.extend(db_root_match_ids)
+
+    if matched_root_ids:
+        if allowed_root_ids:
+            return None, _intersect_preserve_order(allowed_root_ids, matched_root_ids)
+        return None, list(dict.fromkeys(matched_root_ids))
+
+    if db_repo_root_ids:
+        if allowed_root_ids:
+            return repo_raw, _intersect_preserve_order(allowed_root_ids, db_repo_root_ids)
+        return repo_raw, list(dict.fromkeys(db_repo_root_ids))
+
+    return repo_raw, allowed_root_ids
 
 def _is_safe_relative_path(rel: str) -> bool:
     if rel is None:

@@ -75,6 +75,27 @@ def test_config_manager_detection(tmp_path):
     assert "core" in profiles
     assert "python" in profiles
 
+
+def test_config_manager_detection_uses_configured_roots(tmp_path):
+    ws = tmp_path / "sari"
+    ws.mkdir()
+    (ws / "requirements.txt").touch()
+    (ws / ".sari").mkdir()
+    umbrella = tmp_path / "repositories"
+    umbrella.mkdir()
+    (umbrella / "build.gradle").touch()
+    (umbrella / "package.json").touch()
+
+    cfg = ws / ".sari" / "mcp-config.json"
+    cfg.write_text(json.dumps({"roots": [str(ws), str(umbrella)]}), encoding="utf-8")
+
+    manager = ConfigManager(workspace_root=str(ws))
+    profiles = manager.detect_profiles()
+    assert "core" in profiles
+    assert "python" in profiles
+    assert "java" in profiles
+    assert "web" in profiles
+
 def test_config_manager_merge(tmp_path):
     ws_sari = tmp_path / ".sari"
     ws_sari.mkdir()

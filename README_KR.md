@@ -265,11 +265,13 @@ sari status
 | `SARI_MAX_DEPTH` | 최대 스캔 깊이. | `30` |
 | `SARI_MAX_PARSE_BYTES` | 파싱 최대 파일 크기. | `16777216` |
 | `SARI_MAX_AST_BYTES` | AST 파싱 최대 파일 크기. | `8388608` |
-| `SARI_INDEX_WORKERS` | 인덱서 워커 수. | `2` |
-| `SARI_INDEX_MEM_MB` | 인덱싱 메모리 제한(`0`이면 무제한). | `0` |
+| `SARI_INDEX_WORKERS` | 인덱서 워커 수. | `6` |
+| `SARI_INDEX_MEM_MB` | 인덱싱 메모리 제한. | `4096` |
 | `SARI_COALESCE_SHARDS` | 코얼레싱 락 샤드 수. | `16` |
 | `SARI_PARSE_TIMEOUT_SECONDS` | 파일별 파싱 타임아웃(`0` 비활성). | `0` |
 | `SARI_GIT_CHECKOUT_DEBOUNCE` | Git 이벤트 후 디바운스 시간. | `3.0` |
+| `SARI_MANUAL_ONLY` | `1`로 설정하면 자동 프로파일 감지를 끕니다. | `0` |
+| `SARI_KEEP_NESTED_ROOTS` | 중첩 워크스페이스를 유지합니다(권장하지 않음). | `0` |
 
 ### 유지보수 / 고급
 | 변수명 | 설명 | 기본값 |
@@ -294,6 +296,15 @@ sari status
 sari status
 sari doctor
 ```
+
+워크스페이스 정책:
+- `.sari`는 워크스페이스 로컬 설정/캐시 디렉토리이며 스캔 경계가 아닙니다.
+- 명시적 스캔 경계 마커는 `.sariroot`입니다.
+- 중첩 워크스페이스는 기본적으로 레지스트리에서 자동 dedupe 됩니다.
+
+내부 복구 도구:
+- `scan_once` / `rescan`은 내부 복구용입니다.
+- 기본 도구 목록에서는 숨김 처리되며, 진단/복구 경로에서만 사용됩니다.
 
 `--auto-fix` 등 고급 doctor 옵션은 아래 명령으로 사용할 수 있습니다:
 ```bash

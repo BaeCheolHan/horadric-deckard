@@ -266,11 +266,13 @@ How to set:
 | `SARI_MAX_DEPTH` | Max scan depth. | `30` |
 | `SARI_MAX_PARSE_BYTES` | Max parse file size. | `16777216` |
 | `SARI_MAX_AST_BYTES` | Max AST parse file size. | `8388608` |
-| `SARI_INDEX_WORKERS` | Index worker count. | `2` |
-| `SARI_INDEX_MEM_MB` | Indexing memory cap (`0` means no cap). | `0` |
+| `SARI_INDEX_WORKERS` | Index worker count. | `6` |
+| `SARI_INDEX_MEM_MB` | Indexing memory cap. | `4096` |
 | `SARI_COALESCE_SHARDS` | Coalescing lock shard count. | `16` |
 | `SARI_PARSE_TIMEOUT_SECONDS` | Per-file parse timeout (`0` disables). | `0` |
 | `SARI_GIT_CHECKOUT_DEBOUNCE` | Debounce after git-heavy events. | `3.0` |
+| `SARI_MANUAL_ONLY` | Disable auto profile detection when set to `1`. | `0` |
+| `SARI_KEEP_NESTED_ROOTS` | Keep nested workspaces (not recommended). | `0` |
 
 ### Maintenance / Advanced
 | Variable | Description | Default |
@@ -297,6 +299,10 @@ Once connected, your AI assistant can use these tools:
 - **`search_symbols`**: Find classes, functions, or methods by name.
 - **`read_symbol`**: Read only the definition of a specific symbol (saves context).
 
+### Internal Recovery Tools
+- **`scan_once`** / **`rescan`** are internal recovery tools.
+- They are hidden by default from tool listing and used only for diagnostics/recovery paths.
+
 ### Intelligence Tools
 - **`call_graph`**: Analyze function call relationships (upstream/downstream).
 - **`save_snippet` / `get_snippet`**: Save and retrieve important code blocks with tags.
@@ -318,6 +324,11 @@ sari status
 `.codex/tools/sari/data/server.json` (workspace-local). The daemon port is
 discovered via the global registry at `~/.local/share/sari/server.json`, so
 clients can reconnect without manual port changes.
+
+Workspace policy:
+- `.sari` is a workspace-local config/cache directory only (not a scan boundary).
+- Explicit scan boundary marker is `.sariroot`.
+- Nested workspace dedupe is registry-driven by default.
 
 #### If Daemon Port Is Busy
 If you see a message like "Daemon already running" but things still don't work,

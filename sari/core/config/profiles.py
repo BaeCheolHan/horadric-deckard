@@ -58,5 +58,5 @@ PROFILES: Dict[str, Profile] = {
         filenames={"Dockerfile", "docker-compose.yml"},
         detect_files=["Dockerfile", "docker-compose.yml", "*.tf", "*.tfvars"]
     ),
-    # Add more as per ARCHITECTURE.md...
+    # Add more as per docs/reference/ARCHITECTURE.md...
 }

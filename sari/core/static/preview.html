@@ -3,289 +3,144 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sari | Real-time Dashboard</title>
+    <title>Sari | Preview</title>
     <style>
         :root {
-            --bg-color: #f8fafc;
-            --card-bg: #ffffff;
+            /* Palette: Slate & Blue (Tailwind-ish) - Matching index.html */
+            --bg-body: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --border-color: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
             --primary: #3b82f6;
-            --secondary: #64748b;
             --success: #10b981;
             --warning: #f59e0b;
             --error: #ef4444;
-            --border: #e2e8f0;
-            --text-main: #1e293b;
-            --text-dim: #64748b;
+            
+            --radius-md: 8px;
+            --radius-lg: 12px;
         }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bg-color: #0f172a;
-                --card-bg: #1e293b;
-                --border: #334155;
-                --text-main: #f1f5f9;
-                --text-dim: #94a3b8;
-            }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 20px;
         }
-        body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg-color); color: var(--text-main); margin: 0; padding: 20px; transition: all 0.3s; }
-        .dashboard { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-        .header { grid-column: span 3; display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; flex-direction: column; }
-        .span-2 { grid-column: span 2; }
-        .span-3 { grid-column: span 3; }
-        
-        h2 { margin-top: 0; font-size: 1.1rem; color: var(--primary); border-bottom: 1px solid var(--border); padding-bottom: 10px; display: flex; align-items: center; justify-content: space-between; text-transform: uppercase; letter-spacing: 0.05em; }
-        .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .stat-box { display: flex; flex-direction: column; }
-        .stat-label { font-size: 0.85rem; color: var(--text-dim); }
-        .stat-value { font-size: 1.5rem; font-weight: bold; font-family: 'JetBrains Mono', monospace; }
-        
-        .progress-container { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-top: 6px; position: relative; }
-        .progress-bar { height: 100%; background: var(--primary); transition: width 0.5s ease; border-radius: 4px; }
-        
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th { text-align: left; font-size: 0.85rem; color: var(--text-dim); padding: 8px; border-bottom: 1px solid var(--border); }
-        td { padding: 12px 8px; font-size: 0.95rem; border-bottom: 1px solid var(--border); }
-        
-        .badge { padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: bold; }
-        .badge-success { background: rgba(16, 185, 129, 0.1); color: var(--success); }
-        .badge-error { background: rgba(239, 68, 68, 0.1); color: var(--error); }
-        
-        .metric-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-        .metric-label { font-size: 0.9rem; }
-        .metric-value { font-weight: bold; font-family: monospace; }
-        
-        .btn { cursor: pointer; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--primary); background: transparent; color: var(--primary); font-weight: bold; transition: all 0.2s; font-size: 0.85rem; }
-        .btn:hover { background: var(--primary); color: white; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-sm { padding: 4px 8px; font-size: 0.75rem; }
 
-        .resource-card { display: flex; flex-direction: column; gap: 12px; }
-        .resource-item { display: flex; flex-direction: column; }
-        .resource-header { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 4px; }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
 
-        .doctor-list { list-style: none; padding: 0; margin-top: 10px; max-height: 250px; overflow-y: auto; }
-        .doctor-item { padding: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 10px; font-size: 0.85rem; }
-        .doctor-status { font-size: 1.1rem; }
-        .doctor-info { flex: 1; }
-        .doctor-name { font-weight: bold; }
-        .doctor-err { color: var(--error); font-size: 0.75rem; margin-top: 2px; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
 
-        .root-list { list-style: none; padding: 0; }
-        .root-item { padding: 10px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
-        .root-icon { width: 24px; height: 24px; margin-right: 12px; background: var(--border); border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+        .brand { font-size: 1.2rem; font-weight: 700; color: var(--primary); }
+        .status-tag { font-size: 0.8rem; color: var(--text-secondary); }
+
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        h2 { margin-top: 0; font-size: 1rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px; }
+
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 0.9rem; }
+        .stat-val { font-family: monospace; font-weight: bold; font-size: 1rem; }
+
+        .progress-track { height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+        .progress-fill { height: 100%; background: var(--primary); border-radius: 3px; }
+
+        .btn {
+            background: var(--bg-hover); border: 1px solid var(--border-color); color: var(--text-primary);
+            padding: 8px 16px; border-radius: var(--radius-md); cursor: pointer; font-size: 0.85rem;
+        }
+        .btn:hover { background: var(--border-color); }
+
+        .log-box {
+            background: #000; padding: 10px; border-radius: var(--radius-md); font-family: monospace; font-size: 0.8rem; color: #ccc;
+            max-height: 150px; overflow-y: auto;
+        }
     </style>
 </head>
 <body>
-    <div class="dashboard">
+    <div class="container">
         <div class="header">
-            <div>
-                <h1 style="margin:0;">Sari <span style="font-weight:normal; color:var(--secondary); font-size: 1.1rem;" id="v-tag">v1.0.3</span></h1>
-                <div style="font-size:0.85rem; color:var(--text-dim);" id="host-tag">127.0.0.1:47777</div>
-            </div>
-            <div style="display:flex; gap:10px; align-items:center;">
-                <span id="update-indicator" style="font-size: 0.75rem; color: var(--success); opacity: 0; transition: opacity 0.3s;">Updating...</span>
-                <button class="btn" onclick="update()">Refresh Dashboard</button>
-            </div>
+            <div class="brand">⚡ Sari Preview</div>
+            <div class="status-tag" id="conn-status">Connecting...</div>
         </div>
 
-        <!-- Summary -->
         <div class="card">
-            <h2>Summary <span class="badge badge-success" id="index-ready">Ready</span></h2>
-            <div class="stat-grid">
-                <div class="stat-box">
-                    <span class="stat-label">Indexed Files</span>
-                    <span class="stat-value" id="total-files">0</span>
-                </div>
-                <div class="stat-box">
-                    <span class="stat-label">Workers</span>
-                    <span class="stat-value" id="worker-count">0</span>
-                </div>
-            </div>
-            <div class="progress-container" style="margin-top:20px;">
-                <div class="progress-bar" id="sync-progress" style="width: 0%"></div>
-            </div>
-            <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-dim); margin-top:5px;">
-                <span id="last-sync">Last: -</span>
-                <span id="scan-ratio">0%</span>
+            <h2>Quick Stats</h2>
+            <div class="stat-row"><span>Indexed Files</span> <span class="stat-val" id="idx-files">-</span></div>
+            <div class="stat-row"><span>Throughput</span> <span class="stat-val" id="tps">- docs/s</span></div>
+            <div class="stat-row"><span>Queue</span> <span class="stat-val" id="queue">-</span></div>
+            
+            <div style="margin-top:15px;">
+                <div style="display:flex; justify-content:space-between; font-size:0.8rem;"><span>Scan Progress</span> <span id="scan-pct">0%</span></div>
+                <div class="progress-track"><div class="progress-fill" id="scan-bar" style="width:0%"></div></div>
             </div>
         </div>
 
-        <!-- System Resources -->
         <div class="card">
-            <h2>Resources</h2>
-            <div class="resource-card">
-                <div class="resource-item">
-                    <div class="resource-header"><span>CPU</span><span id="cpu-val">0%</span></div>
-                    <div class="progress-container"><div class="progress-bar" id="cpu-bar" style="width: 0%"></div></div>
-                </div>
-                <div class="resource-item">
-                    <div class="resource-header"><span>Memory</span><span id="mem-val">0 / 0 GB</span></div>
-                    <div class="progress-container"><div class="progress-bar" id="mem-bar" style="width: 0%"></div></div>
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:5px; font-size:0.8rem;">
-                    <div>Sari: <span id="proc-mem" style="font-weight:bold;">0 MB</span></div>
-                    <div>Threads: <span id="proc-threads" style="font-weight:bold;">0</span></div>
-                </div>
-            </div>
+            <h2>System Health</h2>
+            <div class="stat-row"><span>CPU</span> <span class="stat-val" id="cpu">-</span></div>
+            <div class="progress-track" style="margin-bottom:10px;"><div class="progress-fill" id="cpu-bar" style="width:0%"></div></div>
+            
+            <div class="stat-row"><span>Memory</span> <span class="stat-val" id="mem">-</span></div>
+            <div class="progress-track"><div class="progress-fill" id="mem-bar" style="width:0%"></div></div>
         </div>
 
-        <!-- Sari Doctor -->
         <div class="card">
-            <h2>Sari Doctor <button class="btn btn-sm" id="btn-doctor" onclick="runDoctor()">Run Check</button></h2>
-            <div id="doctor-results" class="doctor-list">
-                <p style="color:var(--text-dim); font-size:0.8rem; text-align:center; margin-top:20px;">진단 버튼을 눌러 시스템 상태를 점검하세요.</p>
-            </div>
-        </div>
-
-        <!-- Indexing Performance -->
-        <div class="card">
-            <h2>Throughput</h2>
-            <div style="text-align:center; padding: 10px 0;">
-                <div class="stat-value" style="font-size: 3rem; color: var(--primary);" id="tps">0.0</div>
-                <div class="stat-label">Docs / Sec</div>
-            </div>
-            <div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
-                <div class="metric-row"><span class="metric-label">P50 Latency</span><span class="metric-value" id="p50">- ms</span></div>
-                <div class="metric-row"><span class="metric-label">P95 Latency</span><span class="metric-value" id="p95">- ms</span></div>
-            </div>
-        </div>
-
-        <!-- Queue Depth -->
-        <div class="card">
-            <h2>Queue Depth</h2>
-            <div id="queues"></div>
-        </div>
-
-        <!-- Repository Statistics -->
-        <div class="card">
-            <h2>Repositories</h2>
-            <div style="flex:1; overflow-y:auto; max-height:200px;">
-                <table>
-                    <thead>
-                        <tr><th>Repo</th><th style="text-align:right;">Files</th></tr>
-                    </thead>
-                    <tbody id="repo-table"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Managed Roots -->
-        <div class="card span-3">
-            <h2>Workspace Roots</h2>
-            <div id="root-list" class="root-list"></div>
+            <h2>Actions</h2>
+            <button class="btn" onclick="location.reload()">Reload Preview</button>
+            <button class="btn" onclick="window.location.href='/'">Open Full Dashboard</button>
         </div>
     </div>
 
     <script>
-        function setBar(id, pct) {
-            const bar = document.getElementById(id);
-            if (!bar) return;
-            bar.style.width = pct + '%';
-            if (pct > 85) bar.style.background = 'var(--error)';
-            else if (pct > 65) bar.style.background = 'var(--warning)';
-            else bar.style.background = 'var(--primary)';
-        }
-
-        async function update() {
-            const indicator = document.getElementById('update-indicator');
-            indicator.style.opacity = '1';
-            
+        async function refresh() {
             try {
-                const res = new Response(JSON.stringify({ok:true, version:"1.0.3", host:"127.0.0.1", port:47777, index_ready:true, last_commit_ts:Math.floor(Date.now()/1000)-60, scanned_files:12500, indexed_files:10850, worker_count:4, performance:{throughput_docs_sec:452.1, latency_p50:0.012, latency_p95:0.045, db_time_total:12.5}, queue_depths:{fair_queue:125, priority_queue:0, db_writer:42}, repo_stats:{"sari-core":4500, "sari-mcp":2300, "ui-assets":4050}, roots:[{label:"Sari Main", real_path:"/Users/dev/sari", state:"active"},{label:"Docs", real_path:"/Users/dev/docs", state:"active"}], system_metrics:{cpu_percent:24.5, memory_percent:42.1, memory_used_gb:6.7, memory_total_gb:16.0, disk_percent:15.8, process_memory_mb:156.4, process_thread_count:12}}));
+                const res = await fetch('/status');
                 const d = await res.json();
                 if (!d.ok) return;
 
-                document.getElementById('v-tag').innerText = 'v' + d.version;
-                document.getElementById('host-tag').innerText = `${d.host}:${d.port}`;
-                document.getElementById('total-files').innerText = d.indexed_files.toLocaleString();
-                document.getElementById('worker-count').innerText = d.worker_count;
-                document.getElementById('last-sync').innerText = 'Last: ' + new Date(d.last_commit_ts * 1000).toLocaleTimeString();
-                
-                const progress = d.scanned_files > 0 ? (d.indexed_files / d.scanned_files) * 100 : 0;
-                document.getElementById('sync-progress').style.width = progress + '%';
-                document.getElementById('scan-ratio').innerText = Math.round(progress) + '%';
+                document.getElementById('conn-status').innerText = 'Online v' + (d.version || '');
+                document.getElementById('idx-files').innerText = d.indexed_files.toLocaleString();
+                document.getElementById('tps').innerText = (d.performance?.throughput_docs_sec || 0).toFixed(1) + ' /s';
+                document.getElementById('queue').innerText = d.queue_depths?.fair_queue || 0;
+
+                const scanned = d.scanned_files || 0;
+                const indexed = d.indexed_files || 0;
+                const pct = scanned > 0 ? (indexed/scanned)*100 : 0;
+                document.getElementById('scan-pct').innerText = pct.toFixed(0) + '%';
+                document.getElementById('scan-bar').style.width = pct + '%';
 
                 const sys = d.system_metrics || {};
-                document.getElementById('cpu-val').innerText = (sys.cpu_percent || 0).toFixed(1) + '%';
-                setBar('cpu-bar', sys.cpu_percent || 0);
-                document.getElementById('mem-val').innerText = `${sys.memory_used_gb || 0} / ${sys.memory_total_gb || 0} GB`;
-                setBar('mem-bar', sys.memory_percent || 0);
-                document.getElementById('proc-mem').innerText = (sys.process_memory_mb || 0) + ' MB';
-                document.getElementById('proc-threads').innerText = (sys.process_thread_count || 0);
+                document.getElementById('cpu').innerText = (sys.cpu_percent || 0).toFixed(1) + '%';
+                document.getElementById('cpu-bar').style.width = (sys.cpu_percent || 0) + '%';
+                
+                document.getElementById('mem').innerText = (sys.memory_used_gb || 0).toFixed(1) + ' GB';
+                document.getElementById('mem-bar').style.width = (sys.memory_percent || 0) + '%';
 
-                const perf = d.performance || {};
-                document.getElementById('tps').innerText = perf.throughput_docs_sec || '0.0';
-                document.getElementById('p50').innerText = ((perf.latency_p50 || 0) * 1000).toFixed(1) + ' ms';
-                document.getElementById('p95').innerText = ((perf.latency_p95 || 0) * 1000).toFixed(1) + ' ms';
-
-                const qs = d.queue_depths || {};
-                const qContainer = document.getElementById('queues');
-                qContainer.innerHTML = '';
-                for (const [name, size] of Object.entries(qs)) {
-                    const pct = Math.min(100, (size / 1000) * 100);
-                    qContainer.innerHTML += `
-                        <div class="metric-row"><span class="metric-label" style="font-size:0.8rem;">${name}</span><span class="metric-value" style="font-size:0.8rem;">${size}</span></div>
-                        <div class="progress-container" style="height:4px; margin-bottom:10px;"><div class="progress-bar" style="width: ${pct}%; background: ${size > 500 ? 'var(--error)' : 'var(--primary)'}"></div></div>
-                    `;
-                }
-
-                const repos = d.repo_stats || {};
-                const rTable = document.getElementById('repo-table');
-                rTable.innerHTML = '';
-                for (const [name, count] of Object.entries(repos)) {
-                    rTable.innerHTML += `<tr><td style="font-weight:500;">${name}</td><td style="text-align:right; font-family:monospace;">${count.toLocaleString()}</td></tr>`;
-                }
-
-                const roots = d.roots || [];
-                const rootList = document.getElementById('root-list');
-                rootList.innerHTML = '';
-                roots.forEach(r => {
-                    rootList.innerHTML += `
-                        <div class="root-item">
-                            <div class="root-icon">📁</div>
-                            <div style="flex:1"><div style="font-weight:bold; font-size:0.9rem;">${r.label || 'Root'}</div><div style="font-size:0.75rem; color:var(--text-dim);">${r.real_path}</div></div>
-                            <div class="badge badge-success">${r.state}</div>
-                        </div>`;
-                });
-
-            } catch (e) { console.error(e); }
-            setTimeout(() => indicator.style.opacity = '0', 500);
-        }
-
-        async function runDoctor() {
-            const btn = document.getElementById('btn-doctor');
-            const container = document.getElementById('doctor-results');
-            btn.disabled = true;
-            btn.innerText = 'Checking...';
-            container.innerHTML = '<p style="text-align:center; padding:20px; font-size:0.8rem;">진단 중입니다...</p>';
-
-            try {
-                const res = await fetch('/doctor');
-                const data = await res.json();
-                if (data.ok) {
-                    container.innerHTML = '';
-                    data.summary.results.forEach(r => {
-                        const icon = r.passed ? '✅' : (r.warn ? '⚠️' : '❌');
-                        container.innerHTML += `
-                            <div class="doctor-item">
-                                <div class="doctor-status">${icon}</div>
-                                <div class="doctor-info">
-                                    <div class="doctor-name">${r.name}</div>
-                                    ${r.passed ? '' : `<div class="doctor-err">${r.error}</div>`}
-                                </div>
-                            </div>`;
-                    });
-                }
-            } catch (e) {
-                container.innerHTML = '<p style="color:var(--error); padding:20px; font-size:0.8rem;">진단 실패: 서버 연결을 확인하세요.</p>';
-            } finally {
-                btn.disabled = false;
-                btn.innerText = 'Run Check';
+            } catch(e) {
+                document.getElementById('conn-status').innerText = 'Offline';
             }
         }
-
-        update();
-        setInterval(update, 5000);
+        setInterval(refresh, 2000);
+        refresh();
     </script>
 </body>
 </html>

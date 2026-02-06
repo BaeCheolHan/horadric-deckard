@@ -76,9 +76,26 @@ def test_vue_script_symbols():
     parser = ParserFactory.get_parser(".vue")
     symbols, _ = parser.extract("Comp.vue", vue_code)
     names = [s[1] for s in symbols]
+    assert "Comp" in names
     assert "onClick" in names
     assert "helper" in names
     assert "boot" in names
+
+
+def test_java_annotation_without_group1_does_not_crash():
+    java_code = """
+    @RestController
+    @Tag(name = "api")
+    public class DemoController {
+        @GetMapping("/demo")
+        public String ping() { return "ok"; }
+    }
+    """
+    parser = ParserFactory.get_parser(".java")
+    symbols, _ = parser.extract("DemoController.java", java_code)
+    names = [s[1] for s in symbols]
+    assert "DemoController" in names
+    assert "ping" in names
 
 if __name__ == "__main__":
     test_js_arrow_functions()

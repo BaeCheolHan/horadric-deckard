@@ -10,6 +10,7 @@ from sari.mcp.tools._util import (
     pack_encode_id,
     pack_encode_text,
     resolve_root_ids,
+    resolve_repo_scope,
 )
 
 
@@ -74,7 +75,10 @@ def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, logger: Any,
     else:
         root_ids = allowed_root_ids
 
-    repo = str(args.get("repo", "")).strip() or None
+    repo_arg = str(args.get("repo", "")).strip() or None
+    repo, repo_root_ids = resolve_repo_scope(repo_arg, roots, db=db)
+    if repo_root_ids:
+        root_ids = [rid for rid in root_ids if rid in set(repo_root_ids)] if root_ids else list(repo_root_ids)
     path_prefix = str(args.get("path_prefix", "")).strip() or None
     kinds_arg = args.get("kinds")
     single_kind = str(args.get("kind", "")).strip()

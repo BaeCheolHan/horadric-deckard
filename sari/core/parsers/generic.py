@@ -1,6 +1,7 @@
 import re
 import json
 from typing import List, Tuple, Dict, Any, Optional
+from pathlib import Path
 from .base import BaseParser
 from .common import _qualname, _symbol_id, _safe_compile, NORMALIZE_KIND_BY_EXT
 
@@ -50,6 +51,12 @@ class GenericRegexParser(BaseParser):
 
     def extract(self, path: str, content: str) -> Tuple[List[Tuple], List[Tuple]]:
         symbols, relations = [], []
+        js_like_ext = {".js", ".jsx", ".ts", ".tsx", ".vue"}
+        js_noise_names = {
+            "if", "for", "while", "switch", "catch", "return", "new", "class", "interface",
+            "enum", "case", "do", "else", "try", "throw", "throws", "super", "this",
+            "function", "const", "let", "var", "default",
+        }
         
         # Pre-process: Blank out block comments while preserving line count
         # This prevents matching symbols inside multi-line comments.
@@ -107,7 +114,9 @@ class GenericRegexParser(BaseParser):
             m_annos = list(self.re_anno.finditer(line))
             if m_annos:
                 for m_anno in m_annos:
-                    tag = m_anno.group(1)
+                    tag = m_anno.group(1) or m_anno.group(2)
+                    if not tag:
+                        continue
                     tag_upper = tag.upper()
                     prefixed = f"@{tag}"
                     if prefixed not in pending_annos:
@@ -183,7 +192,17 @@ class GenericRegexParser(BaseParser):
                     if name and not any(name == x[0] for x in matches): 
                         matches.append((name, self.method_kind, m.start()))
 
-            for name, kind, _ in sorted(matches, key=lambda x: x[2]):
+            filtered_matches: List[Tuple[str, str, int]] = []
+            for name, kind, pos in sorted(matches, key=lambda x: x[2]):
+                if self.ext in js_like_ext:
+                    if name in js_noise_names:
+                        continue
+                    # Regex fallback frequently captures single-letter temp variables in JS/Vue.
+                    if len(name) < 2:
+                        continue
+                filtered_matches.append((name, kind, pos))
+
+            for name, kind, _ in filtered_matches:
                 meta = {"annotations": pending_annos.copy()}
                 if last_path: meta["http_path"] = last_path
                 parent = active_scopes[-1][1]["name"] if active_scopes else ""
@@ -205,7 +224,7 @@ class GenericRegexParser(BaseParser):
                 active_scopes.append((cur_bal, info))
                 pending_annos, last_path, pending_doc = [], None, []
 
-            if not matches and clean and not clean.startswith("@") and not in_doc:
+            if not filtered_matches and clean and not clean.startswith("@") and not in_doc:
                 current_symbol = None
                 current_sid = None
                 for _, info in reversed(active_scopes):
@@ -228,10 +247,10 @@ class GenericRegexParser(BaseParser):
                     for name in call_names:
                         relations.append((path, current_symbol, current_sid or "", "", name, "", "calls", line_no))
 
-            if not matches and clean and not clean.startswith("@") and not in_doc:
+            if not filtered_matches and clean and not clean.startswith("@") and not in_doc:
                 if "{" not in clean and "}" not in clean: pending_doc = []
 
-            if not matches and "(" not in clean and not clean.startswith("@"):
+            if not filtered_matches and "(" not in clean and not clean.startswith("@"):
                 if re.search(r"\b(public|private|protected|static|final|abstract|synchronized|native|default)\b", clean) or re.search(r"<[^>]+>", clean):
                     if not self.re_class.search(clean):
                         pending_method_prefix = clean
@@ -280,5 +299,26 @@ class GenericRegexParser(BaseParser):
                 relations.append((path, name, from_sid or "", "", b, "", "extends", decl_line))
             for b in pending_inheritance_impls:
                 relations.append((path, name, from_sid or "", "", b, "", "implements", decl_line))
+
+        # Vue SFC quality: expose component name as a class-like symbol by filename.
+        if self.ext == ".vue":
+            stem = Path(path).stem.strip()
+            if stem:
+                has_component = any(s[1] == stem and s[2] in {"class", "interface"} for s in symbols)
+                if not has_component:
+                    sid = _symbol_id(path, "class", stem)
+                    symbols.append((
+                        path,
+                        stem,
+                        "class",
+                        1,
+                        max(1, last_line),
+                        stem,
+                        "",
+                        "{}",
+                        "",
+                        stem,
+                        sid,
+                    ))
         symbols.sort(key=lambda s: (s[3], 0 if s[2] in {"class", "interface", "enum", "record"} else 1, s[1]))
         return symbols, relations

@@ -9,7 +9,7 @@ from .profiles import PROFILES, Profile
 
 class ConfigManager:
     """
-    Handles layered configuration merging with strict adherence to ARCHITECTURE.md.
+    Handles layered configuration merging with strict adherence to docs/reference/ARCHITECTURE.md.
     """
     
     def __init__(self, workspace_root: Optional[str] = None, manual_only: bool = False, settings_obj=None):
@@ -19,7 +19,7 @@ class ConfigManager:
         self.active_profiles: List[str] = ["core"]
         self.recommended_profiles: List[str] = []
         
-        # Aligned with ARCHITECTURE.md key schema
+        # Aligned with docs/reference/ARCHITECTURE.md key schema
         self.include_add: Set[str] = set()
         self.exclude_add: Set[str] = set()
         self.include_remove: Set[str] = set()
@@ -54,7 +54,7 @@ class ConfigManager:
         return (self.workspace_root / ".sariroot").exists()
 
     def detect_profiles(self) -> List[str]:
-        """Optimized O(D) profile detection using a single directory walk. Supports glob markers."""
+        """Optimized O(D) profile detection using a single directory walk per detection root."""
         if not self.workspace_root: return ["core"]
         
         detected = {"core"}
@@ -66,19 +66,19 @@ class ConfigManager:
                 marker_patterns.append((marker, name))
 
         try:
-            # We only scan up to depth 3 as per original logic
-            for root, dirs, files in os.walk(self.workspace_root, topdown=True):
-                depth = len(pathlib.Path(root).relative_to(self.workspace_root).parts)
-                if depth >= 3:
-                    dirs[:] = []
-                    continue
-                
-                for name in files + dirs:
-                    for pattern, profile_name in marker_patterns:
-                        if fnmatch.fnmatch(name, pattern):
-                            # In a real impl, we'd check .sariignore here
-                            detected.add(profile_name)
-                            break
+            for base_root in self._detection_roots():
+                # We only scan up to depth 3 as per original logic.
+                for root, dirs, files in os.walk(base_root, topdown=True):
+                    depth = len(pathlib.Path(root).relative_to(base_root).parts)
+                    if depth >= 3:
+                        dirs[:] = []
+                        continue
+
+                    for name in files + dirs:
+                        for pattern, profile_name in marker_patterns:
+                            if fnmatch.fnmatch(name, pattern):
+                                detected.add(profile_name)
+                                break
         except Exception:
             pass
         
@@ -87,9 +87,48 @@ class ConfigManager:
             self.active_profiles = self.recommended_profiles
         return self.recommended_profiles
 
+    def _detection_roots(self) -> List[pathlib.Path]:
+        """
+        Build candidate roots for profile detection.
+        Includes workspace root and any configured roots from workspace/global config.
+        """
+        roots: List[pathlib.Path] = []
+        seen: Set[str] = set()
+
+        def _add(p: pathlib.Path) -> None:
+            try:
+                rp = p.resolve()
+            except Exception:
+                rp = p
+            key = str(rp)
+            if key in seen:
+                return
+            if not rp.exists() or not rp.is_dir():
+                return
+            seen.add(key)
+            roots.append(rp)
+
+        _add(self.workspace_root)
+
+        cfg_path = pathlib.Path(WorkspaceManager.resolve_config_path(str(self.workspace_root)))
+        data = self._load_json(cfg_path)
+        cfg_roots = data.get("roots") or data.get("workspace_roots") or []
+        if isinstance(cfg_roots, list):
+            for r in cfg_roots:
+                if not r:
+                    continue
+                try:
+                    norm = pathlib.Path(WorkspaceManager.normalize_path(str(r)))
+                except Exception:
+                    norm = pathlib.Path(str(r))
+                _add(norm)
+
+        # Keep detection bounded for very large configs.
+        return roots[:8]
+
     def resolve_final_config(self) -> Dict[str, Any]:
         """
-        Executes the 6-step merge logic from ARCHITECTURE.md:
+        Executes the 6-step merge logic from docs/reference/ARCHITECTURE.md:
         1. Core profile (always on)
         2. Auto-detected profiles
         3. Global config

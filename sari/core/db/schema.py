@@ -8,7 +8,7 @@ logger = logging.getLogger("sari.db.schema")
 CURRENT_SCHEMA_VERSION = 1
 
 def init_schema(conn: sqlite3.Connection):
-    """Initialize database schema according to DB_SCHEMA.md (Redesign)."""
+    """Initialize database schema according to docs/reference/DB_SCHEMA.md (Redesign)."""
     cur = conn.cursor()
     
     # Check if schema_version exists
@@ -108,7 +108,7 @@ def _create_all_tables(cur: sqlite3.Cursor):
         );
     """)
 
-    # 4. Embeddings (Synced with DB_SCHEMA.md)
+    # 4. Embeddings (Synced with docs/reference/DB_SCHEMA.md)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS embeddings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

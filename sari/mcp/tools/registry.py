@@ -225,7 +225,17 @@ def build_default_registry() -> ToolRegistry:
     reg.register(Tool(
         name="read_symbol",
         description="Read symbol definition block by name/path. Use after search_symbols.",
-        input_schema={"type": "object", "properties": {"path": {"type": "string"}, "name": {"type": "string"}}, "required": ["path", "name"]},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Symbol name (recommended with path)"},
+                "symbol_id": {"type": "string", "description": "Stable symbol id from search_symbols/call_graph"},
+                "sid": {"type": "string", "description": "Alias for symbol_id"},
+                "path": {"type": "string", "description": "Scoped path/root_id path to disambiguate duplicated names"},
+                "limit": {"type": "integer", "default": 50},
+            },
+            "description": "Provide name+path or symbol_id/sid.",
+        },
         handler=lambda ctx, args: read_symbol_tool.execute_read_symbol(args, ctx.db, ctx.logger, ctx.roots),
     ))
 
@@ -266,14 +276,36 @@ def build_default_registry() -> ToolRegistry:
     reg.register(Tool(
         name="get_callers",
         description="Find callers of a symbol (use after search_symbols).",
-        input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Target symbol name"},
+                "symbol_id": {"type": "string", "description": "Preferred when available"},
+                "sid": {"type": "string", "description": "Alias for symbol_id"},
+                "path": {"type": "string", "description": "Optional target path for disambiguation"},
+                "repo": {"type": "string", "description": "Filter results by repository"},
+                "limit": {"type": "integer", "default": 100},
+            },
+            "description": "Provide name or symbol_id/sid.",
+        },
         handler=lambda ctx, args: get_callers_tool.execute_get_callers(args, ctx.db, ctx.roots),
     ))
 
     reg.register(Tool(
         name="get_implementations",
         description="Find implementations of a symbol (use after search_symbols).",
-        input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Interface/base type name"},
+                "symbol_id": {"type": "string", "description": "Preferred when available"},
+                "sid": {"type": "string", "description": "Alias for symbol_id"},
+                "path": {"type": "string", "description": "Optional target path for disambiguation"},
+                "repo": {"type": "string", "description": "Filter results by repository"},
+                "limit": {"type": "integer", "default": 100},
+            },
+            "description": "Provide name or symbol_id/sid.",
+        },
         handler=lambda ctx, args: get_implementations_tool.execute_get_implementations(args, ctx.db, ctx.roots),
     ))
 
@@ -283,16 +315,20 @@ def build_default_registry() -> ToolRegistry:
         input_schema={
             "type": "object",
             "properties": {
-                "symbol": {"type": "string"},
+                "symbol": {"type": "string", "description": "Target symbol name"},
+                "name": {"type": "string", "description": "Alias for symbol"},
                 "symbol_id": {"type": "string"},
+                "sid": {"type": "string", "description": "Alias for symbol_id"},
                 "path": {"type": "string"},
                 "depth": {"type": "integer", "default": 2},
                 "include_path": {"type": "array", "items": {"type": "string"}},
                 "exclude_path": {"type": "array", "items": {"type": "string"}},
+                "include_paths": {"type": "array", "items": {"type": "string"}},
+                "exclude_paths": {"type": "array", "items": {"type": "string"}},
                 "sort": {"type": "string", "enum": ["line", "name"], "default": "line"},
                 "quality_score": {"type": "number"},
             },
-            "required": ["symbol"],
+            "description": "Provide symbol/name or symbol_id/sid.",
         },
         handler=lambda ctx, args: call_graph_tool.execute_call_graph(args, ctx.db, ctx.roots),
     ))

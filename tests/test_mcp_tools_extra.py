@@ -10,6 +10,7 @@ from sari.mcp.tools.get_callers import execute_get_callers
 from sari.mcp.tools.get_implementations import execute_get_implementations
 from sari.mcp.tools.repo_candidates import execute_repo_candidates
 from sari.mcp.tools.registry import build_default_registry, ToolContext
+from sari.mcp.tools._util import resolve_repo_scope
 
 def test_execute_read_file(tmp_path):
     roots = [str(tmp_path)]
@@ -123,6 +124,32 @@ def test_registry_hides_internal_tools_by_default(monkeypatch):
     assert "rescan" not in names
 
 
+def test_registry_symbol_tool_schemas_match_runtime_flexibility():
+    reg = build_default_registry()
+    tools = {t["name"]: t for t in reg.list_tools()}
+
+    # read_symbol supports symbol_id/sid without forcing path+name.
+    read_symbol_schema = tools["read_symbol"]["inputSchema"]
+    assert "symbol_id" in read_symbol_schema["properties"]
+    assert "sid" in read_symbol_schema["properties"]
+    assert "required" not in read_symbol_schema or not read_symbol_schema["required"]
+
+    # caller/implementation tools accept name OR symbol_id-style calls.
+    callers_schema = tools["get_callers"]["inputSchema"]
+    impl_schema = tools["get_implementations"]["inputSchema"]
+    assert "symbol_id" in callers_schema["properties"]
+    assert "sid" in callers_schema["properties"]
+    assert "symbol_id" in impl_schema["properties"]
+    assert "sid" in impl_schema["properties"]
+
+    # call_graph should allow symbol alias and sid alias.
+    cg_schema = tools["call_graph"]["inputSchema"]
+    assert "symbol" in cg_schema["properties"]
+    assert "name" in cg_schema["properties"]
+    assert "symbol_id" in cg_schema["properties"]
+    assert "sid" in cg_schema["properties"]
+
+
 def test_read_symbol_supports_symbol_id_without_path(tmp_path):
     from sari.core.db import LocalSearchDB
     from sari.core.workspace import WorkspaceManager
@@ -175,6 +202,10 @@ def test_get_callers_falls_back_to_call_graph(monkeypatch):
 
 
 def test_get_callers_repo_filter_applied():
+    from sari.core.workspace import WorkspaceManager
+    repo_root = "/tmp/target-repo"
+    rid = WorkspaceManager.root_id_for_workspace(repo_root)
+
     class _Conn:
         def execute(self, _sql, params=None):
             class _Rows:
@@ -182,15 +213,14 @@ def test_get_callers_repo_filter_applied():
                     self._rows = rows
                 def fetchall(self_non):
                     return self_non._rows
-            # If repo filter param exists and doesn't match expected pattern, return empty.
-            if params and any(isinstance(p, str) and p == "%/target-repo/%" for p in params):
-                return _Rows([{"from_path": "root-x/target-repo/A.java", "from_symbol": "a", "from_symbol_id": "sid-a", "line": 1, "rel_type": "calls"}])
+            if params and any(isinstance(p, str) and p == f"{rid}/%" for p in params):
+                return _Rows([{"from_path": f"{rid}/A.java", "from_symbol": "a", "from_symbol_id": "sid-a", "line": 1, "rel_type": "calls"}])
             return _Rows([])
     class _DB:
         _read = _Conn()
-    resp = execute_get_callers({"name": "foo", "repo": "target-repo"}, _DB(), ["/tmp/ws"])
+    resp = execute_get_callers({"name": "foo", "repo": "target-repo"}, _DB(), [repo_root])
     text = resp["content"][0]["text"]
-    assert "caller_path=root-x/target-repo/A.java" in text
+    assert f"caller_path={rid}/A.java" in text
 
 
 def test_get_implementations_falls_back_to_file_content():
@@ -221,6 +251,10 @@ def test_get_implementations_falls_back_to_file_content():
 
 
 def test_get_implementations_repo_filter_applied():
+    from sari.core.workspace import WorkspaceManager
+    repo_root = "/tmp/target-repo"
+    rid = WorkspaceManager.root_id_for_workspace(repo_root)
+
     class _Conn:
         def execute(self, sql, params=None):
             class _Rows:
@@ -233,14 +267,55 @@ def test_get_implementations_repo_filter_applied():
             if "FROM symbol_relations" in sql:
                 return _Rows([])
             if "SELECT path, content FROM files" in sql:
-                if params and any(isinstance(p, str) and p == "%/target-repo/%" for p in params):
-                    return _Rows([{"path": "root-x/target-repo/Repo.java", "content": "interface Repo extends JpaRepository<User,Long> {}"}])
+                if params and any(isinstance(p, str) and p == f"{rid}/%" for p in params):
+                    return _Rows([{"path": f"{rid}/Repo.java", "content": "interface Repo extends JpaRepository<User,Long> {}"}])
                 return _Rows([])
             if "SELECT symbol_id, name, line FROM symbols" in sql:
                 return _Rows([{"symbol_id": "sid-repo", "name": "Repo", "line": 1}])
             return _Rows([])
     class _DB:
         _read = _Conn()
-    resp = execute_get_implementations({"name": "JpaRepository", "repo": "target-repo"}, _DB(), ["/tmp/ws"])
+    resp = execute_get_implementations({"name": "JpaRepository", "repo": "target-repo"}, _DB(), [repo_root])
     text = resp["content"][0]["text"]
-    assert "implementer_path=root-x/target-repo/Repo.java" in text
+    assert f"implementer_path={rid}/Repo.java" in text
+
+
+def test_resolve_repo_scope_prefers_workspace_name(tmp_path):
+    from sari.core.workspace import WorkspaceManager
+
+    ws_a = tmp_path / "StockManager-v-1.0"
+    ws_b = tmp_path / "stock-manager-front"
+    ws_a.mkdir()
+    ws_b.mkdir()
+    repo, root_ids = resolve_repo_scope("stock-manager-front", [str(ws_a), str(ws_b)], db=None)
+    assert repo is None
+    assert WorkspaceManager.root_id_for_workspace(str(ws_b)) in root_ids
+    assert WorkspaceManager.root_id_for_workspace(str(ws_a)) not in root_ids
+
+
+def test_resolve_repo_scope_uses_repo_bucket_when_not_workspace_name():
+    from sari.core.workspace import WorkspaceManager
+    ws_a = "/tmp/ws-a"
+    ws_b = "/tmp/ws-b"
+    rid_a = WorkspaceManager.root_id_for_workspace(ws_a)
+    rid_b = WorkspaceManager.root_id_for_workspace(ws_b)
+
+    class _Conn:
+        def execute(self, sql, params=None):
+            class _Rows:
+                def __init__(self, rows):
+                    self._rows = rows
+                def fetchall(self_non):
+                    return self_non._rows
+            if "FROM files" in sql:
+                return _Rows([(rid_a,), (rid_b,)])
+            if "FROM roots" in sql:
+                return _Rows([])
+            return _Rows([])
+
+    class _DB:
+        _read = _Conn()
+
+    repo, root_ids = resolve_repo_scope("src", [ws_a, ws_b], db=_DB())
+    assert repo == "src"
+    assert root_ids
