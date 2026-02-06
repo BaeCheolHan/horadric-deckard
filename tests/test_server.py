@@ -2,8 +2,10 @@ import pytest
 import json
 import threading
 import time
+import io
 from unittest.mock import MagicMock, patch
 from sari.mcp.server import LocalSearchMCPServer
+import sari.mcp.server as server_mod
 
 def test_server_handle_initialize():
     server = LocalSearchMCPServer("/tmp/ws")
@@ -61,6 +63,43 @@ def test_server_has_transport_field():
     assert hasattr(server, "transport")
     assert server.transport is None
     server.shutdown()
+
+
+def test_server_run_uses_original_stdout_stream(monkeypatch):
+    class _NoCloseBytesIO(io.BytesIO):
+        def close(self):
+            # Keep test buffers readable after server shutdown.
+            pass
+
+    class _TextWithBuffer:
+        def __init__(self, buffer_obj):
+            self.buffer = buffer_obj
+
+    req = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test"}},
+    }
+    body = json.dumps(req).encode("utf-8")
+    framed = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+
+    fake_stdin_buf = _NoCloseBytesIO(framed)
+    fake_stdout_buf = _NoCloseBytesIO()
+    original_stdout_buf = _NoCloseBytesIO()
+
+    monkeypatch.setattr(server_mod.sys, "stdin", _TextWithBuffer(fake_stdin_buf))
+    monkeypatch.setattr(server_mod.sys, "stdout", _TextWithBuffer(fake_stdout_buf))
+
+    server = LocalSearchMCPServer("/tmp/ws")
+    server._original_stdout = _TextWithBuffer(original_stdout_buf)
+    server.run()
+
+    written_original = original_stdout_buf.getvalue()
+    written_redirected = fake_stdout_buf.getvalue()
+    assert b"Content-Length:" in written_original
+    assert b"\"id\": 1" in written_original
+    assert written_redirected == b""
 
 
 @pytest.mark.gate

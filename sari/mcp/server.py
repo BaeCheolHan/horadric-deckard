@@ -294,7 +294,12 @@ class LocalSearchMCPServer:
         self._log_debug("Sari MCP Server starting run loop...")
         
         if not self.transport:
-            self.transport = McpTransport(sys.stdin.buffer, sys.stdout.buffer)
+            input_stream = getattr(sys.stdin, "buffer", sys.stdin)
+            original_stdout = getattr(self, "_original_stdout", None)
+            output_stream = getattr(original_stdout, "buffer", None) if original_stdout is not None else None
+            if output_stream is None:
+                output_stream = getattr(sys.stdout, "buffer", sys.stdout)
+            self.transport = McpTransport(input_stream, output_stream)
 
         try:
             while not self._stop.is_set():
