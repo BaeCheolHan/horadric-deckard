@@ -34,6 +34,11 @@ def _get_env_any(key_suffix: str, default: Any = None) -> Any:
     val = os.environ.get(f"SARI_{key_suffix}")
     if val is not None:
         return val
+    allow_legacy = str(os.environ.get("SARI_ALLOW_LEGACY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    if allow_legacy:
+        raw = os.environ.get(key_suffix)
+        if raw is not None:
+            return raw
     return default
 
 def _get_format() -> str:
@@ -46,9 +51,8 @@ def _get_format() -> str:
     return "json" if fmt == "json" else "pack"
 
 def _compact_enabled() -> bool:
-    """Legacy compact check for JSON mode."""
-    val = (_get_env_any("RESPONSE_COMPACT") or "1").strip().lower()
-    return val not in {"0", "false", "no", "off"}
+    """Always use compact JSON for better token efficiency."""
+    return True
 
 # --- PACK1 Encoders ---
 
@@ -202,12 +206,32 @@ def resolve_root_ids(roots: List[str]) -> List[str]:
     if not roots or not WorkspaceManager:
         return []
     out: List[str] = []
+    allow_legacy = str(os.environ.get("SARI_ALLOW_LEGACY", "")).strip().lower() in {"1", "true", "yes", "on"}
     for r in roots:
         try:
-            out.append(WorkspaceManager.root_id(r))
+            out.append(WorkspaceManager.root_id_for_workspace(r))
+            if allow_legacy:
+                out.append(WorkspaceManager.root_id(r))
         except Exception:
             continue
-    return out
+    return list(dict.fromkeys(out))
+
+def _is_safe_relative_path(rel: str) -> bool:
+    if rel is None:
+        return False
+    rel = str(rel).strip()
+    if not rel:
+        return False
+    p = Path(rel)
+    if p.is_absolute():
+        return False
+    # Block traversal and Windows drive-like segments.
+    for part in p.parts:
+        if part in {"..", ""}:
+            return False
+        if ":" in part:
+            return False
+    return True
 
 
 def resolve_db_path(input_path: str, roots: List[str]) -> Optional[str]:
@@ -218,7 +242,9 @@ def resolve_db_path(input_path: str, roots: List[str]) -> Optional[str]:
     if not input_path:
         return None
     if "/" in input_path and input_path.startswith("root-"):
-        root_id = input_path.split("/", 1)[0]
+        root_id, rel = input_path.split("/", 1)
+        if not _is_safe_relative_path(rel):
+            return None
         if root_id in resolve_root_ids(roots):
             return input_path
         return None
@@ -243,7 +269,7 @@ def resolve_db_path(input_path: str, roots: List[str]) -> Optional[str]:
             root_path = Path(root_norm)
             if p == root_path or root_path in p.parents:
                 rel = p.relative_to(root_path).as_posix()
-                return f"{WorkspaceManager.root_id(str(root_path))}/{rel}"
+                return f"{WorkspaceManager.root_id_for_workspace(str(root_path))}/{rel}"
         except Exception:
             continue
     return None
@@ -259,12 +285,20 @@ def resolve_fs_path(db_path: str, roots: List[str]) -> Optional[str]:
     if not WorkspaceManager:
         return None
     root_id, rel = db_path.split("/", 1)
+    if not _is_safe_relative_path(rel):
+        return None
+    allow_legacy = str(os.environ.get("SARI_ALLOW_LEGACY", "")).strip().lower() in {"1", "true", "yes", "on"}
     for r in roots:
         try:
-            rid = WorkspaceManager.root_id(r)
+            rid_new = WorkspaceManager.root_id_for_workspace(r)
+            rid_legacy = WorkspaceManager.root_id(r) if allow_legacy else ""
         except Exception:
             continue
-        if rid != root_id:
+        if root_id not in {rid_new, rid_legacy}:
             continue
-        return str(Path(r).expanduser().resolve() / rel)
+        root_path = Path(r).expanduser().resolve()
+        candidate = (root_path / rel).resolve()
+        if candidate == root_path or root_path in candidate.parents:
+            return str(candidate)
+        return None
     return None

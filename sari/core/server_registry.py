@@ -11,15 +11,17 @@ IS_WINDOWS = os.name == "nt"
 if not IS_WINDOWS:
     import fcntl
 
-# Local Standard Path
-if os.environ.get("SARI_REGISTRY_FILE"):
-    REGISTRY_FILE = Path(os.environ["SARI_REGISTRY_FILE"]).resolve()
-    REGISTRY_DIR = REGISTRY_FILE.parent
-else:
-    REGISTRY_DIR = Path.home() / ".local" / "share" / "sari"
-    REGISTRY_FILE = REGISTRY_DIR / "server.json"
-LOCK_FILE = REGISTRY_DIR / "server.json.lock"
+def share_path() -> str:
+    return os.path.join("share", "sari")
 
+# Backward compatibility for legacy tests/tools that patch module-level path.
+REGISTRY_FILE = Path.home() / ".local" / share_path() / "server.json"
+
+def get_registry_path() -> Path:
+    """Dynamically determine registry path from environment or default."""
+    if os.environ.get("SARI_REGISTRY_FILE"):
+        return Path(os.environ["SARI_REGISTRY_FILE"]).resolve()
+    return REGISTRY_FILE
 
 class ServerRegistry:
     """
@@ -32,15 +34,17 @@ class ServerRegistry:
     VERSION = "2.0"
 
     def __init__(self):
-        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        if not REGISTRY_FILE.exists():
+        reg_file = get_registry_path()
+        reg_file.parent.mkdir(parents=True, exist_ok=True)
+        if not reg_file.exists():
             self._save(self._empty())
 
     def _empty(self) -> Dict[str, Any]:
         return {"version": self.VERSION, "daemons": {}, "workspaces": {}}
 
     def _normalize_workspace_root(self, workspace_root: str) -> str:
-        return str(Path(workspace_root).expanduser().resolve())
+        from sari.core.workspace import WorkspaceManager
+        return WorkspaceManager.normalize_path(workspace_root)
 
     def _safe_load(self, f) -> Dict[str, Any]:
         try:
@@ -51,8 +55,10 @@ class ServerRegistry:
 
     @contextmanager
     def _registry_lock(self, exclusive: bool):
-        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        with open(LOCK_FILE, "a+") as lockf:
+        reg_file = get_registry_path()
+        lock_file = reg_file.with_suffix(".json.lock")
+        reg_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_file, "a+") as lockf:
             if not IS_WINDOWS:
                 fcntl.flock(lockf, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
             try:
@@ -62,21 +68,23 @@ class ServerRegistry:
                     fcntl.flock(lockf, fcntl.LOCK_UN)
 
     def _load_unlocked(self) -> Dict[str, Any]:
+        reg_file = get_registry_path()
         try:
-            with open(REGISTRY_FILE, "r") as f:
+            with open(reg_file, "r") as f:
                 return self._safe_load(f)
         except FileNotFoundError:
             return self._empty()
 
     def _atomic_write(self, data: Dict[str, Any]) -> None:
-        REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-        tmp_path = REGISTRY_DIR / f"{REGISTRY_FILE.name}.tmp.{os.getpid()}.{int(time.time() * 1000)}"
+        reg_file = get_registry_path()
+        reg_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = reg_file.parent / f"{reg_file.name}.tmp.{os.getpid()}.{int(time.time() * 1000)}"
         try:
             with open(tmp_path, "w") as f:
                 json.dump(data, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, REGISTRY_FILE)
+            os.replace(tmp_path, reg_file)
         except Exception:
             try:
                 if tmp_path.exists():
@@ -93,21 +101,24 @@ class ServerRegistry:
             return data
 
         # Migrate legacy schema (v1)
-        if "instances" in data:
+        if "instances" in data and isinstance(data["instances"], dict):
             now = time.time()
             migrated = self._empty()
-            for ws, info in (data.get("instances") or {}).items():
+            for ws, info in data["instances"].items():
+                if not isinstance(info, dict): continue
                 try:
                     ws_norm = self._normalize_workspace_root(ws)
                 except Exception:
                     ws_norm = ws
                 pid = info.get("pid")
                 port = info.get("port")
+                if pid is None or port is None: continue
+                
                 boot_id = f"legacy-{pid}-{port}"
                 migrated["daemons"][boot_id] = {
                     "host": "127.0.0.1",
-                    "port": port,
-                    "pid": pid,
+                    "port": int(port),
+                    "pid": int(pid),
                     "start_ts": info.get("start_ts") or now,
                     "last_seen_ts": now,
                     "draining": False,
@@ -142,6 +153,9 @@ class ServerRegistry:
             return False
         try:
             os.kill(pid, 0)  # Signal 0 checks existence
+            return True
+        except PermissionError:
+            # Sandbox/permission-restricted environments may block signal checks.
             return True
         except OSError:
             return False
@@ -259,12 +273,14 @@ class ServerRegistry:
 
         def _upd(data):
             workspaces = data.get("workspaces", {})
-            if ws in workspaces:
-                workspaces[ws]["http_port"] = int(http_port)
-                if http_host:
-                    workspaces[ws]["http_host"] = str(http_host)
-                if http_pid:
-                    workspaces[ws]["http_pid"] = int(http_pid)
+            payload = dict(workspaces.get(ws, {}))
+            payload["http_port"] = int(http_port)
+            if http_host:
+                payload["http_host"] = str(http_host)
+            if http_pid:
+                payload["http_pid"] = int(http_pid)
+            payload["last_active_ts"] = time.time()
+            workspaces[ws] = payload
             data["workspaces"] = workspaces
             data["version"] = self.VERSION
         self._update(_upd)

@@ -20,6 +20,10 @@ try:
     from .queue_pipeline import FsEvent, FsEventKind
 except Exception:
     from queue_pipeline import FsEvent, FsEventKind
+try:
+    from .workspace import WorkspaceManager
+except Exception:
+    from workspace import WorkspaceManager
 
 def _is_git_event(path: str) -> bool:
     if not path:
@@ -38,7 +42,7 @@ class DebouncedEventHandler(FileSystemEventHandler):
     def __init__(
         self,
         callback: Callable[[str], None],
-        debounce_seconds: float = 1.0,
+        debounce_seconds: float = 0.1, # Lower default
         logger=None,
         git_callback: Optional[Callable[[str], None]] = None,
         git_debounce_seconds: float = 3.0,
@@ -56,17 +60,18 @@ class DebouncedEventHandler(FileSystemEventHandler):
         self._event_times = deque(maxlen=200)
 
         # Adaptive debounce (ms) and rate window (sec)
-        self._debounce_min = float(os.environ.get("SARI_DEBOUNCE_MIN_MS", str(int(debounce_seconds * 1000)))) / 1000.0
-        self._debounce_max = float(os.environ.get("SARI_DEBOUNCE_MAX_MS", "1500")) / 1000.0
-        self._debounce_target_rps = float(os.environ.get("SARI_DEBOUNCE_TARGET_RPS", "20"))
-        self._rate_window = float(os.environ.get("SARI_DEBOUNCE_RATE_WINDOW", "2.0"))
+        # LLM Freshness: 100ms minimum debounce is now standard.
+        self._debounce_min = 0.1
+        self._debounce_max = 1.0
+        self._debounce_target_rps = 50.0
+        self._rate_window = 1.0
 
         # Token bucket for burst control
-        self._bucket_capacity = float(os.environ.get("SARI_EVENT_BUCKET_CAPACITY", "50"))
-        self._bucket_rate = float(os.environ.get("SARI_EVENT_BUCKET_RATE", "25"))
+        self._bucket_capacity = 100.0
+        self._bucket_rate = 50.0
         self._bucket_tokens = self._bucket_capacity
         self._bucket_last_ts = time.time()
-        self._bucket_flush_seconds = float(os.environ.get("SARI_EVENT_BUCKET_FLUSH_MS", "500")) / 1000.0
+        self._bucket_flush_seconds = 0.1
         self._bucket_timer: Optional[threading.Timer] = None
 
     def on_any_event(self, event):
@@ -238,7 +243,8 @@ class FileWatcher:
         if self._running:
             return
 
-        self.observer = Observer()
+        # High-performance observer with low timeout (latency)
+        self.observer = Observer(timeout=0.1)
         try:
             git_debounce = float(os.environ.get("SARI_GIT_CHECKOUT_DEBOUNCE", "3") or 3)
         except Exception:
@@ -344,14 +350,40 @@ class FileWatcher:
                 self._restart_observer()
 
     def _dispatch_event(self, evt: FsEvent):
+        normalized_evt = evt
+        try:
+            if not getattr(evt, "root", ""):
+                inferred_root = self._infer_root_for_path(getattr(evt, "path", ""))
+                if inferred_root:
+                    normalized_evt = FsEvent(
+                        kind=evt.kind,
+                        path=evt.path,
+                        root=inferred_root,
+                        dest_path=evt.dest_path,
+                        ts=evt.ts,
+                    )
+        except Exception:
+            normalized_evt = evt
+
         if self.event_bus:
             try:
-                self.event_bus.publish("fs_event", evt)
+                self.event_bus.publish("fs_event", normalized_evt)
                 return
             except Exception:
                 pass
         try:
-            self.callback(evt)
+            self.callback(normalized_evt)
         except Exception as e:
             if self.logger:
-                self.logger.log_error(f"Watcher callback failed for {getattr(evt, 'path', '')}: {e}")
+                self.logger.log_error(f"Watcher callback failed for {getattr(normalized_evt, 'path', '')}: {e}")
+
+    def _infer_root_for_path(self, event_path: str) -> str:
+        if not event_path:
+            return ""
+        norm_event = WorkspaceManager.normalize_path(event_path)
+        roots = [WorkspaceManager.normalize_path(p) for p in self.paths if p]
+        roots.sort(key=len, reverse=True)
+        for root in roots:
+            if norm_event == root or norm_event.startswith(root + os.sep):
+                return root
+        return ""

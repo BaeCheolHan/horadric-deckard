@@ -2,6 +2,7 @@ import os
 import shutil
 import threading
 import time
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -24,14 +25,31 @@ class TantivyEngine:
         self._index = None
         self._schema = None
         self._writer = None
-        self._reader = None
         self._last_reload_ts = 0.0
         self._writer_lock = threading.Lock()
         self._reload_lock = threading.Lock()
+        self._disabled_reason = ""
+        self._tantivy = tantivy
 
         if tantivy:
+            ver = str(getattr(tantivy, "__version__", "") or "")
+            if not self._is_supported_tantivy_version(ver):
+                self._disabled_reason = f"Unsupported tantivy version: {ver} (required 0.25.x)"
+                if self.logger:
+                    try:
+                        self.logger.error(self._disabled_reason)
+                    except Exception:
+                        pass
+                return
             self._setup_schema()
             self._init_index()
+
+    def _is_supported_tantivy_version(self, version: str) -> bool:
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", version or "")
+        if not m:
+            return False
+        major, minor = int(m.group(1)), int(m.group(2))
+        return major == 0 and minor == 25
 
     def _setup_schema(self):
         schema_builder = tantivy.SchemaBuilder()
@@ -53,8 +71,6 @@ class TantivyEngine:
             self.index_path.mkdir(parents=True, exist_ok=True)
             self._index = tantivy.Index(self._schema, path=str(self.index_path))
         
-        self._reader = self._index.reader()
-
     def upsert_documents(self, docs: List[Dict[str, Any]]):
         if not tantivy or not self._index: return
         
@@ -66,10 +82,16 @@ class TantivyEngine:
             writer = self._writer
             
             for d in docs:
-                writer.delete_term("path", d["doc_id"])
+                doc_id = d.get("doc_id") or d.get("id")
+                if not doc_id:
+                    continue
+                if hasattr(writer, "delete_documents"):
+                    writer.delete_documents("path", doc_id)
+                else:
+                    writer.delete_term("path", doc_id)
                 writer.add_document(tantivy.Document(
                     root_id=d.get("root_id", ""),
-                    path=d["doc_id"],
+                    path=doc_id,
                     repo=d.get("repo", ""),
                     body=d.get("body_text", ""),
                     mtime=d.get("mtime", 0),
@@ -85,7 +107,10 @@ class TantivyEngine:
                 self._writer = self._index.writer()
             writer = self._writer
             for doc_id in doc_ids:
-                writer.delete_term("path", doc_id)
+                if hasattr(writer, "delete_documents"):
+                    writer.delete_documents("path", doc_id)
+                else:
+                    writer.delete_term("path", doc_id)
             writer.commit()
 
     def close(self) -> None:
@@ -125,10 +150,10 @@ class TantivyEngine:
             with self._reload_lock:
                 # Re-check inside lock (double-checked locking pattern)
                 if reload_interval == 0 or (now - self._last_reload_ts) >= reload_interval:
-                    self._reader.reload()
+                    self._index.reload()
                     self._last_reload_ts = now
-        
-        searcher = self._reader.searcher()
+
+        searcher = self._index.searcher()
         
         # Build query: (body:query) AND (root_id:root_id)
         safe_q = self._escape_query(query or "")

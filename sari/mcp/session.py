@@ -12,11 +12,13 @@ try:
 except Exception:
     _SARI_VERSION = "dev"
 _SARI_PROTOCOL_VERSION = "2025-11-25"
-_SARI_BOOT_ID = (os.environ.get("SARI_BOOT_ID") or "").strip()
 from sari.core.workspace import WorkspaceManager
 from sari.core.server_registry import ServerRegistry
 
 logger = logging.getLogger(__name__)
+
+def _boot_id() -> str:
+    return (os.environ.get("SARI_BOOT_ID") or "").strip()
 
 class Session:
     """
@@ -116,9 +118,10 @@ class Session:
 
         if method == "sari/identify":
             draining = False
-            if _SARI_BOOT_ID:
+            boot_id = _boot_id()
+            if boot_id:
                 try:
-                    info = ServerRegistry().get_daemon(_SARI_BOOT_ID) or {}
+                    info = ServerRegistry().get_daemon(boot_id) or {}
                     draining = bool(info.get("draining"))
                 except Exception:
                     draining = False
@@ -129,7 +132,7 @@ class Session:
                     "name": "sari",
                     "version": _SARI_VERSION,
                     "protocolVersion": _SARI_PROTOCOL_VERSION,
-                    "bootId": _SARI_BOOT_ID,
+                    "bootId": boot_id,
                     "draining": draining,
                 },
             }
@@ -174,9 +177,10 @@ class Session:
         params = request.get("params", {})
         msg_id = request.get("id")
 
-        if _SARI_BOOT_ID:
+        boot_id = _boot_id()
+        if boot_id:
             try:
-                info = ServerRegistry().get_daemon(_SARI_BOOT_ID) or {}
+                info = ServerRegistry().get_daemon(boot_id) or {}
                 if info.get("draining"):
                     await self.send_error(msg_id, -32001, "Server is draining. Reconnect to the latest daemon.")
                     self.running = False
@@ -197,6 +201,8 @@ class Session:
             workspace_root = urllib.parse.unquote(parsed.path)
         else:
             workspace_root = root_uri
+            
+        workspace_root = WorkspaceManager.normalize_path(workspace_root)
 
         # If already bound to a different workspace, release it
         if self.workspace_root and self.workspace_root != workspace_root:
@@ -204,15 +210,32 @@ class Session:
             self.shared_state = None
 
         self.workspace_root = workspace_root
-        self.shared_state = self.registry.get_or_create(self.workspace_root)
+        self.shared_state = self.registry.get_or_create(self.workspace_root, persistent=True)
         self.registry.touch_workspace(self.workspace_root)
 
         # Record workspace mapping in global registry so other clients can find us
-        if _SARI_BOOT_ID:
+        if not boot_id:
             try:
-                ServerRegistry().set_workspace(workspace_root, _SARI_BOOT_ID)
+                sockname = self.writer.get_extra_info("sockname") or ("127.0.0.1", 0)
+                host = str(sockname[0] or "127.0.0.1")
+                port = int(sockname[1] or 0)
+                if port > 0:
+                    boot_id = f"legacy-{os.getpid()}-{port}"
+                    ServerRegistry().register_daemon(boot_id, host, port, os.getpid(), version=_SARI_VERSION)
             except Exception:
-                pass
+                boot_id = ""
+
+        if boot_id:
+            try:
+                # Include http_port if already assigned to ensure SSOT consistency
+                h_port = getattr(self.shared_state, "http_port", None)
+                h_host = getattr(self.shared_state, "http_host", None)
+                ServerRegistry().set_workspace(workspace_root, boot_id, http_port=h_port, http_host=h_host)
+            except Exception:
+                try:
+                    ServerRegistry().set_workspace(workspace_root, boot_id)
+                except Exception:
+                    pass
 
         # Delegate specific initialize logic to the server instance
         # We need to construct the result based on server's response

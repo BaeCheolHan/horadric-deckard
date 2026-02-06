@@ -70,26 +70,59 @@ class SearchEngine:
                     if h.path not in seen_paths:
                         all_hits.append(h)
                         seen_paths.add(h.path)
+            else:
+                like_q = f"%{q}%"
+                sql = (
+                    "SELECT path, root_id, repo, mtime, size, content FROM files "
+                    "WHERE (path LIKE ? OR rel_path LIKE ? OR content LIKE ?)"
+                )
+                params = [like_q, like_q, like_q]
+                if root_id:
+                    sql += " AND root_id = ?"
+                    params.append(root_id)
+                cur.execute(sql + f" LIMIT {opts.limit}", params)
+                db_hits = self._process_sqlite_rows(cur.fetchall(), opts)
+                for h in db_hits:
+                    h.score = 4.0
+                    if h.path not in seen_paths:
+                        all_hits.append(h)
+                        seen_paths.add(h.path)
 
         # 최종 정렬: 점수 내림차순 -> 시간 내림차순
         all_hits.sort(key=lambda x: (-x.score, -x.mtime))
         return all_hits[:opts.limit], meta
 
     def _process_sqlite_rows(self, rows: list, opts: SearchOptions) -> List[SearchHit]:
-        # Expected row: (path, root_id, repo, mtime, size, content)
-        return [
-            SearchHit(
-                repo=r[2], 
-                path=r[0], 
-                score=1.0, 
-                snippet=self._snippet_for(r[0], opts.query, r[5]), 
-                mtime=r[3], 
-                size=r[4], 
-                match_count=1, 
-                file_type=get_file_extension(r[0]), 
-                hit_reason="SQLite Fallback"
-            ) for r in rows
-        ]
+        hits: List[SearchHit] = []
+        for r in rows:
+            # Legacy/normalized row: (path, root_id, repo, mtime, size, content)
+            # FTS row: (path, rel_path, root_id, repo, mtime, size, content)
+            if len(r) >= 7:
+                path = r[0]
+                repo = r[3]
+                mtime = r[4]
+                size = r[5]
+                content = r[6]
+            elif len(r) >= 6:
+                path = r[0]
+                repo = r[2]
+                mtime = r[3]
+                size = r[4]
+                content = r[5]
+            else:
+                continue
+            hits.append(SearchHit(
+                repo=repo,
+                path=path,
+                score=1.0,
+                snippet=self._snippet_for(path, opts.query, content),
+                mtime=mtime,
+                size=size,
+                match_count=1,
+                file_type=get_file_extension(path),
+                hit_reason="SQLite Fallback",
+            ))
+        return hits
 
     def _process_tantivy_hits(self, hits: list, opts: SearchOptions) -> List[SearchHit]:
         results: List[SearchHit] = []

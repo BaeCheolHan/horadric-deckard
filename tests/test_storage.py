@@ -66,3 +66,21 @@ def test_storage_queue_load(mock_db):
     # Mock writer qsize
     sm.writer.qsize = MagicMock(return_value=2500)
     assert sm.get_queue_load() == 0.5
+
+
+def test_storage_get_instance_keeps_previous_when_shutdown_incomplete():
+    db1 = MagicMock()
+    db1.db_path = "/tmp/a.db"
+    db2 = MagicMock()
+    db2.db_path = "/tmp/b.db"
+
+    GlobalStorageManager._instance = None
+    sm1 = GlobalStorageManager.get_instance(db1)
+    sm1.shutdown = MagicMock(return_value=False)
+
+    sm2 = GlobalStorageManager.get_instance(db2)
+    assert sm2 is sm1
+
+    sm1.stop()
+    # cleanup singleton side-effect for other tests
+    GlobalStorageManager._instance = None

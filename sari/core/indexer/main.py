@@ -1,6 +1,7 @@
 import concurrent.futures
 import threading
 import time
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,7 @@ from sari.core.scheduler.coordinator import SchedulingCoordinator
 from sari.core.events import EventBus
 
 from sari.core.db.storage import GlobalStorageManager
+from collections import OrderedDict
 from .db_writer import DbTask
 from .scanner import Scanner
 from .worker import IndexWorker
@@ -22,10 +24,17 @@ from .worker import IndexWorker
 @dataclass
 class IndexStatus:
     index_ready: bool = False
+    candidates: int = 0
     scanned_files: int = 0
     indexed_files: int = 0
+    indexed_new: int = 0
+    indexed_updated: int = 0
+    skipped_unchanged: int = 0
     last_scan_ts: int = 0
     errors: int = 0
+    walk_time: float = 0.0
+    read_time: float = 0.0
+    db_time: float = 0.0
 
 class Indexer:
     def __init__(self, cfg: Config, db: LocalSearchDB, logger=None, settings_obj=None):
@@ -35,12 +44,11 @@ class Indexer:
         self._stop = threading.Event()
         self.event_bus = EventBus()
         
-        # L1 Buffer: {root_id -> [(files_row, engine_doc)]}
-        self._l1_buffer: Dict[str, List[tuple]] = {}
-        self._l1_docs: Dict[str, List[dict]] = {}
-        self._l1_syms: Dict[str, List[tuple]] = {} # New: Buffer for symbols to ensure FK order
+        # L1 Buffer: {root_id -> OrderedDict(path -> (files_row, engine_doc, syms))}
+        self._l1_buffer: Dict[str, OrderedDict] = {}
         self._l1_lock = threading.Lock()
-        self._l1_max_size = self.settings.get_int("INDEX_L1_BATCH_SIZE", 10)
+        self._l1_max_size = self.settings.get_int("INDEX_L1_BATCH_SIZE", 500)
+        self._slow_files = [] # List of (path, ms)
 
         # Phase 2 & 3: Scheduler and Workers
         self.coordinator = SchedulingCoordinator()
@@ -50,8 +58,19 @@ class Indexer:
             worker_cap = max(1, self.index_mem_mb // 512)
             self.max_workers = min(self.max_workers, worker_cap)
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        self._worker_threads: List[threading.Thread] = []
         
-        self.scanner = Scanner(cfg)
+        # Get active workspaces for intelligent overlap detection
+        active_ws = []
+        try:
+            from sari.core.server_registry import ServerRegistry
+            reg = ServerRegistry()
+            data = reg._load()
+            active_ws = list(data.get("workspaces", {}).keys())
+        except Exception:
+            pass
+
+        self.scanner = Scanner(cfg, active_workspaces=active_ws)
         self.worker = IndexWorker(cfg, db, logger, self._extract_symbols_wrapper, settings_obj=self.settings)
         
         # Global Storage Manager (L2/L3 Aggregator)
@@ -66,12 +85,14 @@ class Indexer:
 
     def run_forever(self):
         for _ in range(self.max_workers):
-            threading.Thread(target=self._worker_loop, daemon=True).start()
+            t = threading.Thread(target=self._worker_loop, daemon=True)
+            t.start()
+            self._worker_threads.append(t)
         
         roots = [str(Path(r).absolute()) for r in self.cfg.workspace_roots if Path(r).exists()]
         for r in roots:
             try:
-                root_id = WorkspaceManager.root_id(r)
+                root_id = WorkspaceManager.root_id_for_workspace(r)
                 self.db.upsert_root(root_id, r, str(Path(r).resolve()), label=Path(r).name)
             except Exception:
                 pass
@@ -120,24 +141,54 @@ class Indexer:
             if self.logger: self.logger.warning(f"Retry loop failed: {e}")
 
     def scan_once(self):
-        """Phase 2: Use Fair Queue for initial scanning."""
+        """Phase 2: Use Fair Queue for initial scanning with Staging architecture."""
+        start_walk = time.time()
         now, scan_ts = time.time(), int(time.time())
         self.status.last_scan_ts = scan_ts
+        self.status.candidates = 0
         self.status.scanned_files = 0
         self.status.indexed_files = 0
         self._active_roots = []
         
+        # Prepare staging for bulk ingestion
+        self.storage.enqueue_task(DbTask(kind="create_staging"))
+        
         for root_path in self.cfg.workspace_roots:
+            # ... (rest of loop)
             root = Path(root_path).absolute()
             if not root.exists(): continue
-            root_id = WorkspaceManager.root_id(str(root))
+            root_id = WorkspaceManager.root_id_for_workspace(str(root))
             self._active_roots.append(root_id)
             
             for p, st, excluded in self.scanner.iter_file_entries(root):
-                self.status.scanned_files += 1
+                self.status.candidates += 1
                 self.coordinator.enqueue_fair(root_id, {
-                    "kind": "scan_file", "root": root, "path": p, "st": st, "scan_ts": scan_ts, "excluded": excluded
+                    "kind": "scan_file", "root": root, "path": p, "st": st, "scan_ts": scan_ts, "excluded": excluded,
+                    "use_staging": True # Flag for worker to use staging kind
                 }, base_priority=10.0)
+        
+        self.status.walk_time = time.time() - start_walk
+        if self.logger:
+            self.logger.info(f"Scan discovery finished: {self.status.candidates} candidates in {self.status.walk_time:.2f}s")
+
+    def _trigger_staging_merge(self):
+        """Wait for queue to clear and trigger atomic merge."""
+        with self._l1_lock:
+            for root_id in list(self._l1_buffer.keys()):
+                buffer = self._l1_buffer[root_id]
+                if not buffer:
+                    continue
+                items = list(buffer.values())
+                buffer.clear()
+                rows = [item[0] for item in items]
+                docs = [item[1] for item in items if item[1]]
+                all_syms = []
+                for item in items:
+                    all_syms.extend(item[2])
+                self.storage.enqueue_task(DbTask(kind="upsert_files_staging", rows=rows, engine_docs=docs))
+                if all_syms:
+                    self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=all_syms))
+        self.storage.enqueue_task(DbTask(kind="staging_merge"))
 
     def _worker_loop(self):
         """Phase 2 & 3: Unified worker loop with Backpressure & Pruning."""
@@ -153,10 +204,10 @@ class Indexer:
 
             item = self.coordinator.get_next_task()
             if not item:
-                # 3. Pruning: 스캔 완료 후 큐가 비었을 때 수행
+                # 3. Pruning & Staging Merge: 스캔 완료 후 큐가 비었을 때 수행
                 if self.status.index_ready and self._active_roots:
                     roots_to_prune = []
-                    with self._l1_lock: # Using existing lock for convenience
+                    with self._l1_lock:
                         roots_to_prune = list(self._active_roots)
                         self._active_roots = []
                     
@@ -164,6 +215,9 @@ class Indexer:
                         count = self.db.prune_old_files(rid, self.status.last_scan_ts)
                         if count > 0 and self.logger:
                             self.logger.info(f"Pruned {count} dead files for {rid}")
+                    
+                    # Final Step: Atomic merge of staging data
+                    self._trigger_staging_merge()
                 
                 time.sleep(0.2)
                 continue
@@ -176,8 +230,19 @@ class Indexer:
 
     def _handle_task(self, root_id: str, task: Dict[str, Any]):
         if task["kind"] == "scan_file":
+            start_read = time.time()
             res = self.worker.process_file_task(task["root"], task["path"], task["st"], task["scan_ts"], time.time(), task["excluded"], root_id=root_id, force=task.get("force", False))
+            elapsed = time.time() - start_read
+            self.status.read_time += elapsed
+            
+            if elapsed > 0.1: # Track files taking > 100ms
+                with self._l1_lock:
+                    self._slow_files.append((str(task["path"]), elapsed * 1000))
+                    self._slow_files.sort(key=lambda x: x[1], reverse=True)
+                    self._slow_files = self._slow_files[:10]
+
             if not res:
+                self.status.errors += 1
                 try:
                     self.event_bus.publish("file_error", {"path": str(task.get("path", "")), "root_id": root_id})
                 except Exception as e:
@@ -186,15 +251,17 @@ class Indexer:
                 return
             
             if res["type"] == "unchanged":
+                self.status.skipped_unchanged += 1
                 self.storage.enqueue_task(DbTask(kind="update_last_seen", paths=[res["rel"]]))
                 try:
                     self.event_bus.publish("file_unchanged", {"path": res["rel"], "root_id": root_id})
                 except Exception as e:
                     if self.logger:
                         self.logger.warning(f"Event publish failed (file_unchanged): {e}")
-                return # BUG FIX: return here so unchanged files are not counted as indexed
+                return
             
             # Case: File Changed or New
+            self.status.indexed_new += 1
             rel_path = str(task["path"].relative_to(task["root"]))
             files_row = (
                 res["rel"], rel_path, root_id, res["repo"], res["mtime"], res["size"], 
@@ -203,32 +270,38 @@ class Indexer:
                 res["is_binary"], res["is_minified"], 0, res.get("content_bytes", len(res["content"])), res.get("metadata_json", "{}")
             )
 
+            doc = res.get("engine_doc")
+            sym_rows = []
+            if res.get("symbols"):
+                sym_rows = [(s[10], s[0], root_id, s[1]) + s[2:10] for s in res["symbols"]]
+
+            # LLM Freshness: High-priority events bypass L1 buffer
+            if task.get("fast_track"):
+                self.storage.upsert_files(rows=[files_row], engine_docs=[doc] if doc else [])
+                if sym_rows:
+                    self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=sym_rows))
+                self.status.indexed_files += 1
+                return
+
             with self._l1_lock:
-                if root_id in self._l1_buffer:
-                    self._l1_buffer[root_id] = [r for r in self._l1_buffer[root_id] if r[0] != files_row[0]]
-                if root_id in self._l1_docs:
-                    self._l1_docs[root_id] = [d for d in self._l1_docs[root_id] if d.get("doc_id") != files_row[0]]
-                if root_id in self._l1_syms:
-                    self._l1_syms[root_id] = [s for s in self._l1_syms[root_id] if s[1] != files_row[0]]
+                buffer = self._l1_buffer.setdefault(root_id, OrderedDict())
+                # Efficient O(1) replacement of stale data in buffer
+                buffer[files_row[0]] = (files_row, doc, sym_rows)
 
-                self._l1_buffer.setdefault(root_id, []).append(files_row)
-                doc = res.get("engine_doc")
-                if doc:
-                    self._l1_docs.setdefault(root_id, []).append(doc)
-
-                if res.get("symbols"):
-                    # s is (path, name, kind, line, end_line, content, parent_name, metadata, docstring, qualname, sid)
-                    # Schema: (symbol_id, path, root_id, name, kind, line, end_line, content, parent_name, metadata, docstring, qualname)
-                    sym_rows = [(s[10], s[0], root_id, s[1]) + s[2:10] for s in res["symbols"]]
-                    self._l1_syms.setdefault(root_id, []).extend(sym_rows)
-
-                if len(self._l1_buffer[root_id]) >= self._l1_max_size:
-                    rows = self._l1_buffer.pop(root_id)
-                    docs = self._l1_docs.pop(root_id, [])
-                    syms = self._l1_syms.pop(root_id, [])
-                    self.storage.upsert_files(rows=rows, engine_docs=docs)
-                    if syms:
-                        self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=syms))
+                if len(buffer) >= self._l1_max_size:
+                    items = list(buffer.values())
+                    buffer.clear()
+                    
+                    rows = [item[0] for item in items]
+                    docs = [item[1] for item in items if item[1]]
+                    all_syms = []
+                    for item in items: all_syms.extend(item[2])
+                    
+                    # Use staging kind if flagged
+                    kind = "upsert_files_staging" if task.get("use_staging") else "upsert_files"
+                    self.storage.enqueue_task(DbTask(kind=kind, rows=rows, engine_docs=docs))
+                    if all_syms:
+                        self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=all_syms))
 
             self.status.indexed_files += 1
 
@@ -239,39 +312,119 @@ class Indexer:
                     self.logger.warning(f"Event publish failed (file_indexed): {e}")
 
     def _enqueue_fsevent(self, evt: FsEvent):
-        root_id = WorkspaceManager.root_id(str(evt.root))
+        evt_root = str(getattr(evt, "root", "") or "")
+        if not evt_root:
+            evt_root = self._infer_event_root(str(getattr(evt, "path", "") or ""))
+        if not evt_root:
+            if self.logger:
+                self.logger.warning(f"Skip fs event without resolvable root: {evt}")
+            return
+        root_id = WorkspaceManager.root_id_for_workspace(evt_root)
         if evt.kind in (FsEventKind.CREATED, FsEventKind.MODIFIED):
             try:
                 st = Path(evt.path).stat()
                 self.coordinator.enqueue_priority(root_id, {
-                    "kind": "scan_file", "root": evt.root, "path": Path(evt.path), "st": st, "scan_ts": int(time.time()), "excluded": False
+                    "kind": "scan_file", "root": Path(evt_root), "path": Path(evt.path), "st": st, "scan_ts": int(time.time()), "excluded": False,
+                    "fast_track": True # Bypass L1 buffer for near-instant freshness
                 }, base_priority=1.0)
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"Failed to enqueue file event: {e}")
         elif evt.kind == FsEventKind.DELETED:
-            db_path = f"{root_id}/{Path(evt.path).relative_to(evt.root).as_posix()}"
+            rel_path = ""
+            try:
+                rel_path = Path(evt.path).relative_to(Path(evt_root)).as_posix()
+            except Exception:
+                try:
+                    rel_path = os.path.relpath(str(evt.path), start=str(evt_root)).replace("\\", "/")
+                except Exception:
+                    rel_path = ""
+            if not rel_path or rel_path.startswith("../") or rel_path == "..":
+                if self.logger:
+                    self.logger.warning(f"Skip delete event outside root (root={evt_root}, path={evt.path})")
+                return
+            db_path = f"{root_id}/{rel_path}"
             with self._l1_lock:
                 if root_id in self._l1_buffer:
-                    self._l1_buffer[root_id] = [r for r in self._l1_buffer[root_id] if r[0] != db_path]
-                    self._l1_docs[root_id] = [d for d in self._l1_docs[root_id] if d.get("doc_id") != db_path]
-                    # Symbols: check if path (index 1) matches db_path
-                    self._l1_syms[root_id] = [s for s in self._l1_syms.get(root_id, []) if s[1] != db_path]
+                    # Efficient O(1) removal from buffer if it was pending
+                    self._l1_buffer[root_id].pop(db_path, None)
             self.storage.delete_file(path=db_path, engine_deletes=[db_path])
+        elif evt.kind == FsEventKind.MOVED:
+            # Old path is deleted.
+            old_rel = ""
+            try:
+                old_rel = Path(evt.path).relative_to(Path(evt_root)).as_posix()
+            except Exception:
+                try:
+                    old_rel = os.path.relpath(str(evt.path), start=str(evt_root)).replace("\\", "/")
+                except Exception:
+                    old_rel = ""
+            if old_rel and not old_rel.startswith("../") and old_rel != "..":
+                old_db_path = f"{root_id}/{old_rel}"
+                with self._l1_lock:
+                    if root_id in self._l1_buffer:
+                        self._l1_buffer[root_id].pop(old_db_path, None)
+                self.storage.delete_file(path=old_db_path, engine_deletes=[old_db_path])
+
+            # New path should be indexed quickly if file exists.
+            dst = str(getattr(evt, "dest_path", "") or "")
+            if dst:
+                dst_root = self._infer_event_root(dst) or evt_root
+                try:
+                    dst_path = Path(dst)
+                    st = dst_path.stat()
+                    dst_root_id = WorkspaceManager.root_id_for_workspace(dst_root)
+                    self.coordinator.enqueue_priority(
+                        dst_root_id,
+                        {
+                            "kind": "scan_file",
+                            "root": Path(dst_root),
+                            "path": dst_path,
+                            "st": st,
+                            "scan_ts": int(time.time()),
+                            "excluded": False,
+                            "fast_track": True,
+                        },
+                        base_priority=1.0,
+                    )
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Failed to enqueue moved destination: {e}")
+
+    def _infer_event_root(self, event_path: str) -> str:
+        if not event_path:
+            return ""
+        norm_path = WorkspaceManager.normalize_path(event_path)
+        roots = [WorkspaceManager.normalize_path(r) for r in (self.cfg.workspace_roots or []) if r]
+        roots.sort(key=len, reverse=True)
+        for root in roots:
+            if norm_path == root or norm_path.startswith(root + os.sep):
+                return root
+        return ""
 
     def stop(self):
         self._stop.set()
         if self.watcher: self.watcher.stop()
         with self._l1_lock:
             for root_id in list(self._l1_buffer.keys()):
-                rows = self._l1_buffer.pop(root_id)
-                docs = self._l1_docs.pop(root_id, [])
-                syms = self._l1_syms.pop(root_id, [])
-                if rows:
+                buffer = self._l1_buffer.pop(root_id)
+                if buffer:
+                    items = list(buffer.values())
+                    rows = [item[0] for item in items]
+                    docs = [item[1] for item in items if item[1]]
+                    all_syms = []
+                    for item in items: all_syms.extend(item[2])
+                    
                     self.storage.upsert_files(rows=rows, engine_docs=docs)
-                if syms:
-                    self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=syms))
-        self._executor.shutdown(wait=False)
+                    if all_syms:
+                        self.storage.enqueue_task(DbTask(kind="upsert_symbols", rows=all_syms))
+        for t in list(self._worker_threads):
+            try:
+                t.join(timeout=2.0)
+            except Exception:
+                pass
+        self._worker_threads = []
+        self._executor.shutdown(wait=True, cancel_futures=True)
     
     def get_queue_depths(self) -> Dict[str, int]:
         return {
@@ -281,4 +434,15 @@ class Indexer:
         }
 
     def get_performance_metrics(self) -> Dict[str, Any]:
-        return self.storage.writer.get_performance_metrics()
+        metrics = self.storage.writer.get_performance_metrics()
+        metrics.update({
+            "candidates": self.status.candidates,
+            "indexed_new": self.status.indexed_new,
+            "skipped_unchanged": self.status.skipped_unchanged,
+            "errors": self.status.errors,
+            "walk_time": round(self.status.walk_time, 2),
+            "read_time": round(self.status.read_time, 2),
+            "db_time": metrics.get("db_time_total", 0.0),
+            "slow_files": self._slow_files
+        })
+        return metrics

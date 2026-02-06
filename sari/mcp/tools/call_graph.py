@@ -382,7 +382,11 @@ def _quality_score(path: str, enriched: bool, rel_count: int, db: Any) -> int:
     return base
 
 
-def execute_call_graph(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[str, Any]:
+def execute_call_graph(args: Dict[str, Any], db: Any, logger: Any = None, roots: List[str] = None) -> Dict[str, Any]:
+    if roots is None and isinstance(logger, list):
+        roots = logger
+        logger = None
+    roots = roots or []
     def build_pack(payload: Dict[str, Any]) -> str:
         header = pack_header(
             "call_graph",

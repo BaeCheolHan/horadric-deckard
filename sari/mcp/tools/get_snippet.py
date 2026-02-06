@@ -268,7 +268,11 @@ def build_get_snippet(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[s
     raise ValueError("tag or query is required")
 
 
-def execute_get_snippet(args: Dict[str, Any], db: Any, roots: List[str]) -> Dict[str, Any]:
+def execute_get_snippet(args: Dict[str, Any], db: Any, logger: Any = None, roots: List[str] = None) -> Dict[str, Any]:
+    if roots is None and isinstance(logger, list):
+        roots = logger
+        logger = None
+    roots = roots or []
     try:
         payload = build_get_snippet(args, db, roots)
     except ValueError as e:

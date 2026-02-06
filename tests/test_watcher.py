@@ -2,7 +2,7 @@ import pytest
 import time
 from unittest.mock import MagicMock, patch
 from sari.core.watcher import DebouncedEventHandler, _is_git_event, FileWatcher
-from sari.core.queue_pipeline import FsEventKind
+from sari.core.queue_pipeline import FsEvent, FsEventKind
 
 def test_is_git_event():
     assert _is_git_event(".git/HEAD") is True
@@ -40,3 +40,14 @@ def test_watcher_start_stop(tmp_path):
         watcher.start()
         watcher.stop()
     assert watcher._running is False
+
+
+def test_watcher_dispatch_infers_root(tmp_path):
+    callback = MagicMock()
+    event_bus = MagicMock()
+    watcher = FileWatcher([str(tmp_path)], callback, event_bus=event_bus)
+    evt = FsEvent(kind=FsEventKind.MODIFIED, path=str(tmp_path / "a.py"), root="")
+    watcher._dispatch_event(evt)
+    published_evt = event_bus.publish.call_args[0][1]
+    assert published_evt.root != ""
+    assert published_evt.root == str(tmp_path)

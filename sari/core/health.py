@@ -8,19 +8,25 @@ from typing import Dict, List, Any, Optional
 
 from .db import LocalSearchDB
 from .workspace import WorkspaceManager
-from .registry import ServerRegistry
+from .server_registry import ServerRegistry
 
 class SariDoctor:
     def __init__(self, workspace_root: Optional[str] = None):
         self.workspace_root = workspace_root or WorkspaceManager.resolve_workspace_root()
         self.results: List[Dict[str, Any]] = []
+        self.common_issues = [
+            {"issue": "Permission Denied", "solution": "Check if Sari has read/write access to ~/.local/share/sari and the workspace root."},
+            {"issue": "Port Conflict", "solution": "Run 'sari daemon stop' then start with a different port using SARI_DAEMON_PORT=47790."},
+            {"issue": "Workspace Not Initialized", "solution": "Run 'sari init' in the workspace root to create the necessary config files."}
+        ]
 
-    def _add_result(self, name: str, passed: bool, error: str = "", warn: bool = False):
+    def _add_result(self, name: str, passed: bool, error: str = "", warn: bool = False, details: Optional[Dict[str, Any]] = None):
         self.results.append({
             "name": name,
             "passed": passed,
             "error": error,
-            "warn": warn
+            "warn": warn,
+            "details": details or {}
         })
 
     def check_db(self) -> bool:
@@ -106,7 +112,18 @@ class SariDoctor:
             running = is_daemon_running(host, port)
             if running:
                 pid = read_pid()
-                self._add_result("Sari Daemon", True, f"Running on {host}:{port} (PID: {pid})")
+                
+                # Enhanced: check metrics if running
+                metrics = {}
+                try:
+                    from sari.mcp.cli import _request_mcp_status
+                    m_data = _request_mcp_status(host, port, self.workspace_root)
+                    if m_data:
+                        metrics = m_data
+                except Exception:
+                    pass
+
+                self._add_result("Sari Daemon", True, f"Running on {host}:{port} (PID: {pid})", details=metrics)
                 return True
             else:
                 self._add_result("Sari Daemon", False, "Not running")
@@ -126,28 +143,25 @@ class SariDoctor:
         daemon_host, daemon_port = get_daemon_address()
         inst = None
         try:
+            from sari.core.server_registry import ServerRegistry
             inst = ServerRegistry().resolve_workspace_daemon(self.workspace_root)
         except Exception:
             inst = None
+        
         if inst and inst.get("port"):
             self.check_port_listening(int(inst.get("port")), label="Daemon port")
         else:
-            self.check_port_available(daemon_port, label="Daemon port")
+            self.check_port_listening(daemon_port, label="Daemon port")
         
         self.check_network()
         
         try:
+            from sari.core.server_registry import ServerRegistry
             ws_info = ServerRegistry().get_workspace(self.workspace_root)
             if ws_info and ws_info.get("http_port"):
                 self.check_port_listening(int(ws_info.get("http_port")), label="HTTP API port")
         except Exception:
             pass
-
-        if daemon_port != 47779:
-            if not self.check_port_available(47779, label="Default daemon port"):
-                # Special case: mark as warning instead of fail if needed
-                if self.results and not self.results[-1]["passed"]:
-                    self.results[-1]["warn"] = True
 
         # Storage checks
         self.check_db()
@@ -160,5 +174,6 @@ class SariDoctor:
             "workspace_root": self.workspace_root,
             "passed_count": passed_count,
             "total_count": total_count,
-            "results": self.results
+            "results": self.results,
+            "common_issues": self.common_issues
         }

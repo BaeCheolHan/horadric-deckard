@@ -16,6 +16,8 @@ class GlobalStorageManager:
     """
     _instance = None
     _lock = threading.Lock()
+    _last_switch_block_reason = ""
+    _last_switch_block_ts = 0.0
 
     def __init__(self, db: Any):
         self.db = db
@@ -30,6 +32,24 @@ class GlobalStorageManager:
     @classmethod
     def get_instance(cls, db: Any = None):
         with cls._lock:
+            if cls._instance is not None and db is not None:
+                current_db = getattr(cls._instance, "db", None)
+                current_path = getattr(current_db, "db_path", None)
+                next_path = getattr(db, "db_path", None)
+                if current_db is not db and current_path != next_path:
+                    shutdown_ok = False
+                    try:
+                        shutdown_ok = cls._instance.shutdown()
+                    except Exception:
+                        shutdown_ok = False
+                    if shutdown_ok:
+                        cls._last_switch_block_reason = ""
+                        cls._last_switch_block_ts = 0.0
+                        cls._instance = None
+                    else:
+                        cls._last_switch_block_reason = "previous writer did not stop cleanly"
+                        cls._last_switch_block_ts = time.time()
+                        logger.warning("Skip storage instance switch: previous writer did not stop cleanly.")
             if cls._instance is None:
                 if db is None:
                     from sari.core.workspace import WorkspaceManager
@@ -37,13 +57,15 @@ class GlobalStorageManager:
                     db = LocalSearchDB(str(WorkspaceManager.get_global_db_path()))
                 cls._instance = cls(db)
                 cls._instance.start()
+                cls._last_switch_block_reason = ""
+                cls._last_switch_block_ts = 0.0
             return cls._instance
 
     def start(self):
         self.writer.start()
 
     def stop(self):
-        self.writer.stop()
+        return self.writer.stop()
 
     def _on_db_commit(self, paths: List[str]):
         """L2 -> L3 이동 완료 시 L2 데이터 삭제 (Eviction)"""
@@ -121,6 +143,9 @@ class GlobalStorageManager:
                     results.append(normalized)
         return results
 
-    def shutdown(self):
-        self.writer.flush()
-        self.stop()
+    def shutdown(self) -> bool:
+        flushed = self.writer.flush()
+        stopped = self.stop()
+        if not (flushed and stopped):
+            logger.warning("Storage shutdown incomplete (flushed=%s, stopped=%s)", flushed, stopped)
+        return bool(flushed and stopped)

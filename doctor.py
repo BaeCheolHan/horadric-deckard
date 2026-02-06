@@ -23,7 +23,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from sari.core.db import LocalSearchDB
 from sari.core.workspace import WorkspaceManager
-from sari.core.registry import ServerRegistry
+from sari.core.server_registry import ServerRegistry
 try:
     from sari.mcp.cli import get_daemon_address
 except ImportError:
@@ -58,6 +58,27 @@ def run_doctor():
         status = f"{GREEN}PASS{RESET}" if r["passed"] else (f"{YELLOW}WARN{RESET}" if r["warn"] else f"{RED}FAIL{RESET}")
         msg = f": {r['error']}" if r["error"] else ""
         print(f"[{status}] {r['name']}{msg}")
+        
+        # Display details/metrics if available
+        if r.get("details"):
+            d = r["details"]
+            if "candidates" in d:
+                print(f"       - Candidates: {d['candidates']}")
+                print(f"       - Indexed New: {d.get('indexed_new', 0)}")
+                print(f"       - Skipped Unchanged: {d.get('skipped_unchanged', 0)}")
+                print(f"       - Walk Time: {d.get('walk_time', 0)}s")
+                print(f"       - Read/Parse Time: {d.get('read_time', 0)}s")
+                print(f"       - DB Write Time: {d.get('db_time', 0)}s")
+            if d.get("slow_files"):
+                print(f"       - Top 3 Slow Files:")
+                for f, ms in d["slow_files"][:3]:
+                    print(f"         * {f}: {ms:.1f}ms")
+
+    print("\n==================================================")
+    print(f"{YELLOW}Common Issues & Solutions:{RESET}")
+    for issue in summary.get("common_issues", []):
+        print(f"❓ {issue['issue']}")
+        print(f"   💡 {issue['solution']}")
 
     print("\n==================================================")
     print("💡 Tip: Run 'init' to setup or 'daemon start' to run.")

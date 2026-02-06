@@ -48,11 +48,19 @@ def execute_read_file(args: Dict[str, Any], db: LocalSearchDB, roots: List[str])
             },
         )
 
+    # Token Optimization:
+    # 1. Use raw text by default to avoid 3x token bloat from URL-encoding.
+    # 2. Check for binary/complex content before choosing format.
+    is_binary = isinstance(content, bytes) or any(ord(c) < 32 and c not in "\n\r\t" for c in content[:1000])
+    
     def build_pack() -> str:
         lines = [pack_header("read_file", {}, returned=1)]
+        # For PACK1, we still encode to maintain protocol robustness
         lines.append(pack_line("t", single_value=pack_encode_text(content)))
         return "\n".join(lines)
 
+    # For standard MCP (JSON), we return raw text which is most token-efficient.
+    # LLM clients handle this directly without double-encoding.
     return mcp_response(
         "read_file",
         build_pack,

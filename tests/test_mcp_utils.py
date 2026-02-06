@@ -3,7 +3,8 @@ import os
 import json
 from sari.mcp.tools._util import (
     pack_encode_text, pack_encode_id, pack_header, pack_line, 
-    pack_error, pack_truncated, mcp_response, ErrorCode
+    pack_error, pack_truncated, mcp_response, ErrorCode,
+    resolve_db_path, resolve_fs_path
 )
 
 def test_pack_encoders():
@@ -43,5 +44,17 @@ def test_mcp_response_json(monkeypatch):
         lambda: {"key": "val"}
     )
     text = resp["content"][0]["text"]
-    assert '"key": "val"' in text
+    assert json.loads(text)["key"] == "val"
     assert resp["key"] == "val"
+
+
+def test_resolve_db_path_blocks_traversal():
+    roots = ["/tmp/ws"]
+    rid = __import__("sari.core.workspace", fromlist=["WorkspaceManager"]).WorkspaceManager.root_id("/tmp/ws")
+    assert resolve_db_path(f"{rid}/../../etc/passwd", roots) is None
+
+
+def test_resolve_fs_path_blocks_traversal():
+    roots = ["/tmp/ws"]
+    rid = __import__("sari.core.workspace", fromlist=["WorkspaceManager"]).WorkspaceManager.root_id("/tmp/ws")
+    assert resolve_fs_path(f"{rid}/../../etc/passwd", roots) is None

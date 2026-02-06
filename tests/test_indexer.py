@@ -2,6 +2,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from sari.core.indexer.main import Indexer
+from sari.core.queue_pipeline import FsEvent, FsEventKind
 
 @pytest.fixture
 def mock_indexer(tmp_path):
@@ -72,9 +73,8 @@ def test_indexer_l1_flush(mock_indexer, tmp_path):
     mock_indexer._l1_max_size = 2
     
     # Pre-populate to avoid KeyError
-    mock_indexer._l1_buffer[root_id] = []
-    mock_indexer._l1_docs[root_id] = []
-    mock_indexer._l1_syms[root_id] = []
+    from collections import OrderedDict
+    mock_indexer._l1_buffer[root_id] = OrderedDict()
     
     def add_file(name):
         path = root / name
@@ -89,4 +89,53 @@ def test_indexer_l1_flush(mock_indexer, tmp_path):
 
     add_file("f1.py")
     add_file("f2.py") 
-    assert mock_indexer.storage.upsert_files.called
+    assert mock_indexer.storage.enqueue_task.called
+
+
+def test_indexer_delete_event_uses_workspace_root_id(mock_indexer, tmp_path):
+    root = tmp_path.absolute()
+    deleted = root / "gone.py"
+    deleted.write_text("x")
+    deleted.unlink()
+
+    with patch("sari.core.workspace.WorkspaceManager.root_id", return_value="root-legacy"), \
+         patch("sari.core.workspace.WorkspaceManager.root_id_for_workspace", return_value="root-explicit"):
+        mock_indexer._enqueue_fsevent(FsEvent(kind=FsEventKind.DELETED, path=str(deleted), root=str(root)))
+
+    called_path = mock_indexer.storage.delete_file.call_args.kwargs["path"]
+    assert called_path.startswith("root-explicit/")
+    assert called_path.endswith("gone.py")
+
+
+def test_indexer_delete_event_without_root_infers_workspace(mock_indexer, tmp_path):
+    root = tmp_path.absolute()
+    deleted = root / "lost.py"
+    deleted.write_text("x")
+    deleted.unlink()
+
+    with patch("sari.core.workspace.WorkspaceManager.root_id_for_workspace", return_value="root-explicit"):
+        mock_indexer._enqueue_fsevent(FsEvent(kind=FsEventKind.DELETED, path=str(deleted), root=""))
+
+    called_path = mock_indexer.storage.delete_file.call_args.kwargs["path"]
+    assert called_path == "root-explicit/lost.py"
+
+
+def test_indexer_moved_event_deletes_old_and_enqueues_new(mock_indexer, tmp_path):
+    root = tmp_path.absolute()
+    src = root / "old.py"
+    dst = root / "new.py"
+    src.write_text("x")
+    src.rename(dst)
+
+    with patch("sari.core.workspace.WorkspaceManager.root_id_for_workspace", return_value="root-explicit"):
+        mock_indexer._enqueue_fsevent(
+            FsEvent(kind=FsEventKind.MOVED, path=str(src), root=str(root), dest_path=str(dst))
+        )
+
+    called_path = mock_indexer.storage.delete_file.call_args.kwargs["path"]
+    assert called_path == "root-explicit/old.py"
+    item = mock_indexer.coordinator.get_next_task()
+    assert item is not None
+    rid, task = item
+    assert rid == "root-explicit"
+    assert str(task["path"]).endswith("new.py")

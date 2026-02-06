@@ -27,22 +27,46 @@ class LocalSearchDB:
             init_schema(conn)
 
     def _check_and_migrate(self):
-        if not os.path.exists(self.db_path): return
+        if not os.path.exists(self.db_path):
+            return
         try:
             conn = sqlite3.connect(self.db_path)
-            v = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-            conn.close()
-            if not v or v[0] < CURRENT_SCHEMA_VERSION:
-                os.remove(self.db_path)
-        except:
-            try: os.remove(self.db_path)
-            except: pass
+            try:
+                row = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+                ).fetchone()
+                if not row:
+                    self.logger.warning(
+                        "schema_version table missing. Keeping DB as-is and applying additive init."
+                    )
+                    return
+                v = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+                if not v:
+                    self.logger.warning(
+                        "schema_version row missing. Keeping DB as-is and applying additive init."
+                    )
+                    return
+                if int(v[0]) < int(CURRENT_SCHEMA_VERSION):
+                    self.logger.warning(
+                        "Older schema detected (db=%s, code=%s). "
+                        "Destructive reset is disabled; running additive init only.",
+                        v[0],
+                        CURRENT_SCHEMA_VERSION,
+                    )
+            finally:
+                conn.close()
+        except Exception as e:
+            self.logger.warning(f"Schema precheck failed; keeping DB file untouched: {e}")
 
     def _get_conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn"):
             self._local.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._local.conn.execute("PRAGMA journal_mode=WAL")
+            self._local.conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn.execute("PRAGMA temp_store=MEMORY")
+            self._local.conn.execute("PRAGMA cache_size=-10000")
             self._local.conn.execute("PRAGMA foreign_keys=ON")
+            self._local.conn.execute("PRAGMA busy_timeout=15000")
             self._local.conn.row_factory = sqlite3.Row
             with self._conns_lock:
                 self._conns.add(self._local.conn)
@@ -95,6 +119,24 @@ class LocalSearchDB:
     def get_file_meta(self, path: str):
         return self._get_conn().execute("SELECT mtime, size, content_hash FROM files WHERE path = ?", (path,)).fetchone()
 
+    def get_symbol_block(self, path: str, name: str) -> Optional[str]:
+        """Retrieves the full code block for a symbol based on stored line boundaries."""
+        row = self._get_conn().execute(
+            "SELECT line, end_line FROM symbols WHERE path = ? AND name = ? LIMIT 1",
+            (path, name)
+        ).fetchone()
+        if not row: return None
+        
+        start, end = row["line"], row["end_line"]
+        content = self.read_file(path)
+        if not content: return None
+        
+        lines = content.splitlines()
+        # Line numbers are 1-based
+        if 1 <= start <= len(lines):
+            return "\n".join(lines[start-1 : end])
+        return None
+
     def read_file(self, path: str) -> Optional[str]:
         row = self._get_conn().execute("SELECT content FROM files WHERE path = ?", (path,)).fetchone()
         if row:
@@ -143,8 +185,10 @@ class LocalSearchDB:
         sql = "SELECT path, root_id, repo, mtime, size, parse_status FROM files WHERE 1=1"
         sql, params = self.apply_root_filter(sql, root_id)
         if query:
-            sql += " AND (path LIKE ? OR rel_path LIKE ?)"
-            params.extend([f"%{query}%", f"%{query}%"])
+            # Enhanced fallback: Search path, rel_path, AND content snippet
+            sql += " AND (path LIKE ? OR rel_path LIKE ? OR content LIKE ?)"
+            like_q = f"%{query}%"
+            params.extend([like_q, like_q, like_q])
         sql += " LIMIT ?"
         params.append(limit)
         cur = self._get_conn().cursor()
@@ -237,6 +281,36 @@ class LocalSearchDB:
     def has_legacy_paths(self): return False
 
     # --- Transactions ---
+    def create_staging_table(self, cur: sqlite3.Cursor):
+        """Create a temporary table without indexes for high-speed bulk ingestion."""
+        cur.execute("DROP TABLE IF EXISTS staging_files")
+        cur.execute(
+            "CREATE TEMPORARY TABLE staging_files ("
+            "path TEXT PRIMARY KEY, rel_path TEXT, root_id TEXT, repo TEXT, mtime INTEGER, size INTEGER, "
+            "content BLOB, content_hash TEXT, fts_content TEXT, last_seen INTEGER, deleted_ts INTEGER, "
+            "parse_status TEXT, parse_reason TEXT, ast_status TEXT, ast_reason TEXT, "
+            "is_binary INTEGER, is_minified INTEGER, sampled INTEGER, content_bytes INTEGER, metadata_json TEXT)"
+        )
+
+    def upsert_files_staging(self, cur: sqlite3.Cursor, rows: Iterable[tuple]):
+        """Fast insert into the unindexed staging table."""
+        cur.executemany(
+            "INSERT OR REPLACE INTO staging_files VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows
+        )
+
+    def merge_staging_to_main(self, cur: sqlite3.Cursor):
+        """Atomsically merge staging data into the main indexed table using compatible SQL."""
+        # 1. Delete existing records that are present in staging
+        cur.execute("DELETE FROM files WHERE path IN (SELECT path FROM staging_files)")
+        
+        # 2. Insert all from staging
+        cur.execute(
+            "INSERT INTO files (path, rel_path, root_id, repo, mtime, size, content, content_hash, fts_content, last_seen, deleted_ts, parse_status, parse_reason, ast_status, ast_reason, is_binary, is_minified, sampled, content_bytes, metadata_json) "
+            "SELECT * FROM staging_files"
+        )
+        cur.execute("DROP TABLE IF EXISTS staging_files")
+
     def upsert_files_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple]):
         cur.executemany(
             "INSERT INTO files (path, rel_path, root_id, repo, mtime, size, content, content_hash, fts_content, last_seen, deleted_ts, parse_status, parse_reason, ast_status, ast_reason, is_binary, is_minified, sampled, content_bytes, metadata_json) "
@@ -263,6 +337,9 @@ class LocalSearchDB:
 
     def upsert_repo_meta_tx(self, cur: sqlite3.Cursor, name: str, tags: str, domain: str, desc: str, priority: int):
         cur.execute("INSERT INTO repo_meta (repo_name, tags, domain, description, priority) VALUES (?,?,?,?,?) ON CONFLICT(repo_name) DO UPDATE SET priority=excluded.priority", (name, tags, domain, desc, priority))
+
+    def update_last_seen_tx(self, cur: sqlite3.Cursor, paths: List[str], ts: int):
+        cur.executemany("UPDATE files SET last_seen = ? WHERE path = ?", [(ts, p) for p in paths])
 
     def upsert_snippet_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple]):
         cur.executemany("INSERT OR IGNORE INTO snippets (tag, path, root_id, start_line, end_line, content, content_hash, anchor_before, anchor_after, repo, note, commit_hash, created_ts, updated_ts, metadata_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
@@ -299,10 +376,12 @@ class LocalSearchDB:
                 return 0
                 
             cur.execute("DELETE FROM files WHERE root_id = ? AND last_seen < ?", (root_id, before_ts))
-            # 2. 관련 심볼 및 관계 삭제 (ON DELETE CASCADE가 설정되어 있지 않을 경우 대비)
-            # schema.py 확인 결과 root_id 기반 연쇄 삭제가 일부 설정되어 있으나, path 기준은 명시적 처리 안전
-            for p in paths_to_delete:
-                cur.execute("DELETE FROM symbols WHERE path = ?", (p,))
+            
+            # 2. Optimized Batch Delete for symbols and relations
+            # Instead of a loop with individual deletes, we use a single IN query or similar.
+            if paths_to_delete:
+                cur.executemany("DELETE FROM symbols WHERE path = ?", [(p,) for p in paths_to_delete])
+                cur.executemany("DELETE FROM symbol_relations WHERE from_path = ? OR to_path = ?", [(p, p) for p in paths_to_delete])
             
             self._write.commit()
             
@@ -312,8 +391,6 @@ class LocalSearchDB:
                     self.engine.delete_documents(paths_to_delete)
                 except: pass
                 
-            return len(paths_to_delete)
-
             return len(paths_to_delete)
 
     def prune_data(self, table: str, days: int) -> int:

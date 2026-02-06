@@ -18,7 +18,8 @@ class GenericRegexParser(BaseParser):
         self.re_ext_partial = _safe_compile(r"\b(?:extends|:)\s+(.+)$")
         self.re_impl_partial = _safe_compile(r"\bimplements\s+(.+)$")
         self.re_inherit_cont = _safe_compile(r"^\s*([a-zA-Z0-9_<>,.\[\]\(\)\?\&\s]+)(?=\s*{|$)")
-        self.re_anno = _safe_compile(r"@([a-zA-Z0-9_]+)(?:\s*\((?:(?!@).)*?\))?")
+        # Support @annotations, @doc, @impl, etc.
+        self.re_anno = _safe_compile(r"^\s*@([a-zA-Z0-9_]+)(?:\s*\((?:(?!@).)*?\))?|@([a-zA-Z0-9_]+)")
         self.kind_norm = NORMALIZE_KIND_BY_EXT.get(self.ext, {})
 
     @staticmethod
@@ -37,9 +38,28 @@ class GenericRegexParser(BaseParser):
                 out.append(original)
         return out
 
+    def sanitize(self, line: str) -> str:
+        """Strip single-line comments and strings to prevent false matches."""
+        # Strip single line comments
+        line = re.sub(r"//.*$", "", line)
+        line = re.sub(r"#.*$", "", line)
+        # Replace string contents but keep quotes to preserve structure
+        line = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', line)
+        line = re.sub(r"'[^'\\]*(?:\\.[^'\\]*)*'", "''", line)
+        return line
+
     def extract(self, path: str, content: str) -> Tuple[List[Tuple], List[Tuple]]:
         symbols, relations = [], []
-        lines = content.splitlines()
+        
+        # Pre-process: Blank out block comments while preserving line count
+        # This prevents matching symbols inside multi-line comments.
+        processed_content = content
+        for m in re.finditer(r"/\*.*?\*/", content, re.DOTALL):
+            replacement = "\n" * m.group(0).count("\n")
+            # We use spaces to maintain columns if needed, but \n is enough for line-based regex
+            processed_content = processed_content[:m.start()] + replacement + processed_content[m.end():]
+        
+        lines = processed_content.splitlines()
         active_scopes: List[Tuple[int, Dict[str, Any]]] = []
         cur_bal, in_doc = 0, False
         pending_doc, pending_annos, last_path = [], [], None
@@ -150,12 +170,18 @@ class GenericRegexParser(BaseParser):
             looks_like_def = (
                 bool(re.search(r"\b(class|interface|enum|record|def|fun|function|func)\b", method_line)) or
                 bool(re.search(r"\b(public|private|protected|static|final|abstract|synchronized|native|default)\b", method_line)) or
-                bool(re.search(r"\b[a-zA-Z_][a-zA-Z0-9_<>,.\[\]]+\s+[A-Za-z_][A-Za-z0-9_]*\s*\(", method_line))
+                bool(re.search(r"\b[a-zA-Z_][a-zA-Z0-9_<>,.\[\]]+\s+[A-Za-z_][A-Za-z0-9_]*\s*\(", method_line)) or
+                # Support direct method definitions: name() { ... }
+                bool(re.search(r"\b[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*\{", method_line)) or
+                # Support arrow functions: () => { ... }
+                bool(re.search(r"=>\s*\{", method_line))
             )
             if looks_like_def:
                 for m in self.re_method.finditer(method_line):
-                    name = m.group(1)
-                    if not any(name == x[0] for x in matches): matches.append((name, self.method_kind, m.start()))
+                    # Get the first non-None group from the match
+                    name = next((g for g in m.groups() if g), None)
+                    if name and not any(name == x[0] for x in matches): 
+                        matches.append((name, self.method_kind, m.start()))
 
             for name, kind, _ in sorted(matches, key=lambda x: x[2]):
                 meta = {"annotations": pending_annos.copy()}

@@ -20,6 +20,8 @@ class ParserFactory:
         ".cpp": "cpp",
         ".c": "c",
         ".h": "cpp",
+        ".ex": "elixir",
+        ".exs": "elixir",
     }
 
     @classmethod
@@ -31,15 +33,17 @@ class ParserFactory:
                 cls._parsers[key] = PythonParser()
             return cls._parsers[key]
         configs = {
-            ".java": {"re_class": _safe_compile(r"\b(class|interface|enum|record)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_<>,.\[\]\s]+?\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
-            ".kt": {"re_class": _safe_compile(r"\b(class|interface|enum|object|data\s+class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfun\s+([a-zA-Z0-9_]+)\b\s*\(")},
-            ".go": {"re_class": _safe_compile(r"\b(type|struct|interface)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfunc\s+(?:[^)]+\)\s+)?([a-zA-Z0-9_]+)\b\s*\("), "method_kind": "function"},
-            ".cpp": {"re_class": _safe_compile(r"\b(class|struct|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_:<>]+\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
-            ".h": {"re_class": _safe_compile(r"\b(class|struct|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_:<>]+\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
-            ".js": {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")},
-            ".jsx": {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")},
-            ".ts": {"re_class": _safe_compile(r"\b(class|interface|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")},
-            ".tsx": {"re_class": _safe_compile(r"\b(class|interface|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(")}
+            ".java": {"re_class": _safe_compile(r"\b(class|interface|enum|record|@interface)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_<>,.\[\]\s]+?\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
+            ".kt": {"re_class": _safe_compile(r"\b(class|interface|enum|object|data\s+class|sealed\s+class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfun\s+(?:<[^>]+>\s+)?([a-zA-Z0-9_]+)\b\s*\(")},
+            ".go": {"re_class": _safe_compile(r"\b(type|struct|interface)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfunc\s+(?:\([^)]+\)\s+)?([a-zA-Z0-9_]+)\b\s*\("), "method_kind": "function"},
+            ".cpp": {"re_class": _safe_compile(r"\b(class|struct|enum|namespace)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:[a-zA-Z0-9_:<>]+\s+)?\b([a-zA-Z0-9_]+)\b\s*\(")},
+            ".js": {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?function\b|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|\b([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{")},
+            ".jsx": {"re_class": _safe_compile(r"\b(class)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?function\b|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|\b([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{")},
+            ".ts": {"re_class": _safe_compile(r"\b(class|interface|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?function\b|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|\b([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{")},
+            ".tsx": {"re_class": _safe_compile(r"\b(class|interface|enum)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"(?:async\s+)?function\s+([a-zA-Z0-9_]+)\b\s*\(|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?function\b|\b([a-zA-Z0-9_]+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>|\b([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{")},
+            ".rs": {"re_class": _safe_compile(r"\b(struct|enum|trait|union|mod)\s+([a-zA-Z0-9_]+)"), "re_method": _safe_compile(r"\bfn\s+([a-zA-Z0-9_]+)\b\s*[<(]")},
+            ".ex": {"re_class": _safe_compile(r"\bdefmodule\s+([a-zA-Z0-9_.]+)"), "re_method": _safe_compile(r"\bdef(?:p)?\s+([a-zA-Z0-9_!?]+)\b\s*[({]|\bdef(?:p)?\s+([a-zA-Z0-9_!?]+)\s*,\s*do")},
+            ".exs": {"re_class": _safe_compile(r"\bdefmodule\s+([a-zA-Z0-9_.]+)"), "re_method": _safe_compile(r"\bdef(?:p)?\s+([a-zA-Z0-9_!?]+)\b\s*[({]|\bdef(?:p)?\s+([a-zA-Z0-9_!?]+)\s*,\s*do")}
         }
         if ext in configs:
             key = f"generic:{ext}"

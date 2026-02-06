@@ -48,6 +48,18 @@ def test_db_read_file(db):
     read = db.read_file("path1")
     assert read == content
 
+def test_db_read_file_bad_zlib_falls_back_to_disk(db, tmp_path):
+    rel = "fallback.txt"
+    real_file = tmp_path / rel
+    real_file.write_text("disk fallback", encoding="utf-8")
+    bad = b"ZLIB\0not-really-zlib"
+    row = (f"root1/{rel}", rel, "root1", "repo1", 100, 50, bad, "hash1", "fallback", 200, 0, "ok", "", "none", "", False, False, False, 12, "{}")
+    with db._lock:
+        cur = db._write.cursor()
+        db.upsert_files_tx(cur, [row])
+        db._write.commit()
+    assert db.read_file(f"root1/{rel}") == "disk fallback"
+
 def test_db_prune_files(db):
     now = int(time.time())
     row_old = ("old_file", "old_file", "root1", "repo1", 100, 50, "old", "hash1", "old", now - 100, 0, "ok", "", "none", "", False, False, False, 3, "{}")
@@ -76,3 +88,19 @@ def test_db_failed_tasks(db):
         db.clear_failed_tasks_tx(cur, ["fail_path"])
         db._write.commit()
     assert db.count_failed_tasks()[0] == 0
+
+
+def test_db_migration_precheck_never_deletes_file(tmp_path):
+    db_file = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_file))
+    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_ts INTEGER NOT NULL)")
+    conn.execute("INSERT INTO schema_version (version, applied_ts) VALUES (?, ?)", (0, int(time.time())))
+    conn.execute("CREATE TABLE keep_me (v TEXT)")
+    conn.execute("INSERT INTO keep_me(v) VALUES ('ok')")
+    conn.commit()
+    conn.close()
+
+    db = LocalSearchDB(str(db_file))
+    row = db._read.execute("SELECT v FROM keep_me").fetchone()
+    assert row[0] == "ok"
+    db.close_all()

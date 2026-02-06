@@ -34,7 +34,7 @@ if str(REPO_ROOT) not in sys.path:
 
 
 from sari.core.workspace import WorkspaceManager
-from sari.core.server_registry import ServerRegistry, REGISTRY_FILE
+from sari.core.server_registry import ServerRegistry, get_registry_path
 from sari.core.config import Config
 from sari.core.db import LocalSearchDB
 from sari.core.daemon_resolver import resolve_daemon_address as get_daemon_address
@@ -51,6 +51,12 @@ DEFAULT_PORT = 47779
 PID_FILE = WorkspaceManager.get_global_data_dir() / "daemon.pid"
 DEFAULT_HTTP_HOST = "127.0.0.1"
 DEFAULT_HTTP_PORT = 47777
+
+def _arg(args: Any, name: str, default: Any = None) -> Any:
+    return getattr(args, name, default)
+
+def _pid_file_path() -> Path:
+    return WorkspaceManager.get_global_data_dir() / "daemon.pid"
 
 
 def _package_config_path() -> Path:
@@ -82,8 +88,9 @@ def _load_server_info(workspace_root: str) -> Optional[dict]:
 
 def _load_registry_instances() -> Dict[str, Any]:
     try:
-        if REGISTRY_FILE.exists():
-            return json.loads(REGISTRY_FILE.read_text(encoding="utf-8")).get("instances", {})
+        reg_file = get_registry_path()
+        if reg_file.exists():
+            return json.loads(reg_file.read_text(encoding="utf-8")).get("instances", {})
     except Exception:
         pass
     return {}
@@ -365,18 +372,23 @@ def read_pid() -> Optional[int]:
             return int(inst.get("pid"))
     except Exception:
         pass
-    if PID_FILE.exists():
-        try:
-            return int(PID_FILE.read_text().strip())
-        except (ValueError, OSError):
-            pass
+    for path in (_pid_file_path(), PID_FILE):
+        if path.exists():
+            try:
+                return int(path.read_text().strip())
+            except (ValueError, OSError):
+                pass
     return None
 
 
 def remove_pid() -> None:
     """Remove pidfile manually (if daemon crashed)."""
-    if PID_FILE.exists():
-        PID_FILE.unlink()
+    for path in (_pid_file_path(), PID_FILE):
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
 
 
 def _get_local_version() -> str:
@@ -455,25 +467,36 @@ def _ensure_daemon_running(
 
 def cmd_daemon_start(args):
     """Start the daemon."""
-    explicit_port = bool(args.daemon_port)
+    explicit_port = bool(_arg(args, "daemon_port"))
     force_start = (os.environ.get("SARI_DAEMON_FORCE_START") or "").strip().lower() in {"1", "true", "yes", "on"}
     workspace_root = os.environ.get("SARI_WORKSPACE_ROOT") or WorkspaceManager.resolve_workspace_root()
     registry = ServerRegistry()
 
-    if args.daemon_host or args.daemon_port:
-        host = args.daemon_host or DEFAULT_HOST
-        port = int(args.daemon_port or DEFAULT_PORT)
+    if _arg(args, "daemon_host") or _arg(args, "daemon_port"):
+        host = _arg(args, "daemon_host") or DEFAULT_HOST
+        port = int(_arg(args, "daemon_port") or DEFAULT_PORT)
     else:
         inst = registry.resolve_workspace_daemon(str(workspace_root))
         if inst and inst.get("port"):
             host = inst.get("host") or DEFAULT_HOST
             port = int(inst.get("port"))
         else:
-            host = DEFAULT_HOST
-            port = DEFAULT_PORT
+            host, port = get_daemon_address()
 
     identify = _identify_sari_daemon(host, port)
     if identify:
+        if explicit_port:
+            ws_inst = registry.resolve_workspace_daemon(str(workspace_root))
+            same_instance = bool(ws_inst and int(ws_inst.get("port", 0)) == int(port))
+            if not same_instance:
+                # Requested explicit port is occupied by another daemon instance.
+                stop_args = argparse.Namespace(daemon_host=host, daemon_port=port)
+                cmd_daemon_stop(stop_args)
+                identify = _identify_sari_daemon(host, port)
+                if identify:
+                    print(f"❌ Port {port} is occupied by another running daemon.", file=sys.stderr)
+                    return 1
+
         if not force_start and not _needs_upgrade_or_drain(identify):
             pid = read_pid()
             print(f"✅ Daemon already running on {host}:{port}")
@@ -495,22 +518,23 @@ def cmd_daemon_start(args):
         print(f"⚠️  Port {port} is in use. Switching to free port {free_port}.")
         port = free_port
 
-    repo_root = Path(__file__).parent.parent.resolve()
+    # Go up 3 levels: sari/mcp/cli.py -> sari/mcp -> sari/ -> (repo root)
+    repo_root = Path(__file__).parent.parent.parent.resolve()
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     env["SARI_DAEMON_AUTOSTART"] = "1"
     env["SARI_WORKSPACE_ROOT"] = workspace_root
     env["SARI_DAEMON_PORT"] = str(port)
-    if args.daemon_host:
-        env["SARI_DAEMON_HOST"] = args.daemon_host
-    if args.daemon_port:
-        env["SARI_DAEMON_PORT"] = str(args.daemon_port)
-    if args.http_host:
-        env["SARI_HTTP_API_HOST"] = args.http_host
-    if args.http_port is not None:
-        env["SARI_HTTP_API_PORT"] = str(args.http_port)
+    if _arg(args, "daemon_host"):
+        env["SARI_DAEMON_HOST"] = _arg(args, "daemon_host")
+    if _arg(args, "daemon_port"):
+        env["SARI_DAEMON_PORT"] = str(_arg(args, "daemon_port"))
+    if _arg(args, "http_host"):
+        env["SARI_HTTP_API_HOST"] = _arg(args, "http_host")
+    if _arg(args, "http_port") is not None:
+        env["SARI_HTTP_API_PORT"] = str(_arg(args, "http_port"))
 
-    if args.daemonize:
+    if _arg(args, "daemonize"):
         # Start in background
         print(f"Starting daemon on {host}:{port} (background)...")
 
@@ -543,14 +567,14 @@ def cmd_daemon_start(args):
             os.environ["SARI_DAEMON_AUTOSTART"] = "1"
             os.environ["SARI_WORKSPACE_ROOT"] = workspace_root
             os.environ["PYTHONPATH"] = str(repo_root) + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "")
-            if args.daemon_host:
-                os.environ["SARI_DAEMON_HOST"] = args.daemon_host
-            if args.daemon_port:
-                os.environ["SARI_DAEMON_PORT"] = str(args.daemon_port)
-            if args.http_host:
-                os.environ["SARI_HTTP_API_HOST"] = args.http_host
-            if args.http_port is not None:
-                os.environ["SARI_HTTP_API_PORT"] = str(args.http_port)
+            if _arg(args, "daemon_host"):
+                os.environ["SARI_DAEMON_HOST"] = _arg(args, "daemon_host")
+            if _arg(args, "daemon_port"):
+                os.environ["SARI_DAEMON_PORT"] = str(_arg(args, "daemon_port"))
+            if _arg(args, "http_host"):
+                os.environ["SARI_HTTP_API_HOST"] = _arg(args, "http_host")
+            if _arg(args, "http_port") is not None:
+                os.environ["SARI_HTTP_API_PORT"] = str(_arg(args, "http_port"))
             from sari.mcp.daemon import main as daemon_main
             import asyncio
             asyncio.run(daemon_main())
@@ -562,7 +586,11 @@ def cmd_daemon_start(args):
 
 def cmd_daemon_stop(args):
     """Stop the daemon."""
-    host, port = get_daemon_address()
+    if _arg(args, "daemon_host") or _arg(args, "daemon_port"):
+        host = _arg(args, "daemon_host") or DEFAULT_HOST
+        port = int(_arg(args, "daemon_port") or DEFAULT_PORT)
+    else:
+        host, port = get_daemon_address()
 
     if not is_daemon_running(host, port):
         print("Daemon is not running")
@@ -602,15 +630,16 @@ def cmd_daemon_stop(args):
                 except Exception as e:
                     if psutil and isinstance(e, psutil.NoSuchProcess):
                         print(f"PID {pid} not found (already stopped?)")
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                        except Exception:
+                            pass
                         remove_pid()
                         return 0
-                    # Handle psutil error or undefined
-                    # If psutil is None, we already handled in else block?
-                    # Wait, if psutil is None, we go to else block.
-                    # This except catches psutil.NoSuchProcess.
-                    # If psutil is None, name 'psutil' exists but is None.
-                    # isinstance(e, None) raises TypeError.
-                    raise e
+                    # Fallback: if psutil inspection failed, still try SIGTERM.
+                    print(f"⚠️  psutil inspection failed ({e}); sending SIGTERM without metadata check.")
+                    os.kill(pid, signal.SIGTERM)
+                    print(f"Sent SIGTERM to PID {pid}")
 
             # Wait for shutdown
             for _ in range(30):
@@ -639,7 +668,11 @@ def cmd_daemon_stop(args):
 
 def cmd_daemon_status(args):
     """Check daemon status."""
-    host, port = get_daemon_address()
+    if _arg(args, "daemon_host") or _arg(args, "daemon_port"):
+        host = _arg(args, "daemon_host") or DEFAULT_HOST
+        port = int(_arg(args, "daemon_port") or DEFAULT_PORT)
+    else:
+        host, port = get_daemon_address()
 
     running = is_daemon_running(host, port)
     pid = read_pid()
@@ -1093,10 +1126,14 @@ def main():
 
     # daemon stop
     stop_parser = daemon_sub.add_parser("stop", help="Stop daemon")
+    stop_parser.add_argument("--daemon-host", default="", help="Daemon host override")
+    stop_parser.add_argument("--daemon-port", type=int, default=None, help="Daemon port override")
     stop_parser.set_defaults(func=cmd_daemon_stop)
 
     # daemon status
     status_parser = daemon_sub.add_parser("status", help="Check status")
+    status_parser.add_argument("--daemon-host", default="", help="Daemon host override")
+    status_parser.add_argument("--daemon-port", type=int, default=None, help="Daemon port override")
     status_parser.set_defaults(func=cmd_daemon_status)
 
     # proxy subcommand

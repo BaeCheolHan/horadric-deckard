@@ -1,26 +1,29 @@
 import os
 from typing import Any, Optional, List
 
+def _allow_legacy() -> bool:
+    val = str(os.environ.get("SARI_ALLOW_LEGACY", "")).strip().lower()
+    return val in {"1", "true", "yes", "on"}
+
 def _get_env_any(key: str, default: Any = None) -> Any:
-    """Helper to check SARI_ prefix, then raw key, then legacy keys."""
-    # 1. SARI_ prefix (Highest priority)
+    """Read only SARI_* namespaced environment variables."""
     val = os.environ.get(f"SARI_{key}")
-    if val is not None: return val
-    
-    # 2. Raw key (e.g. PORT, HTTP_PORT)
-    val = os.environ.get(key)
-    if val is not None: return val
-    
-    # 3. Specific legacy overrides
-    if key == "DAEMON_PORT":
-        for legacy in ["PORT", "PORT_OVERRIDE", "DAEMON_PORT"]:
-            v = os.environ.get(legacy)
-            if v is not None: return v
-    elif key == "HTTP_API_PORT":
-        for legacy in ["HTTP_PORT", "HTTP_API_PORT"]:
-            v = os.environ.get(legacy)
-            if v is not None: return v
-            
+    if val is not None:
+        return val
+    if _allow_legacy():
+        raw = os.environ.get(key)
+        if raw is not None:
+            return raw
+        if key == "DAEMON_PORT":
+            for legacy in ["PORT", "PORT_OVERRIDE", "DAEMON_PORT"]:
+                v = os.environ.get(legacy)
+                if v is not None:
+                    return v
+        elif key == "HTTP_API_PORT":
+            for legacy in ["HTTP_PORT", "HTTP_API_PORT"]:
+                v = os.environ.get(legacy)
+                if v is not None:
+                    return v
     return default
 
 def _get_bool(key: str, default: bool = False) -> bool:
@@ -70,6 +73,17 @@ class Settings:
     def LOG_DIR(self) -> Optional[str]: return _get_env_any("LOG_DIR")
     @property
     def REGISTRY_FILE(self) -> Optional[str]: return _get_env_any("REGISTRY_FILE")
+    
+    @property
+    def EXCLUDE_DIRS_ADD(self) -> List[str]:
+        val = _get_env_any("EXCLUDE_DIRS_ADD", "")
+        return [s.strip() for s in val.split(",") if s.strip()]
+        
+    @property
+    def EXCLUDE_GLOBS_ADD(self) -> List[str]:
+        val = _get_env_any("EXCLUDE_GLOBS_ADD", "")
+        return [s.strip() for s in val.split(",") if s.strip()]
+
     @property
     def PERSIST_PATHS(self) -> bool: return _get_bool("PERSIST_PATHS", False) or _get_bool("PERSIST_ROOTS", False)
     @property
@@ -153,9 +167,9 @@ class Settings:
     @property
     def DAEMON_HEARTBEAT_SEC(self) -> float: return _get_float("DAEMON_HEARTBEAT_SEC", 5.0)
     @property
-    def DAEMON_AUTOSTART(self) -> bool: return _get_bool("DAEMON_AUTOSTART", False)
+    def DAEMON_TIMEOUT_SEC(self) -> float: return _get_float("DAEMON_TIMEOUT_SEC", 10.0)
     @property
-    def RESPONSE_COMPACT(self) -> bool: return _get_bool("RESPONSE_COMPACT", True)
+    def DAEMON_AUTOSTART(self) -> bool: return _get_bool("DAEMON_AUTOSTART", False)
     @property
     def FORMAT(self) -> str: return _get_env_any("FORMAT", "pack").strip().lower()
     @property

@@ -27,7 +27,7 @@ def _precision_hint(path: str) -> str:
         return "low (regex C++)"
     return "medium"
 
-def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, roots: Optional[List[str]] = None) -> Dict[str, Any]:
+def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, logger: Any, roots: List[str]) -> Dict[str, Any]:
     """
     Execute search_symbols tool.
 
@@ -37,7 +37,7 @@ def execute_search_symbols(args: Dict[str, Any], db: LocalSearchDB, roots: Optio
     """
     query = args.get("query", "")
     limit_arg = int(args.get("limit", 20))
-    root_ids = resolve_root_ids(list(roots or []))
+    root_ids = resolve_root_ids(roots)
 
     # --- JSON Builder (Legacy/Debug) ---
     def build_json() -> Dict[str, Any]:

@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from sari.core.db import LocalSearchDB
 from sari.mcp.telemetry import TelemetryLogger
-from sari.mcp.tools._util import mcp_response, pack_error, ErrorCode, resolve_db_path, pack_header, pack_line, pack_encode_text
+from sari.mcp.tools._util import mcp_response, pack_error, ErrorCode, resolve_db_path, pack_header, pack_line, pack_encode_text, pack_encode_id
 
 
 def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: TelemetryLogger, roots: List[str]) -> Dict[str, Any]:
@@ -48,44 +48,51 @@ def execute_read_symbol(args: Dict[str, Any], db: LocalSearchDB, logger: Telemet
             lambda: {"error": {"code": ErrorCode.NOT_INDEXED.value, "message": f"Symbol '{symbol_name}' not found in '{db_path}' (or no block range available)."}, "isError": True},
         )
 
-    # Format output
-    doc = block.get('docstring', '')
-    meta = block.get('metadata', '{}')
+    if isinstance(block, str):
+        block_dict = {
+            "name": symbol_name,
+            "path": db_path,
+            "start_line": 0,
+            "end_line": 0,
+            "content": block,
+            "docstring": "",
+            "metadata": "{}",
+        }
+    else:
+        block_dict = dict(block)
 
-    header = [
-        f"File: {db_path}",
-        f"Symbol: {block['name']}",
-        f"Range: L{block['start_line']} - L{block['end_line']}"
-    ]
-
-    try:
-        m = json.loads(meta)
-        if m.get("annotations"):
-            header.append(f"Annotations: {', '.join(m['annotations'])}")
-        if m.get("http_path"):
-            header.append(f"API Endpoint: {m['http_path']}")
-    except: pass
-
-    output_lines = [
-        "\n".join(header),
-        "--------------------------------------------------"
-    ]
-
-    if doc:
-        output_lines.append(f"/* DOCSTRING */\n{doc}\n")
-
-    output_lines.append(block['content'])
-    output_lines.append("--------------------------------------------------")
-
-    output = "\n".join(output_lines)
+    doc = block_dict.get("docstring", "")
+    meta = block_dict.get("metadata", "{}")
+    content = str(block_dict.get("content", ""))
 
     def build_pack() -> str:
         lines = [pack_header("read_symbol", {}, returned=1)]
-        lines.append(pack_line("t", single_value=pack_encode_text(output)))
+        lines.append(pack_line("s", {
+            "name": pack_encode_id(block_dict.get("name", symbol_name)),
+            "path": pack_encode_id(block_dict.get("path", db_path)),
+            "start": str(block_dict.get("start_line", 0)),
+            "end": str(block_dict.get("end_line", 0)),
+        }))
+        if doc:
+            lines.append(pack_line("d", single_value=pack_encode_text(doc)))
+        lines.append(pack_line("c", single_value=pack_encode_text(content)))
         return "\n".join(lines)
+
+    try:
+        meta_json = json.loads(meta) if isinstance(meta, str) and meta else meta
+    except Exception:
+        meta_json = {}
 
     return mcp_response(
         "read_symbol",
         build_pack,
-        lambda: {"content": [{"type": "text", "text": output}]},
+        lambda: {
+            "path": db_path,
+            "name": block_dict.get("name", symbol_name),
+            "start_line": block_dict.get("start_line", 0),
+            "end_line": block_dict.get("end_line", 0),
+            "content": content,
+            "docstring": doc,
+            "metadata": meta_json,
+        },
     )

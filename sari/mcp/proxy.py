@@ -54,6 +54,7 @@ def _log_error(message: str) -> None:
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 47779
+MAX_MESSAGE_SIZE = 10 * 1024 * 1024 # 10MB
 _HEADER_SEP = b"\r\n\r\n"
 _MODE_FRAMED = "framed"
 _MODE_JSONL = "jsonl"
@@ -154,8 +155,8 @@ def start_daemon_if_needed(host, port, workspace_root: str = ""):
                 stderr=subprocess.DEVNULL,
             )
 
-            # Wait for it to come up
-            for _ in range(30):
+            # Wait for it to come up (Increase to 10s for cold start reliability)
+            for _ in range(100):
                 host, port = _resolve_daemon_target()
                 if _identify_sari_daemon(host, port):
                     _log_info("Daemon started successfully.")
@@ -261,7 +262,11 @@ def _read_mcp_message(stdin):
         if not line:
             return None
 
+    # Strict Framing: Only allow JSONL if env var is set
+    allow_jsonl = os.environ.get("SARI_DEV_JSONL") == "1"
     if line.lstrip().startswith((b"{", b"[")):
+        if not allow_jsonl:
+            return None
         return line.rstrip(b"\r\n"), _MODE_JSONL
 
     headers = [line]
@@ -286,11 +291,17 @@ def _read_mcp_message(stdin):
                 pass
             break
 
-    if content_length is None:
+    if content_length is None or content_length <= 0 or content_length > MAX_MESSAGE_SIZE:
         return None
 
-    body = stdin.read(content_length)
-    if not body:
+    body = b""
+    while len(body) < content_length:
+        chunk = stdin.read(content_length - len(body))
+        if not chunk:
+            break
+        body += chunk
+
+    if len(body) < content_length:
         return None
     return body, _MODE_FRAMED
 
@@ -472,6 +483,7 @@ def main():
     t1.start()
 
     forward_stdin_to_socket(state)
+    t1.join(timeout=1.0)
 
 if __name__ == "__main__":
     main()

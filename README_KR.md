@@ -5,167 +5,56 @@
 [English README](README.md)
 
 > **핵심 기능:**
-> - ⚡ **빠른 인덱싱:** SQLite FTS5 + AST 기반 심볼 추출
-> - 🔍 **스마트 검색:** 하이브리드 랭킹 (키워드 + 심볼 구조)
-> - 🧠 **코드 인텔리전스:** 콜 그래프, 스니펫 관리, 도메인 컨텍스트 아카이빙
+> - ⚡ **빠른 인덱싱:** SQLite FTS5 + AST 기반 심볼 추출 (초당 1,000개 이상의 파일 처리).
+> - 🌐 **다중 워크스페이스:** 하나의 백그라운드 데몬으로 여러 프로젝트를 동시에 관리.
+> - 🧠 **코드 인텔리전스:** 콜 그래프, 스니펫 관리, 도메인 컨텍스트 아카이빙.
+> - 🩺 **자가 치유:** 환경 문제를 자동으로 진단하고 해결하는 내장 `doctor` 기능.
 > - 🔒 **로컬 보안:** 모든 데이터는 사용자 로컬 머신에만 저장됩니다.
 
 ---
 
-## 🚀 설치 및 설정 가이드
+## 🚀 설치 및 빠른 시작
 
-처음 사용하는 분도 바로 따라할 수 있도록 순서대로 정리했습니다.
-
-### 사전 준비
-- Python `3.9+`
-- 패키지 관리자 하나: `uv`(권장) 또는 `pip`
-- 인덱싱할 프로젝트의 절대 경로
-
-Python 버전 확인:
-```bash
-python3 --version
-```
-
-### 5분 빠른 시작 (권장)
-1. Sari 설치
+1. 설치 스크립트 실행:
 ```bash
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - -y --update
 ```
 
-```powershell
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - -y --update
-```
-
-2. 프로젝트 루트로 이동
+2. 프로젝트 루트에서 초기화 및 실행:
 ```bash
 cd /absolute/path/to/your/project
-```
-
-3. 현재 워크스페이스 기준으로 데몬 + HTTP 실행
-```bash
+sari init
 sari daemon start -d
 ```
 
-4. 상태 점검
-```bash
-sari status
-sari doctor
-```
-
-5. MCP 클라이언트에 연결
-아래 **클라이언트 연동** 섹션을 따라 설정하세요.
-
-### 다른 설치 방법
-`uv`:
-```bash
-uv tool install sari
-uv tool install "sari[full]"   # 선택 기능 포함
-uv x sari status               # 설치 없이 실행
-```
-
-`pip`:
-```bash
-pip install sari
-pip install "sari[full]"       # 선택 기능 포함
-```
-
-### PyPI 배포본 강제 재설치 (릴리스 검증)
-로컬 소스 간섭 없이 패키징된 배포본(예: MCP 연결 수정 릴리스)을 검증할 때 사용합니다.
-
-```bash
-# 1) 기존 tool 환경 제거
-uv tool uninstall sari
-
-# 2) PyPI 최신 버전 강제 재설치 (로컬 설정/소스 및 캐시 무시)
-uv tool install --reinstall --refresh --no-cache --no-config --no-sources "sari[full]"
-
-# 또는 특정 버전 고정 설치(예시)
-uv tool install --reinstall --refresh --no-cache --no-config --no-sources "sari[full]==0.3.16"
-
-# 3) 설치된 도구 버전 확인
-uv tool list
-```
-
-선택: 핀할 버전을 정하기 전에 PyPI 배포 버전 목록을 확인합니다.
-```bash
-python3 -m pip index versions sari
-```
-
-### 실행 모드 선택 가이드
-- `stdio` 모드:
-대부분 MCP 클라이언트에서 기본으로 가장 무난합니다.
-- `HTTP` 모드:
-stdio 연결이 불안정한 환경에서 권장합니다.
-
-HTTP 직접 실행:
-```bash
-SARI_WORKSPACE_ROOT=/absolute/path/to/project \
-sari --transport http --http-api-port 47777 --http-daemon
-```
-
-HTTP MCP 엔드포인트:
-```text
-http://127.0.0.1:47777/mcp
-```
+3. MCP 클라이언트에 연결 (아래 **클라이언트 연동** 섹션 참조).
 
 ---
 
-## 🏎️ 선택적 기능 (Extras 설정)
+## 🌐 다중 워크스페이스 지원
 
-Sari는 **경량화(Low Footprint)**와 **고정밀(High Precision)** 중 하나를 선택할 수 있는 유연성을 제공합니다.
+Sari는 자원 소모를 최소화하면서 여러 코드베이스를 동시에 처리하도록 설계되었습니다.
 
-| 옵션 | 기능 | 예상 용량 | 설치 명령어 |
-|-------|---------|--------------|--------------|
-| **기본(Core)** | 정규표현식 파서, FTS5 검색 | < 5MB | `pip install sari` |
-| **`[cjk]`** | 한국어/일본어/중국어 형태소 분석 | +50MB | `pip install "sari[cjk]"` |
-| **`[treesitter]`**| 고정밀 AST 심볼 추출 | +10MB~ | `pip install "sari[treesitter]"` |
-| **`[full]`** | 위의 모든 기능 + Tantivy 엔진 | +100MB+ | `pip install "sari[full]"` |
+### 작동 원리:
+- **공유 데몬**: 시스템 전체에서 단 하나의 백그라운드 데몬만 실행됩니다.
+- **자동 감지**: Cursor나 Claude에서 새로운 프로젝트를 열면, Sari가 실행 중인 데몬을 찾아 새 워크스페이스를 자동으로 등록합니다.
+- **격리된 환경**: 각 프로젝트는 독립적인 SQLite DB와 HTTP 포트를 갖지만, 메모리와 프로세스 자원은 효율적으로 공유합니다.
 
-### 적용 확인 (Verification)
-설치 후 아래 명령어로 기능이 활성화되었는지 확인할 수 있습니다:
-```bash
-sari doctor
-# 'sari' 명령어를 찾을 수 없다면 아래 명령어를 사용하세요:
-# python3 -m sari doctor
-```
+### 중첩 방지 (Overlap Prevention):
+실수로 상위 폴더와 하위 폴더를 동시에 등록한 경우(예: `~/Documents`와 `~/Documents/Project`), `sari doctor`가 **Workspace Overlap** 경고를 보내 중복 인덱싱과 데이터 가비지 생성을 방지합니다.
 
 ---
 
-## 🔌 클라이언트 연동 (Client Configuration)
+## 🔌 클라이언트 연동
 
-아래 옵션 중 하나를 선택하세요.
-
-### 옵션 A: 자동 설정 쓰기 (권장)
-자동으로 설정 파일을 작성하고 싶을 때 사용합니다.
+### 자동 설정 (권장)
 ```bash
-# 현재 워크스페이스의 로컬 설정 파일을 갱신합니다:
-#   .codex/config.toml, .gemini/config.toml
-sari --cmd install --host codex
-sari --cmd install --host gemini
-sari --cmd install --host claude
-sari --cmd install --host cursor
+sari --cmd install --host cursor # 가능 호스트: cursor, codex, gemini, claude
 ```
 
-미리보기만 하려면:
-```bash
-sari --cmd install --host codex --print
-```
-
-### 옵션 B: stdio 수동 설정
-설정을 직접 관리하고 싶을 때 사용합니다.
-
-Codex / Gemini (`.codex/config.toml` 또는 `.gemini/config.toml`):
-```toml
-[mcp_servers.sari]
-command = "sari"
-args = ["--transport", "stdio", "--format", "pack"]
-env = { SARI_WORKSPACE_ROOT = "/absolute/path/to/project", SARI_CONFIG = "/absolute/path/to/project/.sari/mcp-config.json" }
-startup_timeout_sec = 60
-```
-
-Gemini 구버전 설정 (`~/.gemini/settings.json`):
+### 수동 설정 (Stdio 방식)
+`mcpSettings.json` 또는 `.cursorrules` 예시:
 ```json
 {
   "mcpServers": {
@@ -173,172 +62,101 @@ Gemini 구버전 설정 (`~/.gemini/settings.json`):
       "command": "sari",
       "args": ["--transport", "stdio", "--format", "pack"],
       "env": {
-        "SARI_WORKSPACE_ROOT": "/absolute/path/to/project",
-        "SARI_CONFIG": "/absolute/path/to/project/.sari/mcp-config.json"
+        "SARI_WORKSPACE_ROOT": "/absolute/path/to/project"
       }
     }
   }
 }
 ```
-
-Claude Desktop / Cursor (JSON):
-```json
-{
-  "mcpServers": {
-    "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
-      "env": {
-        "SARI_WORKSPACE_ROOT": "/absolute/path/to/project",
-        "SARI_CONFIG": "/absolute/path/to/project/.sari/mcp-config.json",
-        "SARI_RESPONSE_COMPACT": "1"
-      }
-    }
-  }
-}
-```
-
-### 옵션 C: HTTP 엔드포인트 모드
-클라이언트가 MCP URL 입력 방식을 사용할 때 권장합니다.
-
-1. 백그라운드 HTTP 실행:
-```bash
-SARI_WORKSPACE_ROOT=/absolute/path/to/project \
-sari --transport http --http-api-port 47777 --http-daemon
-```
-
-2. 클라이언트 MCP URL 지정:
-```text
-http://127.0.0.1:47777/mcp
-```
-
-### 연결 확인 체크리스트
-설정을 적용한 뒤:
-1. MCP 클라이언트를 재시작합니다.
-2. 아래 명령을 실행합니다.
-```bash
-sari status
-```
-3. 다음 항목이 모두 정상인지 확인합니다.
-- daemon running
-- HTTP running
-- 클라이언트 로그에 연결 오류 없음
 
 ---
 
-## ⚙️ 설정 레퍼런스 (Configuration)
+## 🩺 점검 및 유지보수
 
-이 섹션은 코드에 실제 구현된 환경 변수만 정리합니다.
+### Sari Doctor (전문 주치의)
+Sari가 응답하지 않거나 인덱싱이 느리다면 닥터를 실행하세요:
+```bash
+sari doctor --auto-fix
+```
+닥터는 다음 항목을 진단하고 자동으로 고칩니다:
+- **버전 불일치**: 이전 설치로 인한 구버전 데몬 생존 확인.
+- **좀비 PID**: 포트를 점유하고 있는 죽은 프로세스 정리.
+- **레지스트리 복구**: 손상된 `server.json` 파일 재구성.
+- **DB 무결성**: SQLite 데이터 파일의 물리적 손상 여부 체크.
+- **로그 정밀 검사**: 최근 로그에서 "Database Locked"나 메모리 부족 징후 포착.
 
-설정 방법:
-- MCP 클라이언트: MCP 서버 `env` 블록에 추가
-- 셸: `SARI_ENGINE_MODE=sqlite sari status`처럼 명령 앞에 붙여 실행
+### 성능 모니터링
+Sari는 스스로의 성능을 추적합니다. 실시간 지표를 확인하세요:
+```bash
+sari status
+```
+리포트의 `slow_files` 항목을 통해 인덱싱 속도를 저하시키는 크고 복잡한 파일들을 파악할 수 있습니다.
 
-### 코어
+---
+
+## ⚙️ 고급 설정 (환경 변수)
+
 | 변수명 | 설명 | 기본값 |
 |--------|------|--------|
-| `SARI_WORKSPACE_ROOT` | 워크스페이스 루트 강제 지정. 생략 시 현재 경로 기준 자동 감지. | 자동 감지 |
-| `SARI_CONFIG` | 설정 파일 경로 오버라이드. | `~/.config/sari/config.json` |
-| `SARI_FORMAT` | 출력 형식(`pack`/`json`). | `pack` |
-| `SARI_RESPONSE_COMPACT` | 응답 압축 출력(토큰 절감). | `1` |
-| `SARI_LOG_LEVEL` | 로그 레벨. | `INFO` |
-
-### 데몬 / HTTP
-| 변수명 | 설명 | 기본값 |
-|--------|------|--------|
-| `SARI_DAEMON_HOST` | 데몬 바인드 호스트. | `127.0.0.1` |
+| `SARI_WORKSPACE_ROOT` | 워크스페이스 경로 수동 지정. | 자동 감지 |
 | `SARI_DAEMON_PORT` | 데몬 TCP 포트. | `47779` |
-| `SARI_HTTP_API_HOST` | HTTP API 호스트(상태 조회 라우팅 포함). | `127.0.0.1` |
-| `SARI_HTTP_API_PORT` | HTTP API 포트. | `47777` |
-| `SARI_HTTP_DAEMON` | `--transport http` 실행 시 백그라운드 모드 사용. | `0` |
-| `SARI_ALLOW_NON_LOOPBACK` | HTTP 모드에서 비-루프백 바인드 허용. | `0` |
-
-### 검색 / 인덱싱
-| 변수명 | 설명 | 기본값 |
-|--------|------|--------|
-| `SARI_ENGINE_MODE` | `embedded` 또는 `sqlite`. | `embedded` |
-| `SARI_ENGINE_AUTO_INSTALL` | 임베디드 엔진 미설치 시 자동 설치. | `1` |
-| `SARI_ENGINE_TOKENIZER` | `auto`/`cjk`/`latin`. | `auto` |
-| `SARI_ENGINE_INDEX_MEM_MB` | 임베디드 인덱싱 메모리 예산. | `128` |
-| `SARI_ENGINE_MAX_DOC_BYTES` | 문서당 최대 인덱싱 바이트. | `4194304` |
-| `SARI_ENGINE_PREVIEW_BYTES` | 문서 프리뷰 바이트. | `8192` |
-| `SARI_MAX_DEPTH` | 최대 스캔 깊이. | `30` |
-| `SARI_MAX_PARSE_BYTES` | 파싱 최대 파일 크기. | `16777216` |
-| `SARI_MAX_AST_BYTES` | AST 파싱 최대 파일 크기. | `8388608` |
-| `SARI_INDEX_WORKERS` | 인덱서 워커 수. | `2` |
-| `SARI_INDEX_MEM_MB` | 인덱싱 메모리 제한(`0`이면 무제한). | `0` |
-| `SARI_COALESCE_SHARDS` | 코얼레싱 락 샤드 수. | `16` |
-| `SARI_PARSE_TIMEOUT_SECONDS` | 파일별 파싱 타임아웃(`0` 비활성). | `0` |
-| `SARI_GIT_CHECKOUT_DEBOUNCE` | Git 이벤트 후 디바운스 시간. | `3.0` |
-
-### 유지보수 / 고급
-| 변수명 | 설명 | 기본값 |
-|--------|------|--------|
-| `SARI_DRYRUN_LINT` | `dry-run-diff`에서 문법 검사 활성화. | `0` |
-| `SARI_STORAGE_TTL_DAYS_SNIPPETS` | 스니펫 TTL(일). | `30` |
-| `SARI_STORAGE_TTL_DAYS_FAILED_TASKS` | 실패 작업 TTL(일). | `7` |
-| `SARI_STORAGE_TTL_DAYS_CONTEXTS` | 컨텍스트 TTL(일). | `30` |
-| `SARI_CALLGRAPH_PLUGIN` | 사용자 콜그래프 플러그인 모듈 경로. | - |
-| `SARI_PERSIST_ROOTS` | 해석된 루트를 config에 저장. | `0` |
+| `SARI_STORE_CONTENT_COMPRESS` | DB 저장 시 zlib 압축 활성화 (용량 절약). | `0` |
+| `SARI_DEV_JSONL` | 구버전 JSONL 프레이밍 허용 (개발용). | `0` |
+| `SARI_MCP_DEBUG_LOG` | MCP 디버그 트래픽 로그(`mcp_debug.log`) 활성화(마스킹 적용). | `0` |
+| `SARI_ALLOW_LEGACY` | 레거시 fallback(비네임스페이스 env / legacy root-id) 옵트인. | `0` |
 
 ---
 
-## 🩺 문제 해결 (Troubleshooting)
+## ✅ 필수 테스트 게이트
 
-### 상태 확인
-현재 워크스페이스 기준 데몬/HTTP 상태를 확인합니다.
+치명 경로(서버 크래시, 동시성 프레이밍, 의존성 드리프트)는 일반 유닛 테스트와 별도로 게이트 테스트를 통과해야 합니다.
 
 ```bash
-sari status
-sari doctor
+pytest -m gate -q
 ```
 
-`--auto-fix` 등 고급 doctor 옵션은 아래 명령으로 사용할 수 있습니다:
+로컬 필수 실행(게이트 + 스모크 세트 순차 실행):
+
 ```bash
-python3 -m sari.mcp.cli doctor --auto-fix
+./scripts/verify-gates.sh
 ```
 
-### 저장소 유지관리 (Storage Maintenance)
+핵심 스모크 세트:
 
-보조 데이터(스니펫, 에러 로그 등)의 무제한 증가를 방지하기 위해 TTL(수명 주기) 정책을 지원합니다.
-설정된 TTL에 따라 데이터가 자동 정리되지만, 수동으로 정리할 수도 있습니다.
-
-**수동 정리 (Prune):**
 ```bash
-# 기본 설정된 TTL에 따라 모든 테이블 정리
-python3 -m sari.mcp.cli prune
-
-# 특정 테이블을 3일 기준으로 정리
-python3 -m sari.mcp.cli prune --table failed_tasks --days 3
+pytest -q tests/test_core_main.py tests/test_engines.py tests/test_server.py tests/test_search_engine_mapping.py
 ```
 
-**TTL 설정 (환경 변수):**
-- `SARI_STORAGE_TTL_DAYS_SNIPPETS` (기본값: 30일)
-- `SARI_STORAGE_TTL_DAYS_FAILED_TASKS` (기본값: 7일)
-- `SARI_STORAGE_TTL_DAYS_CONTEXTS` (기본값: 30일)
+---
 
-### 제거 (Uninstall)
-Sari, 인덱스 데이터, 기본 설정을 제거합니다:
-Sari와 모든 인덱싱 데이터를 삭제하려면:
+## 🧭 최근 런타임 변경사항 (1.0.3+)
 
+- **통합 DB 단일 정책 유지**: Sari는 계속 전역 단일 DB(`~/.local/share/sari/index.db`)를 사용합니다.
+- **쓰기 경합 안정화**:
+  - SQLite `busy_timeout` 적용
+  - 프로세스 간 write gate 락(`.write.lock`) 추가
+  - 멀티 워크스페이스 동시 인덱싱 안정성 강화
+- **MCP 디버그 로그 보안 강화**:
+  - 디버그 트래픽 로깅 기본값을 **비활성화**
+  - `SARI_MCP_DEBUG_LOG=1`일 때만 활성화
+  - 요청/응답 전문 덤프 대신 요약/마스킹(redaction) 기록
+- **워크스페이스 root-id 경계 안정화**:
+  - 중첩 워크스페이스 대응을 위해 명시 루트 기준 `root_id_for_workspace` 경로 추가
+  - 기본 path resolve는 명시 워크스페이스 스코프를 우선 사용
+- **레거시 호환은 옵트인**:
+  - 기본은 엄격 모드(`SARI_*` 네임스페이스 환경변수만 사용)
+  - 필요 시에만 `SARI_ALLOW_LEGACY=1`로 레거시 fallback 허용
+
+---
+
+## 🗑️ 제거 (Uninstall)
+Sari와 관련된 모든 로컬 데이터(DB, 로그, 레지스트리)를 완전히 삭제하려면:
 ```bash
 # macOS/Linux
 curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - --uninstall
-
-# Windows
-irm https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python - --uninstall
 ```
 
-워크스페이스 로컬 캐시까지 제거하려면 워크스페이스 루트를 함께 넘겨주세요:
+---
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - --uninstall --workspace-root /path/to/project
-```
-
-언인스톨은 홈 디렉터리에서 `.codex/tools/sari` 캐시도 찾아 제거합니다(최선 노력).
-
-`SARI_CONFIG`로 커스텀 설정 경로를 사용 중이고 해당 파일도 제거하려면 다음 옵션을 사용하세요:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BaeCheolHan/sari/main/install.py | python3 - --uninstall --force-config
-```
+## 📜 라이선스
+Apache License 2.0

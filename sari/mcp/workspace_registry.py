@@ -13,13 +13,13 @@ logger = logging.getLogger("sari.registry")
 
 class SharedState:
     def __init__(self, workspace_root: str):
-        self.workspace_root = workspace_root
+        self.workspace_root = WorkspaceManager.normalize_path(workspace_root)
         try:
             from sari.core.settings import settings
             WorkspaceManager.set_settings(settings)
         except Exception:
             pass
-        self.root_id = WorkspaceManager.root_id(workspace_root)
+        self.root_id = WorkspaceManager.root_id_for_workspace(workspace_root)
         
         # 1. Load Layered Config (Phase 1)
         self.config_manager = ConfigManager(workspace_root)
@@ -63,6 +63,7 @@ class SharedState:
         
         self.last_activity = time.time()
         self.ref_count = 0
+        self.persistent = False
         self._lock = threading.Lock()
 
     def start(self): 
@@ -85,6 +86,7 @@ class SharedState:
             )
             self.httpd = httpd
             self.http_port = actual_port
+            self.http_host = host
             
             # 3. Register HTTP info in ServerRegistry for CLI to find
             ServerRegistry().set_workspace_http(
@@ -102,6 +104,24 @@ class SharedState:
         
     def stop(self):
         self.indexer.stop()
+        
+        # 1. Shutdown HTTP Server
+        if hasattr(self, "httpd"):
+            try:
+                self.httpd.shutdown()
+                self.httpd.server_close()
+                logger.info(f"HTTP server for {self.workspace_root} stopped.")
+            except Exception as e:
+                logger.error(f"Error stopping HTTP server: {e}")
+
+        # 2. Cleanup Registry
+        try:
+            from sari.core.server_registry import ServerRegistry
+            ServerRegistry().unregister_workspace(self.workspace_root)
+        except Exception:
+            pass
+
+        # 3. Close DB
         try:
             self.db.close_all()
         except Exception:
@@ -118,12 +138,15 @@ class Registry:
             with cls._lock:
                 if cls._instance is None: cls._instance = cls()
         return cls._instance
-    def get_or_create(self, workspace_root: str) -> SharedState:
+    def get_or_create(self, workspace_root: str, persistent: bool = False) -> SharedState:
         with self._lock:
             if workspace_root not in self._sessions:
                 session = SharedState(workspace_root)
+                session.persistent = bool(persistent)
                 session.start()
                 self._sessions[workspace_root] = session
+            elif persistent:
+                self._sessions[workspace_root].persistent = True
             self._sessions[workspace_root].ref_count += 1
             self._sessions[workspace_root].touch()
             return self._sessions[workspace_root]
@@ -139,7 +162,7 @@ class Registry:
                 state = self._sessions[workspace_root]
                 state.ref_count = max(0, state.ref_count - 1)
                 state.touch()
-                if state.ref_count == 0:
+                if state.ref_count == 0 and not state.persistent:
                     state.stop()
                     del self._sessions[workspace_root]
 

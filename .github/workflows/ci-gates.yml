@@ -1,0 +1,34 @@
+name: CI Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  critical-gates:
+    name: Critical Runtime Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv pip install -e ".[full]" pytest pytest-cov
+      - name: Run gate tests (must pass)
+        run: uv run pytest -m gate -q
+
+  smoke-suite:
+    name: Core Smoke Suite
+    runs-on: ubuntu-latest
+    needs: critical-gates
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install dependencies
+        run: uv pip install -e ".[full]" pytest
+      - name: Run smoke tests
+        run: |
+          uv run pytest -q tests/test_core_main.py tests/test_engines.py tests/test_server.py tests/test_search_engine_mapping.py

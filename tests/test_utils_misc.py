@@ -3,6 +3,7 @@ import logging
 import os
 from sari.core.utils.compression import _compress, _decompress
 from sari.core.utils.logging import get_logger, setup_global_logging
+from sari.core.workspace import WorkspaceManager
 
 def test_compression():
     text = "Hello World" * 100
@@ -35,3 +36,13 @@ def test_setup_global_logging():
     # This just calls logging.basicConfig, hard to assert effect without side effects
     # but we can ensure it doesn't crash.
     setup_global_logging()
+
+
+def test_workspace_normalize_path_never_returns_empty_for_root():
+    assert WorkspaceManager.normalize_path("/") == "/"
+
+
+def test_workspace_normalize_path_empty_falls_back_to_cwd():
+    out = WorkspaceManager.normalize_path("")
+    assert isinstance(out, str)
+    assert out != ""

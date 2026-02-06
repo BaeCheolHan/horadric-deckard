@@ -16,6 +16,22 @@ def compute_hash(content: str) -> str:
     """Compute SHA-1 hash for delta indexing."""
     return hashlib.sha1(content.encode("utf-8", errors="ignore")).hexdigest()
 
+def compute_fast_signature(file_path: Path, size: int) -> str:
+    """Fast signature based on first/last chunks + size. O(1) read regardless of file size."""
+    try:
+        if size < 8192:
+            # Small file: just hash the whole thing
+            return compute_hash(file_path.read_text(encoding="utf-8", errors="ignore"))
+        
+        with open(file_path, "rb") as f:
+            header = f.read(4096)
+            f.seek(-4096, 2) # SEEK_END
+            footer = f.read(4096)
+            # Include size in hash to prevent collision on same content at different positions
+            return hashlib.sha1(header + footer + str(size).encode()).hexdigest()
+    except Exception:
+        return ""
+
 class IndexWorker:
     def __init__(self, cfg, db, logger, extractor_cb, settings_obj=None):
         self.cfg = cfg
@@ -40,8 +56,14 @@ class IndexWorker:
             if not force and prev and int(st.st_mtime) == int(prev[0]) and int(st.st_size) == int(prev[1]):
                 return {"type": "unchanged", "rel": db_path}
 
-            # 2. Content-based Delta Check
+            # 2. Signature Check (Fast Skip if content matches despite mtime change)
             size = st.st_size
+            if not force and prev and size == int(prev[1]):
+                sig = compute_fast_signature(file_path, size)
+                if sig and sig == prev[2]:
+                    return {"type": "unchanged", "rel": db_path}
+
+            # 3. Content-based Delta Check
             if size > self.settings.MAX_PARSE_BYTES:
                 return self._skip_result(db_path, repo, st, scan_ts, "too_large")
 
@@ -182,7 +204,7 @@ class IndexWorker:
     def _encode_db_path(self, root: Path, file_path: Path, root_id: Optional[str] = None) -> str:
         if not root_id:
             from sari.core.workspace import WorkspaceManager
-            root_id = WorkspaceManager.root_id(str(root))
+            root_id = WorkspaceManager.root_id_for_workspace(str(root))
         rel = file_path.relative_to(root).as_posix()
         return f"{root_id}/{rel}"
 

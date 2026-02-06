@@ -8,7 +8,7 @@ from sari.mcp.tools._util import mcp_response, pack_header, pack_line, pack_erro
 from sari.core.indexer import Indexer
 
 
-def execute_scan_once(args: Dict[str, Any], indexer: Indexer) -> Dict[str, Any]:
+def execute_scan_once(args: Dict[str, Any], indexer: Indexer, logger: Any) -> Dict[str, Any]:
     """Run a synchronous scan once."""
     if not indexer:
         return mcp_response(

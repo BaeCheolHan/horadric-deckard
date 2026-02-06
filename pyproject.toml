@@ -48,12 +48,12 @@ full = [
   "tree-sitter-go",
   "tree-sitter-rust",
   "tree-sitter-cpp",
-  "tantivy>=0.20.0",
+  "tantivy==0.25.1",
 ]
 
-# 이전 버전 호환성
+# embedded engine
 engine = [
-  "tantivy>=0.20.0",
+  "tantivy==0.25.1",
   "lindera-python-ipadic",
 ]
 

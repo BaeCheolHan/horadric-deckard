@@ -12,7 +12,8 @@ from pathlib import Path
 
 # Ensure project root is in sys.path
 SCRIPT_DIR = Path(__file__).parent
-REPO_ROOT = SCRIPT_DIR.parent.parent
+# Go up 3 levels: sari/mcp/daemon.py -> mcp/ -> sari/ -> (repo root)
+REPO_ROOT = SCRIPT_DIR.parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -55,6 +56,14 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 47779
 PID_FILE = WorkspaceManager.get_global_data_dir() / "daemon.pid"
 
+def _pid_file() -> Path:
+    try:
+        if isinstance(PID_FILE, Path):
+            return PID_FILE
+    except Exception:
+        pass
+    return WorkspaceManager.get_global_data_dir() / "daemon.pid"
+
 class SariDaemon:
     def __init__(self, host: str = None, port: int = None):
         self.host = host or settings.DAEMON_HOST
@@ -78,9 +87,10 @@ class SariDaemon:
     def _write_pid(self):
         """Write current PID to file, ensuring no other daemon is active."""
         try:
-            if PID_FILE.exists():
+            pid_file = _pid_file()
+            if pid_file.exists():
                 try:
-                    old_pid = int(PID_FILE.read_text().strip())
+                    old_pid = int(pid_file.read_text().strip())
                     if old_pid != os.getpid():
                         try:
                             os.kill(old_pid, 0)
@@ -89,14 +99,14 @@ class SariDaemon:
                         except OSError:
                             # Process not found, we can take over
                             logger.info(f"Removing stale PID file for {old_pid}")
-                            PID_FILE.unlink()
+                            pid_file.unlink()
                 except (ValueError, OSError):
                     pass
             
             pid = os.getpid()
-            PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-            PID_FILE.write_text(str(pid))
-            logger.info(f"Wrote PID {pid} to {PID_FILE}")
+            pid_file.parent.mkdir(parents=True, exist_ok=True)
+            pid_file.write_text(str(pid))
+            logger.info(f"Wrote PID {pid} to {pid_file}")
         except Exception as e:
             if isinstance(e, SystemExit): raise
             logger.error(f"Failed to write PID file: {e}")
@@ -104,10 +114,11 @@ class SariDaemon:
     def _remove_pid(self):
         """Remove PID file."""
         try:
-            if PID_FILE.exists():
-                current = PID_FILE.read_text().strip()
+            pid_file = _pid_file()
+            if pid_file.exists():
+                current = pid_file.read_text().strip()
                 if current == str(os.getpid()):
-                    PID_FILE.unlink()
+                    pid_file.unlink()
                     logger.info("Removed PID file")
         except Exception as e:
             logger.error(f"Failed to remove PID file: {e}")
@@ -138,15 +149,16 @@ class SariDaemon:
 
         try:
             from sari.mcp.workspace_registry import Registry
-            Registry.get_instance().get_or_create(workspace_root)
+            Registry.get_instance().get_or_create(workspace_root, persistent=True)
             self._pinned_workspace_root = workspace_root
-            
-            # Record workspace mapping so CLI can find this daemon
-            self._registry.set_workspace(workspace_root, self.boot_id)
-            
             logger.info(f"Auto-started workspace HTTP server for {workspace_root}")
         except Exception as e:
             logger.error(f"Failed to auto-start workspace HTTP server: {e}")
+        try:
+            # Record workspace mapping even if warm-up failed.
+            self._registry.set_workspace(workspace_root, self.boot_id)
+        except Exception as e:
+            logger.error(f"Failed to record workspace mapping: {e}")
 
     def _start_heartbeat(self) -> None:
         if self._heartbeat_thread and self._heartbeat_thread.is_alive():
@@ -189,7 +201,8 @@ class SariDaemon:
                                 last_activity = now
                             if self._idle_since is None:
                                 self._idle_since = last_activity
-                            if now - last_activity >= idle_sec:
+                            # Keep a small grace window to avoid flapping right after startup.
+                            if now - last_activity >= (idle_sec + 1.0):
                                 self.shutdown()
                                 break
                         else:
@@ -199,7 +212,7 @@ class SariDaemon:
 
             self._stop_event.wait(interval)
 
-    async def start(self):
+    async def start_async(self):
         host = (self.host or "127.0.0.1").strip()
         try:
             is_loopback = host.lower() == "localhost" or ipaddress.ip_address(host).is_loopback
@@ -235,6 +248,17 @@ class SariDaemon:
                 while not self._stop_event.is_set():
                     await asyncio.sleep(0.1)
 
+    def start(self):
+        try:
+            asyncio.get_running_loop()
+            return self.start_async()
+        except RuntimeError:
+            try:
+                asyncio.run(self.start_async())
+            except asyncio.CancelledError:
+                pass
+            return None
+
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info('peername')
         logger.info(f"Accepted connection from {addr}")
@@ -244,6 +268,10 @@ class SariDaemon:
 
         logger.info(f"Closed connection from {addr}")
 
+    def stop(self):
+        """Public stop method for external control (tests, etc.)."""
+        self.shutdown()
+
     def shutdown(self):
         if self._stop_event.is_set():
             return
@@ -251,16 +279,19 @@ class SariDaemon:
 
         if self.server:
             try:
-                if self._loop:
+                if self._loop and self._loop.is_running():
                     self._loop.call_soon_threadsafe(self.server.close)
                 else:
                     self.server.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error during server close: {e}")
 
         # Shutdown all workspaces to stop indexers and close DBs
         from sari.mcp.workspace_registry import Registry
-        Registry.get_instance().shutdown_all()
+        try:
+            Registry.get_instance().shutdown_all()
+        except Exception:
+            pass
 
         self._unregister_daemon()
         self._remove_pid()
@@ -278,7 +309,7 @@ async def main():
     loop.add_signal_handler(signal.SIGTERM, _handle_signal)
     loop.add_signal_handler(signal.SIGINT, _handle_signal)
 
-    daemon_task = asyncio.create_task(daemon.start())
+    daemon_task = asyncio.create_task(daemon.start_async())
 
     logger.info("Daemon started. Press Ctrl+C to stop.")
 
