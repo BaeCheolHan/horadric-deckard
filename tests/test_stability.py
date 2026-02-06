@@ -18,6 +18,10 @@ class TestStability:
         resp = server.handle_initialize({"protocolVersion": "2025-03-26"})
         assert resp["protocolVersion"] == "2025-03-26"
 
+        # Test 2025-06-18 (Codex MCP client)
+        resp = server.handle_initialize({"protocolVersion": "2025-06-18"})
+        assert resp["protocolVersion"] == "2025-06-18"
+
     def test_protocol_version_negotiation_failure(self):
         server = LocalSearchMCPServer("/tmp")
         # Unsupported version

@@ -102,6 +102,33 @@ def test_server_run_uses_original_stdout_stream(monkeypatch):
     assert written_redirected == b""
 
 
+def test_server_run_enables_jsonl_transport_when_format_json(monkeypatch):
+    class _DummyTransport:
+        def __init__(self):
+            self.default_mode = "content-length"
+
+        def read_message(self):
+            return None
+
+    captured = {}
+
+    def _fake_transport(input_stream, output_stream, allow_jsonl=False):
+        captured["allow_jsonl"] = allow_jsonl
+        t = _DummyTransport()
+        captured["transport"] = t
+        return t
+
+    monkeypatch.setenv("SARI_FORMAT", "json")
+    monkeypatch.setattr(server_mod, "McpTransport", _fake_transport)
+
+    server = LocalSearchMCPServer("/tmp/ws")
+    server.run()
+
+    assert captured["allow_jsonl"] is True
+    assert captured["transport"].default_mode == "jsonl"
+    server.shutdown()
+
+
 @pytest.mark.gate
 def test_server_tools_call_uses_session_and_returns_result():
     server = LocalSearchMCPServer("/tmp/ws")

@@ -42,7 +42,7 @@ class LocalSearchMCPServer:
     Delegates workspace management to WorkspaceRegistry.
     """
     PROTOCOL_VERSION = "2025-11-25"
-    SUPPORTED_VERSIONS = {"2024-11-05", "2025-03-26", "2025-11-25"}
+    SUPPORTED_VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
     SERVER_NAME = "sari"
     SERVER_VERSION = settings.VERSION
     _SENSITIVE_KEYS = ("token", "secret", "password", "api_key", "apikey", "authorization", "cookie", "key")
@@ -299,7 +299,11 @@ class LocalSearchMCPServer:
             output_stream = getattr(original_stdout, "buffer", None) if original_stdout is not None else None
             if output_stream is None:
                 output_stream = getattr(sys.stdout, "buffer", sys.stdout)
-            self.transport = McpTransport(input_stream, output_stream)
+            wire_format = (os.environ.get("SARI_FORMAT") or "pack").strip().lower()
+            allow_jsonl = wire_format == "json"
+            self.transport = McpTransport(input_stream, output_stream, allow_jsonl=allow_jsonl)
+            if allow_jsonl:
+                self.transport.default_mode = "jsonl"
 
         try:
             while not self._stop.is_set():
