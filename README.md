@@ -70,6 +70,25 @@ pip install sari
 pip install "sari[full]"       # optional extras
 ```
 
+### Reinstall From PyPI (Release Validation)
+Use this when you want to verify the packaged release (e.g., MCP connection fix) without local source interference.
+
+```bash
+# 1) Remove existing tool environment
+uv tool uninstall sari
+
+# 2) Force reinstall from PyPI (ignore local project config/sources and cache)
+uv tool install --reinstall --refresh --no-cache --no-config --no-sources "sari[full]==0.3.13"
+
+# 3) Verify installed tool version
+uv tool list
+```
+
+Optional: check all published versions on PyPI before pinning.
+```bash
+python3 -m pip index versions sari
+```
+
 ### Pick Your Runtime Mode
 - `stdio` mode:
 Best default for MCP clients that launch server subprocesses.

@@ -9,6 +9,9 @@ def test_server_handle_initialize():
     params = {"rootUri": "file:///tmp/ws2"}
     resp = server.handle_initialize(params)
     assert resp["protocolVersion"] == "2025-11-25"
+    assert "tools" in resp["capabilities"]
+    assert "prompts" in resp["capabilities"]
+    assert "resources" in resp["capabilities"]
     assert server.workspace_root == "/tmp/ws2"
 
 def test_server_handle_request_ping():
@@ -23,6 +26,15 @@ def test_server_handle_request_not_found():
     req = {"id": 1, "method": "non_existent", "params": {}}
     resp = server.handle_request(req)
     assert resp["error"]["code"] == -32601
+
+def test_server_handle_request_prompts_and_resources_list():
+    server = LocalSearchMCPServer("/tmp/ws")
+    prompts_resp = server.handle_request({"id": 1, "method": "prompts/list", "params": {}})
+    resources_resp = server.handle_request({"id": 2, "method": "resources/list", "params": {}})
+    templates_resp = server.handle_request({"id": 3, "method": "resources/templates/list", "params": {}})
+    assert prompts_resp["result"] == {"prompts": []}
+    assert resources_resp["result"] == {"resources": []}
+    assert templates_resp["result"] == {"resourceTemplates": []}
 
 def test_server_worker_loop():
     # Test if worker loop processes a request from queue

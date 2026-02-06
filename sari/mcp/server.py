@@ -68,7 +68,13 @@ class LocalSearchMCPServer:
         return {
             "protocolVersion": negotiated_version,
             "serverInfo": {"name": self.SERVER_NAME, "version": self.SERVER_VERSION},
-            "capabilities": {"tools": {}}
+            # Be explicit about supported capability surfaces so strict MCP
+            # clients can finish startup without probing unknown methods.
+            "capabilities": {
+                "tools": {"listChanged": False},
+                "prompts": {"listChanged": False},
+                "resources": {"subscribe": False, "listChanged": False},
+            },
         }
 
     def handle_initialized(self, params: Dict[str, Any]) -> None:
@@ -110,7 +116,11 @@ class LocalSearchMCPServer:
         try:
             if method == "initialize": result = self.handle_initialize(params)
             elif method == "tools/list": result = {"tools": self._tool_registry.list_tools()}
+            elif method == "prompts/list": result = {"prompts": []}
+            elif method == "resources/list": result = {"resources": []}
+            elif method == "resources/templates/list": result = {"resourceTemplates": []}
             elif method == "tools/call": result = self.handle_tools_call(params)
+            elif method in {"initialized", "notifications/initialized"}: result = {}
             elif method == "ping": result = {}
             else: return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Method not found: {method}"}}
             return {"jsonrpc": "2.0", "id": msg_id, "result": result}

@@ -71,6 +71,25 @@ pip install sari
 pip install "sari[full]"       # 선택 기능 포함
 ```
 
+### PyPI 배포본 강제 재설치 (릴리스 검증)
+로컬 소스 간섭 없이 패키징된 배포본(예: MCP 연결 수정 릴리스)을 검증할 때 사용합니다.
+
+```bash
+# 1) 기존 tool 환경 제거
+uv tool uninstall sari
+
+# 2) PyPI에서 강제 재설치 (로컬 설정/소스 및 캐시 무시)
+uv tool install --reinstall --refresh --no-cache --no-config --no-sources "sari[full]==0.3.13"
+
+# 3) 설치된 도구 버전 확인
+uv tool list
+```
+
+선택: 핀할 버전을 정하기 전에 PyPI 배포 버전 목록을 확인합니다.
+```bash
+python3 -m pip index versions sari
+```
+
 ### 실행 모드 선택 가이드
 - `stdio` 모드:
 대부분 MCP 클라이언트에서 기본으로 가장 무난합니다.
