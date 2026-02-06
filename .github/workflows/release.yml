@@ -82,9 +82,7 @@ jobs:
     name: Publish to PyPI (OIDC)
     needs: release
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      id-token: write # Required for OIDC
       contents: read
     steps:
       - name: Checkout code
@@ -101,5 +99,5 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # Using Trusted Publishing (OIDC), no password field needed
+          password: ${{ secrets.PYPI_API_TOKEN }}
           print-hash: true
