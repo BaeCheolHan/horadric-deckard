@@ -410,6 +410,20 @@ python3 -m sari.mcp.cli prune --table failed_tasks --days 3
 - `SARI_STORAGE_TTL_DAYS_FAILED_TASKS` (Default: 7)
 - `SARI_STORAGE_TTL_DAYS_CONTEXTS` (Default: 30)
 
+---
+
+## 📂 Data Storage
+
+By default, Sari stores indexing data and logs in the following locations:
+
+- **Global Database:** `~/.local/share/sari/index.db` (Linux/macOS)
+- **Global Index Engine:** `~/.local/share/sari/index/global/`
+- **Logs:**
+  - macOS: `~/Library/Logs/sari/`
+  - Others: `~/.local/share/sari/logs/`
+
+> **Tip:** If you want to use a workspace-specific database, Sari will prioritize `{project_root}/.sari/index.db` if it exists.
+
 ### Uninstall
 To remove Sari, indexed data, and default configs:
 

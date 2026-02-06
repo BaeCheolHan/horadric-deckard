@@ -93,6 +93,12 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Sync version with tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Setting version to $VERSION"
+          echo "__version__ = \"$VERSION\"" > sari/version.py
+
       - name: Build package
         run: uv build
 

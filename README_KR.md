@@ -330,6 +330,20 @@ python3 -m sari.mcp.cli prune --table failed_tasks --days 3
 - `SARI_STORAGE_TTL_DAYS_FAILED_TASKS` (기본값: 7일)
 - `SARI_STORAGE_TTL_DAYS_CONTEXTS` (기본값: 30일)
 
+---
+
+## 📂 데이터 저장 위치
+
+기본적으로 Sari는 다음과 같은 경로에 인덱싱 데이터와 로그를 저장합니다:
+
+- **전역 데이터베이스 (Global DB):** `~/.local/share/sari/index.db` (Linux/macOS)
+- **전역 인덱스 엔진:** `~/.local/share/sari/index/global/`
+- **로그 파일:**
+  - macOS: `~/Library/Logs/sari/`
+  - 기타: `~/.local/share/sari/logs/`
+
+> **팁:** 워크스페이스별로 독립된 데이터베이스를 사용하고 싶다면, 프로젝트 루트에 `.sari/index.db` 파일을 생성하세요. Sari가 이를 우선적으로 감지합니다.
+
 ### 제거 (Uninstall)
 Sari, 인덱스 데이터, 기본 설정을 제거합니다:
 Sari와 모든 인덱싱 데이터를 삭제하려면:
