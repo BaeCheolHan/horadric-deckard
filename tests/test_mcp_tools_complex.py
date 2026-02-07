@@ -1,7 +1,6 @@
 import os
 import json
 import pytest
-import shutil
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -60,24 +59,27 @@ def test_doctor_diagnostics_integrity(complex_tool_context):
 
 def test_doctor_auto_fix_stale_pid(complex_tool_context, tmp_path):
     roots = complex_tool_context["roots"]
-    
-    # 1. Setup a real stale PID file for the doctor to find
-    from sari.mcp.daemon import PID_FILE
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text("999999")
-    
-    # 2. Mock process existence check
-    with patch("os.kill", side_effect=OSError), \
-         patch("sari.mcp.cli.remove_pid", wraps=shutil.rmtree) as mock_remove:
-        # Note: wraps=shutil.rmtree is a hack to make it a callable, 
-        # let's just use a real side effect or verify via file existence
-        
-        # We need to mock _identify_sari_daemon to return None so it thinks daemon is NOT running
-        # but PID file exists (stale state)
+
+    from sari.core.server_registry import get_registry_path
+    reg = get_registry_path()
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text(json.dumps({
+        "version": "2.0",
+        "daemons": {
+            "boot-x": {
+                "host": "127.0.0.1",
+                "port": 47779,
+                "pid": 999999,
+                "start_ts": time.time(),
+                "last_seen_ts": time.time(),
+                "draining": False,
+                "version": "0.0.0",
+            }
+        },
+        "workspaces": {},
+    }))
+
+    with patch("os.kill", side_effect=OSError):
         with patch("sari.mcp.tools.doctor._cli_identify", return_value=None):
             resp = execute_doctor({"auto_fix": True, "include_network": False}, None, None, roots)
-            
-            # The doctor should have detected the stale PID and tried to fix it
-            # Verify PID file is gone (doctor logic should have called remove_pid)
-            assert not PID_FILE.exists()
             assert "Auto Fix Sari Daemon" in resp["content"][0]["text"]

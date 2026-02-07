@@ -84,44 +84,15 @@ class SariDaemon:
         self._idle_since = None
         self._drain_since = None
 
-    def _write_pid(self):
-        """Write current PID to file, ensuring no other daemon is active."""
+    def _cleanup_legacy_pid_file(self):
+        """Best-effort cleanup for legacy pid file; registry is the SSOT."""
         try:
             pid_file = _pid_file()
             if pid_file.exists():
-                try:
-                    old_pid = int(pid_file.read_text().strip())
-                    if old_pid != os.getpid():
-                        try:
-                            os.kill(old_pid, 0)
-                            logger.error(f"Daemon already running with PID {old_pid}")
-                            sys.exit(1)
-                        except OSError:
-                            # Process not found, we can take over
-                            logger.info(f"Removing stale PID file for {old_pid}")
-                            pid_file.unlink()
-                except (ValueError, OSError):
-                    pass
-            
-            pid = os.getpid()
-            pid_file.parent.mkdir(parents=True, exist_ok=True)
-            pid_file.write_text(str(pid))
-            logger.info(f"Wrote PID {pid} to {pid_file}")
+                pid_file.unlink()
+                logger.info("Removed legacy daemon.pid file")
         except Exception as e:
-            if isinstance(e, SystemExit): raise
-            logger.error(f"Failed to write PID file: {e}")
-
-    def _remove_pid(self):
-        """Remove PID file."""
-        try:
-            pid_file = _pid_file()
-            if pid_file.exists():
-                current = pid_file.read_text().strip()
-                if current == str(os.getpid()):
-                    pid_file.unlink()
-                    logger.info("Removed PID file")
-        except Exception as e:
-            logger.error(f"Failed to remove PID file: {e}")
+            logger.debug(f"Failed to remove legacy daemon.pid file: {e}")
 
     def _register_daemon(self):
         try:
@@ -225,7 +196,7 @@ class SariDaemon:
                 "Remote access is NOT supported for security."
             )
 
-        self._write_pid()
+        self._cleanup_legacy_pid_file()
         self.server = await asyncio.start_server(
             self.handle_client, self.host, self.port
         )
@@ -294,7 +265,7 @@ class SariDaemon:
             pass
 
         self._unregister_daemon()
-        self._remove_pid()
+        self._cleanup_legacy_pid_file()
 
 async def main():
     daemon = SariDaemon()

@@ -3,7 +3,7 @@ import pytest
 import io
 import os
 from unittest.mock import MagicMock, patch
-from sari.mcp.server import LocalSearchMCPServer, JsonRpcException
+from sari.mcp.server import LocalSearchMCPServer
 from sari.mcp.proxy import _read_mcp_message
 
 class TestEdgeCases:
@@ -23,11 +23,9 @@ class TestEdgeCases:
 
     def test_protocol_unsupported_format(self):
         server = LocalSearchMCPServer("/tmp")
-        # Malformed version
-        with pytest.raises(JsonRpcException) as excinfo:
-            server.handle_initialize({"protocolVersion": "v1.0-alpha"})
-        assert excinfo.value.code == -32602
-        assert "supported" in excinfo.value.data
+        # Malformed version should fall back to default for compatibility
+        resp = server.handle_initialize({"protocolVersion": "v1.0-alpha"})
+        assert resp["protocolVersion"] == server.PROTOCOL_VERSION
 
     # 2. Stdio Framing Edge Cases
     def test_content_length_whitespace(self):

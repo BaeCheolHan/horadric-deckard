@@ -25,28 +25,39 @@ class TestDoctorSelfHealing:
         
         return env
 
-    def test_doctor_heals_stale_pid(self, doctor_env):
-        pid_dir = Path(doctor_env["HOME"]) / ".local" / share_path()
-        pid_dir.mkdir(parents=True, exist_ok=True)
-        pid_file = pid_dir / "daemon.pid"
-        pid_file.write_text("999999")
-        
+    def test_doctor_heals_stale_registry_entry(self, doctor_env):
+        reg_file = Path(doctor_env["SARI_REGISTRY_FILE"])
+        reg_file.parent.mkdir(parents=True, exist_ok=True)
+        reg_file.write_text(json.dumps({
+            "version": "2.0",
+            "daemons": {
+                "boot-x": {
+                    "host": "127.0.0.1",
+                    "port": 48999,
+                    "pid": 999999,
+                    "start_ts": time.time(),
+                    "last_seen_ts": time.time(),
+                    "draining": False,
+                    "version": "1.0.0",
+                }
+            },
+            "workspaces": {},
+        }))
+
         with patch.dict("os.environ", doctor_env):
             res = execute_doctor({"auto_fix": False})
             data = json.loads(res["content"][0]["text"])
             
             daemon_res = next(r for r in data["results"] if r["name"] == "Sari Daemon")
             assert not daemon_res["passed"]
-            assert "stale PID" in daemon_res["error"]
+            assert "stale registry entry" in daemon_res["error"]
             
             res = execute_doctor({"auto_fix": True})
             data = json.loads(res["content"][0]["text"])
             
             fix_res = next(r for r in data["auto_fix"] if "Sari Daemon" in r["name"])
             assert fix_res["passed"]
-            assert "removed" in fix_res["error"]
-            
-            assert not pid_file.exists()
+            assert "pruned" in fix_res["error"]
 
     def test_doctor_heals_corrupted_registry(self, doctor_env):
         reg_file = Path(doctor_env["SARI_REGISTRY_FILE"])

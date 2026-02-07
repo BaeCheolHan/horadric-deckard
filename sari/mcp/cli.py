@@ -364,26 +364,25 @@ def is_daemon_running(host: str, port: int) -> bool:
     return _probe_sari_daemon(host, port)
 
 
-def read_pid() -> Optional[int]:
-    """Read PID from pidfile."""
+def read_pid(host: Optional[str] = None, port: Optional[int] = None) -> Optional[int]:
+    """Read daemon pid from registry (single source of truth)."""
     try:
+        reg = ServerRegistry()
+        if host and port:
+            inst = reg.resolve_daemon_by_endpoint(str(host), int(port))
+            if inst and inst.get("pid"):
+                return int(inst.get("pid"))
         workspace_root = os.environ.get("SARI_WORKSPACE_ROOT") or WorkspaceManager.resolve_workspace_root()
-        inst = ServerRegistry().resolve_workspace_daemon(str(workspace_root))
-        if inst and inst.get("pid"):
-            return int(inst.get("pid"))
+        ws_inst = reg.resolve_workspace_daemon(str(workspace_root))
+        if ws_inst and ws_inst.get("pid"):
+            return int(ws_inst.get("pid"))
     except Exception:
         pass
-    for path in (_pid_file_path(), PID_FILE):
-        if path.exists():
-            try:
-                return int(path.read_text().strip())
-            except (ValueError, OSError):
-                pass
     return None
 
 
 def remove_pid() -> None:
-    """Remove pidfile manually (if daemon crashed)."""
+    """Legacy cleanup only; daemon state is stored in server.json."""
     for path in (_pid_file_path(), PID_FILE):
         try:
             if path.exists():
@@ -505,11 +504,10 @@ def cmd_daemon_start(args):
                     return 1
 
         if not force_start and not _needs_upgrade_or_drain(identify):
-            pid = read_pid()
+            pid = read_pid(host, port)
             print(f"✅ Daemon already running on {host}:{port}")
-            if not pid:
-                print("⚠️  PID file missing. Another process may be using this port.")
-                print("   Hint: Try a different port: SARI_DAEMON_PORT=47790 sari daemon start -d")
+            if pid:
+                print(f"   PID: {pid}")
             return 0
         if explicit_port:
             print(f"❌ Port {port} is already in use by a running Sari daemon.", file=sys.stderr)
@@ -656,7 +654,7 @@ def cmd_daemon_stop(args):
         remove_pid()
         return 0
 
-    pid = read_pid()
+    pid = read_pid(host, port)
     if not pid:
         try:
             # Fallback: derive daemon pid from registry when pid file is stale/missing.
@@ -688,12 +686,10 @@ def cmd_daemon_stop(args):
                 print("⚠️  Daemon port still responds after stop attempt.")
             else:
                 print("✅ Daemon stopped")
-            remove_pid()
             return 0
 
         except (ProcessLookupError, PermissionError):
             print("PID not found or permission denied, daemon may have crashed or locked")
-            remove_pid()
             return 0
     else:
         # No PID available: at least clean stale registry mappings for this endpoint.
@@ -704,7 +700,7 @@ def cmd_daemon_stop(args):
         except Exception:
             pass
         remove_pid()
-        print("No PID file found. Registry cleaned for matching daemon endpoint.")
+        print("No daemon PID resolved from registry. Cleaned matching registry entries.")
         return 0
 
 
@@ -717,7 +713,7 @@ def cmd_daemon_status(args):
         host, port = get_daemon_address()
 
     running = is_daemon_running(host, port)
-    pid = read_pid()
+    pid = read_pid(host, port)
 
     print(f"Host: {host}")
     print(f"Port: {port}")

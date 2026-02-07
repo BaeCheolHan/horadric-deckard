@@ -159,8 +159,8 @@ sari --cmd install --host codex --print
 Codex / Gemini (`.codex/config.toml` 또는 `.gemini/config.toml`):
 ```toml
 [mcp_servers.sari]
-command = "sari"
-args = ["--transport", "stdio", "--format", "pack"]
+command = "/absolute/path/to/sari"
+args = ["--transport", "stdio", "--format", "json"]
 env = { SARI_WORKSPACE_ROOT = "/absolute/path/to/project", SARI_CONFIG = "/absolute/path/to/project/.sari/mcp-config.json" }
 startup_timeout_sec = 60
 ```
@@ -170,8 +170,8 @@ Gemini 구버전 설정 (`~/.gemini/settings.json`):
 {
   "mcpServers": {
     "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
+      "command": "/absolute/path/to/sari",
+      "args": ["--transport", "stdio", "--format", "json"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/project",
         "SARI_CONFIG": "/absolute/path/to/project/.sari/mcp-config.json"
@@ -180,6 +180,7 @@ Gemini 구버전 설정 (`~/.gemini/settings.json`):
   }
 }
 ```
+`command`는 PATH/환경 드리프트를 피하기 위해 절대 경로 사용을 권장합니다.
 
 Claude Desktop / Cursor (JSON):
 ```json
@@ -187,7 +188,7 @@ Claude Desktop / Cursor (JSON):
   "mcpServers": {
     "sari": {
       "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
+      "args": ["--transport", "stdio", "--format", "json"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/project",
         "SARI_CONFIG": "/absolute/path/to/project/.sari/mcp-config.json",
@@ -240,6 +241,7 @@ sari status
 | `SARI_WORKSPACE_ROOT` | 워크스페이스 루트 강제 지정. 생략 시 현재 경로 기준 자동 감지. | 자동 감지 |
 | `SARI_CONFIG` | 설정 파일 경로 오버라이드. | `~/.config/sari/config.json` |
 | `SARI_FORMAT` | 출력 형식(`pack`/`json`). | `pack` |
+| `SARI_STRICT_PROTOCOL` | `1`이면 미지원 프로토콜 버전을 자동 폴백하지 않고 에러로 처리. | `0` |
 | `SARI_RESPONSE_COMPACT` | 응답 압축 출력(토큰 절감). | `1` |
 | `SARI_LOG_LEVEL` | 로그 레벨. | `INFO` |
 

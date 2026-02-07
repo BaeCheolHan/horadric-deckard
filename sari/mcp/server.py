@@ -105,17 +105,7 @@ class LocalSearchMCPServer:
             # Update workspace if provided by client
             self.workspace_root = WorkspaceManager.resolve_workspace_root(root_uri=target_uri)
         
-        # Negotiate Protocol Version
-        client_version = params.get("protocolVersion")
-        if client_version and client_version not in self.SUPPORTED_VERSIONS:
-            raise JsonRpcException(
-                -32602, 
-                "Unsupported protocol version", 
-                data={"supported": sorted(list(self.SUPPORTED_VERSIONS))}
-            )
-        
-        # Echo client version if provided, otherwise fallback to server default
-        negotiated_version = client_version if client_version else self.PROTOCOL_VERSION
+        negotiated_version = self._negotiate_protocol_version(params)
             
         return {
             "protocolVersion": negotiated_version,
@@ -128,6 +118,45 @@ class LocalSearchMCPServer:
                 "resources": {"subscribe": False, "listChanged": False},
             },
         }
+
+    def _iter_client_protocol_versions(self, params: Dict[str, Any]) -> List[str]:
+        versions: List[str] = []
+        seen = set()
+
+        def _append(v: Any) -> None:
+            if not isinstance(v, str):
+                return
+            vv = v.strip()
+            if not vv or vv in seen:
+                return
+            seen.add(vv)
+            versions.append(vv)
+
+        _append(params.get("protocolVersion"))
+        for v in (params.get("supportedProtocolVersions") or []):
+            _append(v)
+        caps = params.get("capabilities")
+        if isinstance(caps, dict):
+            for v in (caps.get("protocolVersions") or []):
+                _append(v)
+
+        return versions
+
+    def _negotiate_protocol_version(self, params: Dict[str, Any]) -> str:
+        client_versions = self._iter_client_protocol_versions(params)
+        for v in client_versions:
+            if v in self.SUPPORTED_VERSIONS:
+                return v
+
+        strict = (os.environ.get("SARI_STRICT_PROTOCOL") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if strict and client_versions:
+            raise JsonRpcException(
+                -32602,
+                "Unsupported protocol version",
+                data={"supported": sorted(list(self.SUPPORTED_VERSIONS))}
+            )
+
+        return self.PROTOCOL_VERSION
 
     def handle_initialized(self, params: Dict[str, Any]) -> None:
         """Called by client after initialize response is received."""
@@ -300,10 +329,8 @@ class LocalSearchMCPServer:
             if output_stream is None:
                 output_stream = getattr(sys.stdout, "buffer", sys.stdout)
             wire_format = (os.environ.get("SARI_FORMAT") or "pack").strip().lower()
-            allow_jsonl = wire_format == "json"
-            self.transport = McpTransport(input_stream, output_stream, allow_jsonl=allow_jsonl)
-            if allow_jsonl:
-                self.transport.default_mode = "jsonl"
+            self.transport = McpTransport(input_stream, output_stream, allow_jsonl=True)
+            self.transport.default_mode = "jsonl" if wire_format == "json" else "content-length"
 
         try:
             while not self._stop.is_set():

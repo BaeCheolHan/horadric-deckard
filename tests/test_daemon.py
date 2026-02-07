@@ -32,10 +32,10 @@ async def test_daemon_start_mock(tmp_path):
             try: await task
             except asyncio.CancelledError: pass
 
-def test_daemon_write_pid(tmp_path):
+def test_daemon_cleanup_legacy_pid(tmp_path):
     with patch('sari.mcp.daemon.PID_FILE', tmp_path / "daemon.pid"):
         daemon = SariDaemon()
-        daemon._write_pid()
-        assert (tmp_path / "daemon.pid").exists()
-        daemon._remove_pid()
-        assert not (tmp_path / "daemon.pid").exists()
+        legacy = tmp_path / "daemon.pid"
+        legacy.write_text("1234")
+        daemon._cleanup_legacy_pid_file()
+        assert not legacy.exists()

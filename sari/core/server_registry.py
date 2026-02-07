@@ -399,6 +399,32 @@ class ServerRegistry:
         """Backward compatible alias for resolve_workspace_daemon."""
         return self.resolve_workspace_daemon(workspace_root)
 
+    def resolve_daemon_by_endpoint(self, host: str, port: int) -> Optional[Dict[str, Any]]:
+        data = self._load()
+        daemons = data.get("daemons", {}) or {}
+        matches = []
+        for boot_id, info in daemons.items():
+            if str(info.get("host") or "") != str(host):
+                continue
+            if int(info.get("port") or 0) != int(port):
+                continue
+            if not self._is_process_alive(info.get("pid")):
+                self.unregister_daemon(str(boot_id))
+                continue
+            merged = dict(info)
+            merged["boot_id"] = str(boot_id)
+            matches.append(merged)
+        if not matches:
+            return None
+        matches.sort(key=lambda d: float(d.get("last_seen_ts", 0.0)), reverse=True)
+        return matches[0]
+
+    def prune_dead(self) -> None:
+        def _upd(data):
+            self._prune_dead_locked(data)
+            data["version"] = self.VERSION
+        self._update(_upd)
+
     def register(self, workspace_root: str, port: int, pid: int) -> None:
         """Backward compatible registry (legacy)."""
         boot_id = f"legacy-{pid}-{port}"

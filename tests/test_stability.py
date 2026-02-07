@@ -24,12 +24,9 @@ class TestStability:
 
     def test_protocol_version_negotiation_failure(self):
         server = LocalSearchMCPServer("/tmp")
-        # Unsupported version
-        try:
-            server.handle_initialize({"protocolVersion": "2099-01-01"})
-            # Should have raised or returned error
-        except Exception:
-            pass
+        # Unsupported version falls back to server default
+        resp = server.handle_initialize({"protocolVersion": "2099-01-01"})
+        assert resp["protocolVersion"] == server.PROTOCOL_VERSION
 
     def test_protocol_version_via_handle_request(self):
         server = LocalSearchMCPServer("/tmp")
@@ -40,9 +37,8 @@ class TestStability:
             "params": {"protocolVersion": "2099-01-01"}
         }
         resp = server.handle_request(req)
-        assert "error" in resp
-        assert resp["error"]["code"] == -32602
-        assert "supported" in resp["error"]["data"]
+        assert "result" in resp
+        assert resp["result"]["protocolVersion"] == server.PROTOCOL_VERSION
 
     def test_proxy_framing_strict(self):
         # Default: JSONL accepted

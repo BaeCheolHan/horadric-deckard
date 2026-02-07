@@ -436,7 +436,7 @@ def _check_daemon() -> dict[str, Any]:
     details = {}
     
     if running:
-        pid = read_pid()
+        pid = read_pid(host, port)
         remote_version = identify.get("version", "unknown")
         draining = identify.get("draining", False)
         
@@ -452,16 +452,26 @@ def _check_daemon() -> dict[str, Any]:
             return _result("Sari Daemon", False, f"Version mismatch: local=v{local_version}, remote=v{remote_version}. {status_msg}")
         
         return _result("Sari Daemon", True, status_msg)
-    
-    # Check for stale PID file
-    pid = read_pid()
-    if pid:
-        try:
-            os.kill(pid, 0) # Signal 0 checks existence
-            return _result("Sari Daemon", False, f"Not responding on {host}:{port} but PID {pid} is alive. Possible zombie or port conflict.")
-        except (OSError, ProcessLookupError):
-            return _result("Sari Daemon", False, f"Not running, but stale PID file exists (PID: {pid}).")
-            
+
+    try:
+        reg = ServerRegistry()
+        data = reg._load()
+        for info in (data.get("daemons") or {}).values():
+            if str(info.get("host") or "") != str(host):
+                continue
+            if int(info.get("port") or 0) != int(port):
+                continue
+            pid = int(info.get("pid") or 0)
+            if pid <= 0:
+                continue
+            try:
+                os.kill(pid, 0)
+                return _result("Sari Daemon", False, f"Not responding on {host}:{port} but PID {pid} is alive. Possible zombie or port conflict.")
+            except Exception:
+                return _result("Sari Daemon", False, f"Not running, but stale registry entry exists (PID: {pid}).")
+    except Exception:
+        pass
+
     return _result("Sari Daemon", False, "Not running")
 
 
@@ -578,8 +588,8 @@ def _auto_fixable(results: list[dict[str, Any]]) -> list[dict[str, str]]:
             actions.append({"name": name, "action": "db_migrate"})
         elif name == "DB Schema Snippet Versions":
             actions.append({"name": name, "action": "db_migrate"})
-        elif name == "Sari Daemon" and "stale PID" in error:
-            actions.append({"name": name, "action": "cleanup_pid"})
+        elif name == "Sari Daemon" and "stale registry entry" in error:
+            actions.append({"name": name, "action": "cleanup_registry_daemons"})
         elif name == "Sari Daemon" and "Version mismatch" in error:
             actions.append({"name": name, "action": "restart_daemon"})
     
@@ -612,31 +622,11 @@ def _run_auto_fixes(ws_root: str, actions: list[dict[str, str]]) -> list[dict[st
                 db.close()
                 results.append(_result(f"Auto Fix {name}", True, "Schema migration applied"))
             
-            elif act == "cleanup_pid":
-                from sari.mcp.cli import remove_pid
-                pid_file = None
-                try:
-                    from sari.mcp.daemon import PID_FILE as _PID_FILE
-                    pid_file = _PID_FILE
-                except Exception:
-                    pid_file = None
-                try:
-                    remove_pid()
-                except Exception:
-                    pass
-                try:
-                    if pid_file and pid_file.exists():
-                        pid_file.unlink()
-                except Exception:
-                    pass
-                try:
-                    # Verify removal
-                    if not pid_file or not pid_file.exists():
-                        results.append(_result(f"Auto Fix {name}", True, "Stale PID file removed"))
-                    else:
-                        results.append(_result(f"Auto Fix {name}", False, "Failed to remove PID file - permission issue?"))
-                except Exception as e:
-                    results.append(_result(f"Auto Fix {name}", False, f"Cleanup error: {e}"))
+            elif act == "cleanup_registry_daemons":
+                from sari.core.server_registry import ServerRegistry
+                reg = ServerRegistry()
+                reg.prune_dead()
+                results.append(_result(f"Auto Fix {name}", True, "Stale daemon registry entries pruned"))
                 
             elif act == "repair_registry":
                 from sari.core.server_registry import ServerRegistry

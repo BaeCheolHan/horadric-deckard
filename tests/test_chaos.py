@@ -24,20 +24,35 @@ class TestChaosAndResilience:
         
         return env
 
-    def test_chaos_stale_pid_recovery(self, chaos_env):
-        pid_dir = Path(chaos_env["HOME"]) / ".local" / "share" / "sari"
-        pid_dir.mkdir(parents=True, exist_ok=True)
-        pid_file = pid_dir / "daemon.pid"
-        pid_file.write_text("999999") 
-        
+    def test_chaos_stale_registry_recovery(self, chaos_env):
+        reg_file = Path(chaos_env["SARI_REGISTRY_FILE"])
+        reg_file.parent.mkdir(parents=True, exist_ok=True)
+        reg_file.write_text(json.dumps({
+            "version": "2.0",
+            "daemons": {
+                "boot-stale": {
+                    "host": "127.0.0.1",
+                    "port": 48001,
+                    "pid": 999999,
+                    "start_ts": time.time() - 100,
+                    "last_seen_ts": time.time() - 100,
+                    "draining": False,
+                    "version": "0.0.0",
+                }
+            },
+            "workspaces": {},
+        }))
+
         subprocess.run(
             ["python3", "-m", "sari.mcp.cli", "daemon", "start", "-d", "--daemon-port", "48001"],
             env=chaos_env, check=True
         )
         time.sleep(2.0)
-        
-        new_pid = int(pid_file.read_text().strip())
-        assert new_pid != 999999
+
+        data = json.loads(reg_file.read_text())
+        pids = [int((v or {}).get("pid") or 0) for v in (data.get("daemons") or {}).values()]
+        assert pids
+        assert 999999 not in pids
         
         status = subprocess.run(
             ["python3", "-m", "sari.mcp.cli", "daemon", "status", "--daemon-port", "48001"],

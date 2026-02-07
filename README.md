@@ -159,8 +159,8 @@ Use this when you want full manual control.
 Codex / Gemini TOML (`.codex/config.toml` or `.gemini/config.toml`):
 ```toml
 [mcp_servers.sari]
-command = "sari"
-args = ["--transport", "stdio", "--format", "pack"]
+command = "/absolute/path/to/sari"
+args = ["--transport", "stdio", "--format", "json"]
 env = { SARI_WORKSPACE_ROOT = "/absolute/path/to/project", SARI_CONFIG = "/absolute/path/to/project/.sari/mcp-config.json" }
 startup_timeout_sec = 60
 ```
@@ -170,8 +170,8 @@ Gemini legacy JSON (`~/.gemini/settings.json`):
 {
   "mcpServers": {
     "sari": {
-      "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
+      "command": "/absolute/path/to/sari",
+      "args": ["--transport", "stdio", "--format", "json"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/project",
         "SARI_CONFIG": "/absolute/path/to/project/.sari/mcp-config.json"
@@ -180,6 +180,7 @@ Gemini legacy JSON (`~/.gemini/settings.json`):
   }
 }
 ```
+Use an absolute path for `command` to avoid PATH/environment drift.
 
 Claude Desktop / Cursor JSON:
 ```json
@@ -187,7 +188,7 @@ Claude Desktop / Cursor JSON:
   "mcpServers": {
     "sari": {
       "command": "sari",
-      "args": ["--transport", "stdio", "--format", "pack"],
+      "args": ["--transport", "stdio", "--format", "json"],
       "env": {
         "SARI_WORKSPACE_ROOT": "/absolute/path/to/project",
         "SARI_CONFIG": "/absolute/path/to/project/.sari/mcp-config.json",
@@ -240,6 +241,7 @@ How to set:
 | `SARI_WORKSPACE_ROOT` | Workspace root override. If omitted, Sari auto-detects from CWD. | Auto-detect |
 | `SARI_CONFIG` | Config file path override. | `~/.config/sari/config.json` |
 | `SARI_FORMAT` | Output format: `pack` or `json`. | `pack` |
+| `SARI_STRICT_PROTOCOL` | If `1`, reject unknown protocol versions instead of auto fallback. | `0` |
 | `SARI_RESPONSE_COMPACT` | Compact response payloads for lower token usage. | `1` |
 | `SARI_LOG_LEVEL` | Logging level. | `INFO` |
 
