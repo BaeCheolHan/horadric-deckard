@@ -37,9 +37,8 @@ def test_mcp_transport_robustness():
     assert res1 is not None
     assert res1[0]["id"] == 1
     
-    # Test JSONL detection (with env flag)
-    os.environ["SARI_DEV_JSONL"] = "1"
-    transport.allow_jsonl = True # Manually allow for test
+    # Test JSONL detection
+    transport.allow_jsonl = True
     res2 = transport.read_message()
     assert res2 is not None
     assert res2[0]["id"] == 2

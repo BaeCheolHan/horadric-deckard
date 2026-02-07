@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 import logging
 from typing import Any, Dict, Optional, Tuple, BinaryIO
@@ -16,7 +15,7 @@ class McpTransport:
     Encapsulates Content-Length and JSONL logic.
     """
     
-    def __init__(self, input_stream: BinaryIO, output_stream: BinaryIO, allow_jsonl: bool = False):
+    def __init__(self, input_stream: BinaryIO, output_stream: BinaryIO, allow_jsonl: bool = True):
         self.input = input_stream
         self.output = output_stream
         self.allow_jsonl = allow_jsonl
@@ -43,7 +42,7 @@ class McpTransport:
 
             if line_str.startswith("{"):
                 # JSONL Mode
-                if not self.allow_jsonl and os.environ.get("SARI_DEV_JSONL") != "1":
+                if not self.allow_jsonl:
                     logger.debug("JSONL detected but not allowed. Ignoring.")
                     return None
                 return self._parse_json(line_str), _MODE_JSONL

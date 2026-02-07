@@ -45,12 +45,13 @@ class TestStability:
         assert "supported" in resp["error"]["data"]
 
     def test_proxy_framing_strict(self):
-        # Default: JSONL rejected
+        # Default: JSONL accepted
         stdin = io.BytesIO(b'{"jsonrpc": "2.0"}\n')
-        # We need to patch os.environ to ensure SARI_DEV_JSONL is unset
         with patch.dict("os.environ", {}, clear=True):
             result = _read_mcp_message(stdin)
-            assert result is None, "JSONL should be ignored by default"
+            assert result is not None
+            assert result[0] == b'{"jsonrpc": "2.0"}'
+            assert result[1] == "jsonl"
 
         # Content-Length accepted
         msg = b'{"jsonrpc": "2.0"}'
@@ -61,12 +62,3 @@ class TestStability:
             assert result is not None
             assert result[0] == msg
             assert result[1] == "framed"
-
-    def test_proxy_framing_dev_mode(self):
-        # SARI_DEV_JSONL=1: JSONL accepted
-        stdin = io.BytesIO(b'{"jsonrpc": "2.0"}\n')
-        with patch.dict("os.environ", {"SARI_DEV_JSONL": "1"}):
-            result = _read_mcp_message(stdin)
-            assert result is not None
-            assert result[0] == b'{"jsonrpc": "2.0"}'
-            assert result[1] == "jsonl"

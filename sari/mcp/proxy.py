@@ -270,11 +270,8 @@ def _read_mcp_message(stdin):
         if not line:
             return None
 
-    # Strict Framing: Only allow JSONL if env var is set
-    allow_jsonl = os.environ.get("SARI_DEV_JSONL") == "1"
+    # Compatibility mode: accept JSONL fallback as well as Content-Length framing.
     if line.lstrip().startswith((b"{", b"[")):
-        if not allow_jsonl:
-            return None
         return line.rstrip(b"\r\n"), _MODE_JSONL
 
     headers = [line]
