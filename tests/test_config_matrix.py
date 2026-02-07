@@ -102,3 +102,48 @@ class TestConfigMatrix:
             res = worker.process_file_task(root, f, f.stat(), 0, 0, False)
             assert res["parse_reason"] == "too_large"
             assert res["content"] == ""
+
+    def test_repo_label_prefers_git_top_level(self, mock_db, mock_cfg, tmp_path):
+        from sari.core.settings import Settings
+        s = Settings()
+        worker = IndexWorker(mock_cfg, mock_db, None, lambda p, c: ([], []), settings_obj=s)
+
+        root = tmp_path / "workspaceA"
+        (root / "src").mkdir(parents=True, exist_ok=True)
+        f = root / "src" / "app.py"
+        f.write_text("print('x')")
+
+        with patch.object(worker, "_git_top_level_for_file", return_value=str(root / "real-repo")):
+            res = worker.process_file_task(root, f, f.stat(), int(time.time()), time.time(), False)
+            assert res is not None
+            assert res["repo"] == "real-repo"
+
+    def test_repo_label_non_git_uses_first_directory(self, mock_db, mock_cfg, tmp_path):
+        from sari.core.settings import Settings
+        s = Settings()
+        worker = IndexWorker(mock_cfg, mock_db, None, lambda p, c: ([], []), settings_obj=s)
+
+        root = tmp_path / "workspaceB"
+        (root / "services").mkdir(parents=True, exist_ok=True)
+        f = root / "services" / "api.py"
+        f.write_text("print('x')")
+
+        with patch.object(worker, "_git_top_level_for_file", return_value=None):
+            res = worker.process_file_task(root, f, f.stat(), int(time.time()), time.time(), False)
+            assert res is not None
+            assert res["repo"] == "services"
+
+    def test_repo_label_root_file_uses_workspace_name(self, mock_db, mock_cfg, tmp_path):
+        from sari.core.settings import Settings
+        s = Settings()
+        worker = IndexWorker(mock_cfg, mock_db, None, lambda p, c: ([], []), settings_obj=s)
+
+        root = tmp_path / "workspaceC"
+        root.mkdir(parents=True, exist_ok=True)
+        f = root / "main.py"
+        f.write_text("print('x')")
+
+        with patch.object(worker, "_git_top_level_for_file", return_value=None):
+            res = worker.process_file_task(root, f, f.stat(), int(time.time()), time.time(), False)
+            assert res is not None
+            assert res["repo"] == "workspaceC"

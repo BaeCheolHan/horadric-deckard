@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import subprocess
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,12 +43,13 @@ class IndexWorker:
         self.ast_engine = ASTEngine()
         self._ast_cache = OrderedDict()
         self._ast_cache_max = self.settings.AST_CACHE_ENTRIES
+        self._git_top_level_cache: Dict[str, Optional[str]] = {}
 
     def process_file_task(self, root: Path, file_path: Path, st: os.stat_result, scan_ts: int, now: float, excluded: bool, root_id: Optional[str] = None, force: bool = False) -> Optional[dict]:
         try:
             rel_to_root = str(file_path.relative_to(root))
             db_path = self._encode_db_path(root, file_path, root_id=root_id)
-            repo = rel_to_root.split(os.sep, 1)[0] if os.sep in rel_to_root else "__root__"
+            repo = self._derive_repo_label(root, file_path, rel_to_root)
             ext = file_path.suffix.lower()
 
             # 1. Fast Metadata Check
@@ -181,6 +183,41 @@ class IndexWorker:
             }
         except Exception as e:
             if self.logger: self.logger.error(f"Worker failed for {file_path}: {e}")
+            return None
+
+    def _derive_repo_label(self, root: Path, file_path: Path, rel_to_root: str) -> str:
+        # 1) Prefer real git top-level repo name when available.
+        git_top = self._git_top_level_for_file(file_path)
+        if git_top:
+            name = Path(git_top).name
+            if name:
+                return name
+
+        # 2) Non-git fallback: first workspace-relative directory name.
+        if os.sep in rel_to_root:
+            return rel_to_root.split(os.sep, 1)[0]
+
+        # 3) Workspace root-level file fallback: workspace directory name.
+        ws_name = Path(root).name
+        return ws_name or "__root__"
+
+    def _git_top_level_for_file(self, file_path: Path) -> Optional[str]:
+        parent_key = str(file_path.parent.resolve())
+        if parent_key in self._git_top_level_cache:
+            return self._git_top_level_cache[parent_key]
+        try:
+            proc = subprocess.run(
+                ["git", "-C", parent_key, "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=1.0,
+            )
+            top = proc.stdout.strip() if proc.returncode == 0 else None
+            self._git_top_level_cache[parent_key] = top or None
+            return top or None
+        except Exception:
+            self._git_top_level_cache[parent_key] = None
             return None
 
     def _skip_result(self, db_path, repo, st, scan_ts, reason):
