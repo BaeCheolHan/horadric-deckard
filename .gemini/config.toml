@@ -1,0 +1,5 @@
+[mcp_servers.sari]
+command = "/Users/baecheolhan/.local/bin/sari"
+args = ["--transport", "stdio", "--format", "pack"]
+env = { SARI_WORKSPACE_ROOT = "/Users/baecheolhan/Documents/repositories", SARI_STANDALONE_ONLY = "1", SARI_LOG_LEVEL = "INFO" }
+startup_timeout_sec = 60

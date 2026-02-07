@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/settings/settings-schema.json",
+  "context": {
+    "fileName": [
+      "GEMINI.md"
+    ]
+  },
+  "models": {
+    "gemini-1.5-flash": {
+      "preview": true
+    },
+    "gemini-1.5-pro": {
+      "preview": true
+    },
+    "gemini-2.0-flash-exp": {
+      "preview": true
+    }
+  },
+  "mcpServers": {
+    "sari": {
+      "command": "/Users/baecheolhan/.local/bin/sari",
+      "args": [
+        "--transport",
+        "stdio",
+        "--format",
+        "pack"
+      ],
+      "env": {
+        "SARI_WORKSPACE_ROOT": "/Users/baecheolhan/Documents/repositories",
+        "SARI_STANDALONE_ONLY": "1",
+        "SARI_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}

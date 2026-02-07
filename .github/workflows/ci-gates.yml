@@ -20,11 +20,10 @@ jobs:
         run: uv venv .venv
         
       - name: Install dependencies
-        # Priority Fix: Removed [full] as all libs are now in core dependencies
+        # Standard root installation
         run: uv pip install --python .venv/bin/python -e . pytest pytest-cov pytest-asyncio
         
       - name: Run core stability gates (must pass)
-        # Priority Fix: Set PYTHONPATH to src and run critical resilience/logic tests
         run: |
           export PYTHONPATH=$(pwd)/src
           uv run --python .venv/bin/python pytest -q \
@@ -39,16 +38,12 @@ jobs:
     needs: critical-gates
     steps:
       - uses: actions/checkout@v4
-      
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
-        
       - name: Create virtualenv
         run: uv venv .venv
-        
       - name: Install dependencies
         run: uv pip install --python .venv/bin/python -e . pytest pytest-asyncio
-        
       - name: Run language pattern tests
         run: |
           export PYTHONPATH=$(pwd)/src

@@ -15,3 +15,7 @@ __pycache__/
 _backup_mcp/
 .sari/
 build/
+.codex/
+*.zip
+*.db
+*.log
