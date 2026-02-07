@@ -62,9 +62,10 @@ class LocalSearchDB:
         if not hasattr(self._local, "conn"):
             self._local.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._local.conn.execute("PRAGMA journal_mode=WAL")
-            self._local.conn.execute("PRAGMA synchronous=NORMAL")
+            self._local.conn.execute("PRAGMA synchronous=OFF")
             self._local.conn.execute("PRAGMA temp_store=MEMORY")
             self._local.conn.execute("PRAGMA cache_size=-10000")
+            self._local.conn.execute("PRAGMA mmap_size=30000000000")
             self._local.conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn.execute("PRAGMA busy_timeout=15000")
             self._local.conn.row_factory = sqlite3.Row

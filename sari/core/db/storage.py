@@ -22,7 +22,8 @@ class GlobalStorageManager:
     def __init__(self, db: Any):
         self.db = db
         # DBWriter에 커밋 완료 콜백 등록
-        self.writer = DBWriter(db, logger=logger, max_batch=settings.get_int("DB_BATCH_SIZE", 100), on_commit=self._on_db_commit)
+        # max_wait를 0.05초로 설정하여 실시간 반응성 극대화
+        self.writer = DBWriter(db, logger=logger, max_batch=settings.get_int("DB_BATCH_SIZE", 500), max_wait=0.05, on_commit=self._on_db_commit)
         
         # L2 Memory Overlay: {path -> files_row_tuple}
         self._overlay_files = OrderedDict()
