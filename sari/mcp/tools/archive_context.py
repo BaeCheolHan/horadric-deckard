@@ -27,7 +27,7 @@ def _enqueue_or_write(db: Any, indexer: Any, row: tuple) -> None:
     try:
         with db._lock:
             cur = db._write.cursor()
-            cur.execute("BEGIN")
+            # cur.execute("BEGIN")  <-- Removed
             db.upsert_context_tx(cur, [row])
             db._write.commit()
     finally:

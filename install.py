@@ -259,18 +259,18 @@ def do_install(args):
     # Policy: Do not kill existing daemons during install/upgrade to support zero-downtime.
     # Users should use 'sari daemon stop' manually if needed.
 
-    if args.update:
-        if not args.yes and not confirm(f"Sari will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
+    if args.update or args.full:
+        if not args.yes and args.update and not confirm(f"Sari will be updated. This will replace the contents of {INSTALL_DIR}. Continue?", default=True):
             print_step("Update cancelled. Workspace will still be configured.")
         else:
-            print_step("Updating Sari...")
+            print_step("Updating/Upgrading Sari features...")
             perform_global_install = True
     elif not INSTALL_DIR.exists() or not (INSTALL_DIR / bootstrap_name).exists():
         print_step("Sari not found or corrupted. Starting installation...")
         perform_global_install = True
     else:
         print_step("Sari is already installed globally. Skipping global installation.")
-        print_warn("Use the --update flag to force a re-installation/update.")
+        print_warn("Use the --update or --full flag to force a re-installation/feature update.")
 
     if perform_global_install:
         INSTALL_DIR.mkdir(parents=True, exist_ok=True)

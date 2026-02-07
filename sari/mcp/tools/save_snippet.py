@@ -54,7 +54,7 @@ def _enqueue_or_write(db: Any, indexer: Any, row: tuple) -> None:
     try:
         with db._lock:
             cur = db._write.cursor()
-            cur.execute("BEGIN")
+            # cur.execute("BEGIN")  <-- Removed
             db.upsert_snippet_tx(cur, [row])
             db._write.commit()
     finally:
@@ -90,6 +90,7 @@ def build_save_snippet(args: Dict[str, Any], db: Any, roots: List[str], indexer:
     root_id, rel = db_path.split("/", 1)
     repo = rel.split("/", 1)[0] if "/" in rel else "__root__"
     now = int(time.time())
+    metadata_json = "{}"
 
     row = (
         tag,
@@ -106,6 +107,7 @@ def build_save_snippet(args: Dict[str, Any], db: Any, roots: List[str], indexer:
         commit_hash,
         now,
         now,
+        metadata_json,
     )
     _enqueue_or_write(db, indexer, row)
 

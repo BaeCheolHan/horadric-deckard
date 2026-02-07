@@ -406,6 +406,39 @@ class LocalSearchDB:
     def upsert_context_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple]):
         cur.executemany("INSERT INTO contexts (topic, content, tags_json, related_files_json, source, valid_from, valid_until, deprecated, created_ts, updated_ts) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(topic) DO UPDATE SET updated_ts=excluded.updated_ts", rows)
 
+    def list_snippets_by_tag(self, tag: str, limit: int = 20) -> List[Dict[str, Any]]:
+        sql = "SELECT tag, path, root_id, start_line, end_line, content, note FROM snippets WHERE 1=1"
+        params = []
+        if tag:
+            sql += " AND tag = ?"
+            params.append(tag)
+        sql += " ORDER BY updated_ts DESC LIMIT ?"
+        params.append(limit)
+        cur = self._get_conn().cursor()
+        cur.execute(sql, params)
+        return [
+            {
+                "tag": r[0], "path": r[1], "root_id": r[2], "start_line": r[3],
+                "end_line": r[4], "content": r[5], "note": r[6]
+            }
+            for r in cur.fetchall()
+        ]
+
+    def get_context_by_topic(self, topic: str) -> Optional[Dict[str, Any]]:
+        sql = "SELECT topic, content, tags_json, related_files_json, source, updated_ts FROM contexts WHERE topic = ?"
+        cur = self._get_conn().cursor()
+        row = cur.execute(sql, (topic,)).fetchone()
+        if not row:
+            return None
+        return {
+            "topic": row[0],
+            "content": row[1],
+            "tags": json.loads(row[2]),
+            "related_files": json.loads(row[3]),
+            "source": row[4],
+            "updated_ts": row[5]
+        }
+
     def upsert_failed_tasks_tx(self, cur: sqlite3.Cursor, rows: Iterable[tuple]):
         cur.executemany("INSERT INTO failed_tasks (path, root_id, attempts, error, ts, next_retry, metadata_json) VALUES (?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET attempts=attempts+1", rows)
 
